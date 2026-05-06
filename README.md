@@ -128,23 +128,33 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ### 7 — Connect from your LXD container
 
+**On the server**, generate the connection instructions:
+
 ```bash
 uv run llm client setup
 ```
 
-This prints ready-to-paste `export` commands. Add them to `~/.bashrc` in the container:
+This prints the exact `export` commands and config for your specific server IP and API key. Copy and paste the output into the LXD container.
+
+**In the LXD container** — you only need two env vars and opencode. No Python CLI required:
 
 ```bash
+# Install opencode
+curl -fsSL https://opencode.ai/install | sh
+
+# Add to ~/.bashrc (values from `llm client setup` output above)
 export OPENAI_BASE_URL="https://192.168.1.x:8443/v1"
 export OPENAI_API_KEY="your-api-key"
-```
 
-Then install opencode and test:
-```bash
-# In the LXD container
-curl -fsSL https://opencode.ai/install | sh
+# Test connectivity
+curl -sk https://192.168.1.x:8443/health \
+  -H "Authorization: Bearer your-api-key"
+
+# Start coding
 opencode
 ```
+
+> **The `llm` CLI is a server management tool.** The client container does not need this repo, `uv`, or a `config.toml`.
 
 ---
 
