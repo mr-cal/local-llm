@@ -2,8 +2,8 @@
 
 Run a local [Qwen](https://huggingface.co/Qwen) model on your machine and expose it securely over your LAN as an OpenAI-compatible API — ready for use with [opencode](https://opencode.ai) or any compatible client.
 
-**Engine:** [llama.cpp](https://github.com/ggerganov/llama.cpp) (`llama-server`) with Vulkan backend for iGPU acceleration  
-**Proxy:** nginx (HTTPS + Bearer-token auth + LAN IP allowlist)  
+**Engine:** [llama.cpp](https://github.com/ggerganov/llama.cpp) (`llama-server`) with Vulkan backend for iGPU acceleration
+**Proxy:** nginx (HTTPS + Bearer-token auth + LAN IP allowlist)
 **CLI:** single `uv run llm` entry point
 
 ---
@@ -33,11 +33,24 @@ uv sync
 ### 2 — Build llama-server with Vulkan
 
 ```bash
+apt install cmake libvulkan-dev glslc spirv-headers spirv-tools nginx
 git clone https://github.com/ggerganov/llama.cpp
 cd llama.cpp
 cmake -B build -DGGML_VULKAN=ON
 cmake --build build --config Release -j$(nproc)
-# binary is at: llama.cpp/build/bin/llama-server
+# Install to ~/.local/bin so it's on your PATH
+mkdir -p ~/.local/bin
+cp build/bin/llama-server build/bin/llama-bench ~/.local/bin/
+```
+
+Ensure `~/.local/bin` is on your PATH (add to `~/.bashrc` / `~/.zshrc` if needed):
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Verify:
+```bash
+llama-server --version
 ```
 
 ### 3 — Create your config
@@ -56,7 +69,7 @@ Key fields to set:
 
 ```toml
 [server]
-llama_server_bin = "/path/to/llama.cpp/build/bin/llama-server"
+llama_server_bin = "~/.local/bin/llama-server"  # or just "llama-server" if ~/.local/bin is on PATH
 n_gpu_layers = 20      # tune for your iGPU — higher offloads more layers
 
 [models]

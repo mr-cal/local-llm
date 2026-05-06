@@ -12,8 +12,7 @@ Wants=network.target
 
 [Service]
 Type=simple
-# Run as your user — change User= to match
-User=%i
+User=%%USER%%
 ExecStart=%%LLAMA_SERVER_BIN%% \
     --model %%MODELS_DIR%%/%%ACTIVE_MODEL%% \
     --port %%SERVER_PORT%% \

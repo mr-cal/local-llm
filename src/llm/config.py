@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 from typing import Annotated
@@ -230,6 +231,7 @@ def config_apply() -> None:
         "%%N_GPU_LAYERS%%": str(cfg.server.n_gpu_layers),
         "%%N_CTX%%": str(cfg.server.n_ctx),
         "%%N_THREADS%%": str(cfg.server.n_threads),
+        "%%USER%%": os.environ.get("USER", os.environ.get("LOGNAME", "nobody")),
     }
 
     templates = [

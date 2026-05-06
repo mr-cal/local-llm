@@ -80,12 +80,25 @@ def start(
 
     log_path = _log_file()
     log_fh = log_path.open("a")
-    proc = subprocess.Popen(
-        cmd,
-        stdout=log_fh,
-        stderr=log_fh,
-        start_new_session=True,  # detach from current session
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fh,
+            stderr=log_fh,
+            start_new_session=True,  # detach from current session
+        )
+    except FileNotFoundError:
+        log_fh.close()
+        bin_path = cfg.server.llama_server_bin
+        console.print(f"[red]Binary not found:[/red] {bin_path}")
+        console.print(
+            "\nBuild llama.cpp and install the binary:\n"
+            "  [bold]cmake --build llama.cpp/build -j$(nproc)[/bold]\n"
+            "  [bold]cp llama.cpp/build/bin/llama-server ~/.local/bin/[/bold]\n"
+            "\nThen update [bold]llama_server_bin[/bold] in config.toml if needed:\n"
+            '  llama_server_bin = "~/.local/bin/llama-server"'
+        )
+        raise typer.Exit(1) from None
 
     _pid_file().write_text(str(proc.pid))
     console.print(f"[green]Started[/green] llama-server (PID {proc.pid})")
