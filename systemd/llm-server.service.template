@@ -1,0 +1,34 @@
+# Generated from systemd/llm-server.service.template by: uv run llm config apply
+# Do not edit directly — edit the template and re-run config apply.
+# Install:
+#   sudo cp systemd/llm-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now llm-server
+
+[Unit]
+Description=Local LLM Server (llama-server / llama.cpp)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+# Run as your user — change User= to match
+User=%i
+ExecStart=%%LLAMA_SERVER_BIN%% \
+    --model %%MODELS_DIR%%/%%ACTIVE_MODEL%% \
+    --port %%SERVER_PORT%% \
+    --n-gpu-layers %%N_GPU_LAYERS%% \
+    --ctx-size %%N_CTX%% \
+    --threads %%N_THREADS%%
+
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-server
+
+# Resource limits — adjust to taste
+# LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
