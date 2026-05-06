@@ -1,0 +1,159 @@
+# Local LLM Server — Architecture & Decisions
+# This file: project-internal technical reference
+# See README.md for user-facing quick-start
+
+═══════════════════════════════════════════════════════════════
+ OVERVIEW
+═══════════════════════════════════════════════════════════════
+
+Goal: Run a local Qwen model on this machine and expose it securely
+      over the LAN as an OpenAI-compatible API for use by opencode
+      (or any compatible client) in an LXD container.
+
+Host hardware:
+  CPU   : AMD Ryzen AI 9 HX 370 (12c/24t)
+  RAM   : 62 GB
+  GPU   : Radeon 890M iGPU (Vulkan ✓, shares system RAM)
+  Disk  : ~186 GB free
+
+═══════════════════════════════════════════════════════════════
+ SERVER STACK
+═══════════════════════════════════════════════════════════════
+
+Inference engine: llama.cpp (llama-server)
+  - Compiled with -DGGML_VULKAN=ON so the 890M iGPU offloads layers
+  - OpenAI-compatible REST API at http://127.0.0.1:8080
+  - Why not Ollama?  Ollama wraps llama.cpp but adds latency; direct
+    llama-server exposes more tuning knobs (threads, batch, n-gpu-layers)
+  - Why not vLLM?    Requires CUDA or well-supported ROCm discrete GPU;
+    integrated GPU support is unstable
+
+Network layer: nginx reverse proxy
+  - Listens on LAN IP : 8443 (HTTPS, self-signed cert)
+  - Auth             : Bearer token (API key in config.env)
+  - IP allowlist     : restrict to local subnet (e.g. 192.168.1.0/24)
+  - Forwards to      : http://127.0.0.1:8080
+
+Process management: systemd
+  - Unit: llm-server.service
+  - Auto-starts on boot, restarts on crash, logs to journald
+
+═══════════════════════════════════════════════════════════════
+ MODEL MANAGEMENT
+═══════════════════════════════════════════════════════════════
+
+Format   : GGUF (most portable, works with llama.cpp natively)
+Storage  : ~/models/  (configurable via MODELS_DIR in config.env)
+Source   : Hugging Face (huggingface-cli download)
+
+Recommended Qwen models (pick based on speed vs. quality):
+  Qwen2.5-Coder-7B-Instruct-Q8_0      ~8 GB   fastest
+  Qwen2.5-Coder-14B-Instruct-Q4_K_M   ~8.5 GB ← default, best balance
+  Qwen2.5-Coder-32B-Instruct-Q4_K_M   ~18 GB  highest quality, slower
+  Qwen3-30B-A3B-Q4_K_M                ~17 GB  MoE, efficient at 30B scale
+
+Model scripts (scripts/models/):
+  download.sh <repo> <file>   Pull a GGUF file from HuggingFace
+  list.sh                     Show locally downloaded models + sizes
+  switch.sh <model-filename>  Update ACTIVE_MODEL in config.env + restart
+
+═══════════════════════════════════════════════════════════════
+ CONFIGURATION (config.env)
+═══════════════════════════════════════════════════════════════
+
+All tunables live in config.env — edit one file to change anything:
+
+  MODELS_DIR        Path to GGUF model files
+  ACTIVE_MODEL      Filename of the model to load
+  SERVER_PORT       llama-server internal port (default 8080)
+  PROXY_PORT        nginx external port (default 8443)
+  N_GPU_LAYERS      Layers to offload to Vulkan iGPU (tune for VRAM)
+  N_CTX             Context window size
+  N_THREADS         CPU threads for inference
+  API_KEY           Bearer token required by nginx
+  LAN_SUBNET        IP range allowed through nginx (e.g. 192.168.1.0/24)
+  LAN_IP            This machine's LAN IP for nginx to bind on
+
+═══════════════════════════════════════════════════════════════
+ CLIENT SETUP (LXD container)
+═══════════════════════════════════════════════════════════════
+
+Tool: opencode  (https://opencode.ai)
+  Supports any OpenAI-compatible endpoint via env vars:
+
+    export OPENAI_BASE_URL="https://<LAN_IP>:8443/v1"
+    export OPENAI_API_KEY="<API_KEY from config.env>"
+
+  Add to ~/.bashrc or LXD container profile.
+  See client/setup.md for full walkthrough.
+
+Security posture:
+  - nginx enforces API key + IP allowlist
+  - LXD container provides an additional isolation boundary
+  - No internet exposure assumed (LAN only)
+  - TLS prevents snooping on the LAN (self-signed is fine for LAN use)
+
+═══════════════════════════════════════════════════════════════
+ BENCHMARKING
+═══════════════════════════════════════════════════════════════
+
+Two modes (scripts/benchmark.sh):
+
+  1. llama-bench (binary, built with llama.cpp)
+     Measures raw pp (prompt processing) and tg (token generation)
+     tokens/sec without network overhead. Run on the server directly.
+
+  2. API benchmark (curl-based)
+     Sends a fixed prompt to the nginx endpoint, measures wall-clock
+     time, parses usage.completion_tokens from JSON response, reports
+     end-to-end tokens/sec including network + auth overhead.
+
+Output: printed table + appended to logs/benchmark-history.csv
+
+═══════════════════════════════════════════════════════════════
+ FILE LAYOUT
+═══════════════════════════════════════════════════════════════
+
+local-llm/
+├── plan.txt                  This file
+├── README.md                 User-facing quick-start & guide
+├── config.env                All settings (edit this to configure)
+├── scripts/
+│   ├── install.sh            Build llama.cpp with Vulkan + pip install hf
+│   ├── start.sh              Start llama-server (reads config.env)
+│   ├── stop.sh               Stop llama-server
+│   ├── restart.sh            Restart llama-server
+│   ├── models/
+│   │   ├── download.sh       Download GGUF model from HuggingFace
+│   │   ├── list.sh           List local models with sizes
+│   │   └── switch.sh         Switch active model + restart server
+│   └── benchmark.sh          Run pp/tg benchmark + API timing
+├── nginx/
+│   └── llm-proxy.conf        nginx site config (TLS + auth + allowlist)
+├── systemd/
+│   └── llm-server.service    systemd unit file
+├── client/
+│   └── setup.md              LXD container client setup walkthrough
+└── logs/
+    └── benchmark-history.csv Benchmark results over time
+
+═══════════════════════════════════════════════════════════════
+ DECISIONS LOG
+═══════════════════════════════════════════════════════════════
+
+llama.cpp over Ollama:
+  Ollama is llama.cpp under the hood. Direct llama-server is identical
+  in model support but exposes --n-gpu-layers, --threads, --batch-size
+  tuning that Ollama hides. Easier to script model switching too.
+
+Vulkan over ROCm:
+  ROCm 6.x has poor support for integrated/embedded AMD GPUs. Vulkan
+  compute is stable on the 890M and supported by llama.cpp's GGML backend.
+
+nginx over Caddy/Traefik:
+  nginx is universally available, well-understood, and the config is
+  simple enough for LAN use. No dynamic cert rotation needed.
+
+opencode over shell_gpt / aider / llm-cli:
+  opencode natively targets terminal coding workflows and supports
+  OpenAI-compatible custom endpoints with minimal config.
