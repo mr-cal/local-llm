@@ -142,16 +142,41 @@ This prints the exact `export` commands and config for your specific server IP a
 # Install opencode
 curl -fsSL https://opencode.ai/install | sh
 
-# Add to ~/.bashrc (values from `llm client setup` output above)
-export OPENAI_BASE_URL="https://192.168.1.x:8443/v1"
-export OPENAI_API_KEY="your-api-key"
-
 # Test connectivity
 curl -sk https://192.168.1.x:8443/health \
   -H "Authorization: Bearer your-api-key"
 
 # Start coding
 opencode
+```
+
+**Option A — env vars** (add to `~/.bashrc`):
+```bash
+export OPENAI_BASE_URL="https://192.168.1.x:8443/v1"
+export OPENAI_API_KEY="your-api-key"
+```
+
+**Option B — opencode config** (`~/.config/opencode/opencode.json`):
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "local-llm": {
+      "api": "openai",
+      "name": "Local LLM (llama-server)",
+      "options": {
+        "apiKey": "your-api-key",
+        "baseURL": "https://192.168.1.x:8443/v1"
+      },
+      "models": {
+        "Qwen2.5-Coder-14B-Instruct-Q4_K_M": {
+          "name": "Qwen2.5-Coder-14B-Instruct-Q4_K_M"
+        }
+      }
+    }
+  },
+  "model": "local-llm/Qwen2.5-Coder-14B-Instruct-Q4_K_M"
+}
 ```
 
 > **The `llm` CLI is a server management tool.** The client container does not need this repo, `uv`, or a `config.toml`.

@@ -65,14 +65,31 @@ def setup(
     export_block = f'export OPENAI_BASE_URL="{resolved_base_url}"\nexport OPENAI_API_KEY="{resolved_key}"\n'
     console.print(Syntax(export_block, "bash", theme="monokai"))
 
-    console.print("[bold]2. opencode provider config[/bold]  (alternative to env vars)\n")
+    console.print("[bold]2. opencode config[/bold]  (~/.config/opencode/opencode.json)\n")
+    # Model ID within the provider (strip .gguf for a cleaner model ID)
+    model_id = resolved_model.removesuffix(".gguf")
     opencode_block = (
-        "[providers.local-llm]\n"
-        f'  api_key  = "{resolved_key}"\n'
-        f'  base_url = "{resolved_base_url}"\n'
-        f'  model    = "{resolved_model}"\n'
+        "{\n"
+        '  "$schema": "https://opencode.ai/config.json",\n'
+        '  "provider": {\n'
+        '    "local-llm": {\n'
+        '      "api": "openai",\n'
+        '      "name": "Local LLM (llama-server)",\n'
+        '      "options": {\n'
+        f'        "apiKey": "{resolved_key}",\n'
+        f'        "baseURL": "{resolved_base_url}"\n'
+        "      },\n"
+        '      "models": {\n'
+        f'        "{model_id}": {{\n'
+        f'          "name": "{model_id}"\n'
+        "        }\n"
+        "      }\n"
+        "    }\n"
+        "  },\n"
+        f'  "model": "local-llm/{model_id}"\n'
+        "}"
     )
-    console.print(Syntax(opencode_block, "toml", theme="monokai"))
+    console.print(Syntax(opencode_block, "jsonc", theme="monokai"))
 
     console.print("[bold]3. Test connectivity from the container:[/bold]\n")
     curl_cmd = f'curl -sk {health_url}/health \\\n  -H "Authorization: Bearer {resolved_key}"'
