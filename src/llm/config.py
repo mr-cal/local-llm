@@ -89,6 +89,12 @@ lan_subnet = "192.168.1.0/24"
 # Generate a strong key:
 #   python -c "import secrets; print(secrets.token_hex(32))"
 api_key = "change-me-generate-a-strong-random-key"
+
+# Path to the self-signed TLS certificate (public cert only, not the key).
+# Used by `llm client setup` to display installation instructions for the LXD container.
+# Generate with: uv run llm config gencert
+# (this sets the correct SubjectAltName for the LAN IP — required by modern TLS / Node.js)
+cert_path = "/etc/ssl/local-llm/cert.pem"
 """
 
 
@@ -112,6 +118,7 @@ class ProxySettings(BaseModel):
     lan_ip: str = "192.168.1.100"
     lan_subnet: str = "192.168.1.0/24"
     api_key: str = "change-me-generate-a-strong-random-key"
+    cert_path: str = "/etc/ssl/local-llm/cert.pem"
 
 
 class Settings(BaseModel):
@@ -259,3 +266,77 @@ def config_apply() -> None:
     console.print("  systemd:")
     console.print("    sudo cp systemd/llm-server.service /etc/systemd/system/")
     console.print("    sudo systemctl daemon-reload && sudo systemctl enable --now llm-server")
+
+
+@app.command("gencert")
+def config_gencert(
+    force: Annotated[bool, typer.Option("--force", help="Overwrite existing cert.")] = False,
+) -> None:
+    """Generate a self-signed TLS certificate with the correct SubjectAltName.
+
+    IMPORTANT: The cert MUST include a SAN matching the server's LAN IP.
+    Node.js (and modern browsers) reject certs that only have a CN — they require
+    a SubjectAltName. This command uses the lan_ip from config.toml automatically.
+
+    Writes cert + key to the paths configured in [proxy] cert_path (key stored
+    alongside as key.pem). Requires openssl and sudo.
+    """
+    import subprocess  # noqa: PLC0415
+
+    cfg = load_config()
+    cert_path = Path(cfg.proxy.cert_path)
+    key_path = cert_path.parent / "key.pem"
+    lan_ip = cfg.proxy.lan_ip
+
+    if cert_path.exists() and not force:
+        console.print(
+            f"[yellow]Cert already exists:[/yellow] {cert_path}\n"
+            "Use [bold]--force[/bold] to regenerate."
+        )
+        raise typer.Exit(1)
+
+    console.print(f"Generating cert for IP [bold]{lan_ip}[/bold] → {cert_path}")
+
+    cmd = [
+        "sudo",
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:4096",
+        "-keyout",
+        str(key_path),
+        "-out",
+        str(cert_path),
+        "-days",
+        "3650",
+        "-nodes",
+        "-subj",
+        "/CN=local-llm",
+        "-addext",
+        f"subjectAltName=IP:{lan_ip},DNS:local-llm",
+    ]
+
+    # Ensure the directory exists first
+    mkdir_result = subprocess.run(["sudo", "mkdir", "-p", str(cert_path.parent)], check=False)
+    if mkdir_result.returncode != 0:
+        console.print(f"[red]Failed to create directory:[/red] {cert_path.parent}")
+        raise typer.Exit(1)
+
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        console.print(f"[red]openssl failed:[/red]\n{result.stderr}")
+        raise typer.Exit(1)
+
+    # Restrict permissions on the private key
+    subprocess.run(["sudo", "chmod", "600", str(key_path)], check=False)
+
+    console.print(f"[green]Certificate written:[/green] {cert_path}")
+    console.print(f"[green]Private key written:[/green]  {key_path}")
+    console.print(
+        "\n[bold]Next:[/bold] Update nginx to reference the new cert, then reload:\n"
+        "  uv run llm config apply\n"
+        "  sudo cp nginx/llm-proxy.conf /etc/nginx/sites-available/llm\n"
+        "  sudo nginx -t && sudo systemctl reload nginx\n"
+        "\nThen re-run [bold]uv run llm client setup[/bold] to get updated container instructions."
+    )

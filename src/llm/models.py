@@ -123,8 +123,23 @@ def download(
         return
 
     if target is None:
-        console.print("[red]TARGET is required.[/red] Use --list to see available aliases.")
-        raise typer.Exit(1)
+        t = Table(title="Known model aliases  (pass an alias to download)", show_header=True)
+        t.add_column("Alias", style="cyan")
+        t.add_column("Filename")
+        t.add_column("Approx size", style="green")
+        sizes = {
+            "qwen2.5-coder-7b-q8": "~8 GB",
+            "qwen2.5-coder-14b-q4": "~8.5 GB",
+            "qwen2.5-coder-32b-q4": "~18 GB",
+            "qwen2.5-coder-32b-q8": "~34 GB",
+            "qwen2.5-72b-q4": "~42 GB",
+            "qwen3-30b-moe-q4": "~17 GB",
+        }
+        for alias, (_, fname) in KNOWN_MODELS.items():
+            t.add_row(alias, fname, sizes.get(alias, ""))
+        console.print(t)
+        console.print("\nUsage: [bold]uv run llm model download <alias>[/bold]")
+        return
 
     # Resolve alias → repo + filename
     if target in KNOWN_MODELS:

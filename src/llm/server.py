@@ -17,6 +17,49 @@ from llm.config import load_config
 app = typer.Typer(help="Manage the llama-server process.")
 console = Console()
 
+
+# ── nginx helpers ─────────────────────────────────────────────────────────────
+
+def _nginx_is_active() -> bool:
+    result = subprocess.run(
+        ["systemctl", "is-active", "nginx"],
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip() == "active"
+
+
+def _nginx_start() -> bool:
+    """Start nginx via systemctl. Returns True on success."""
+    result = subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def _nginx_reload() -> bool:
+    """Reload nginx config. Returns True on success."""
+    result = subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def _nginx_stop() -> bool:
+    """Stop nginx via systemctl. Returns True on success."""
+    result = subprocess.run(["sudo", "systemctl", "stop", "nginx"], capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def _nginx_ensure_running() -> None:
+    """Start nginx if it isn't already running; reload if it is."""
+    if _nginx_is_active():
+        if _nginx_reload():
+            console.print("[green]nginx[/green]       reloaded")
+        else:
+            console.print("[yellow]nginx[/yellow]       reload failed — check: sudo nginx -t")
+    else:
+        if _nginx_start():
+            console.print("[green]nginx[/green]       started")
+        else:
+            console.print("[yellow]nginx[/yellow]       failed to start — check: sudo systemctl status nginx")
+
+
 # Runtime files live alongside the config in the project directory.
 # Both are gitignored.
 _PID_FILE = Path(".server.pid")
@@ -117,15 +160,18 @@ def start(
             try:
                 httpx.get(f"{cfg.internal_url}/health", timeout=1).raise_for_status()
                 console.print(" [green]ready[/green]")
-                return
+                break
             except Exception:
                 pass
-        console.print(" [yellow]timeout (server may still be loading)[/yellow]")
+        else:
+            console.print(" [yellow]timeout (server may still be loading)[/yellow]")
+
+    _nginx_ensure_running()
 
 
 @app.command("stop")
 def stop() -> None:
-    """Stop the running llama-server."""
+    """Stop the running llama-server and nginx."""
     pid = _read_pid()
     if pid is None:
         console.print("[yellow]Server is not running[/yellow]")
@@ -143,6 +189,12 @@ def stop() -> None:
     _pid_file().unlink(missing_ok=True)
     console.print(f"[green]Stopped[/green] llama-server (PID {pid})")
 
+    if _nginx_is_active():
+        if _nginx_stop():
+            console.print("[green]Stopped[/green] nginx")
+        else:
+            console.print("[yellow]nginx[/yellow]       failed to stop — check: sudo systemctl status nginx")
+
 
 @app.command("restart")
 def restart() -> None:
@@ -155,16 +207,21 @@ def restart() -> None:
 
 @app.command("status")
 def status() -> None:
-    """Show whether llama-server is running."""
+    """Show whether llama-server and nginx are running."""
     pid = _read_pid()
     if pid:
         cfg = load_config()
-        console.print(f"[green]● Running[/green]  PID {pid}  port {cfg.server.port}")
+        console.print(f"[green]● llama-server[/green]  PID {pid}  port {cfg.server.port}")
         console.print(f"  Model : {cfg.models.active}")
         console.print(f"  Logs  : {_log_file().resolve()}")
     else:
-        console.print("[red]● Stopped[/red]")
-        console.print("Run [bold]uv run llm server start[/bold] to start.")
+        console.print("[red]● llama-server[/red]  stopped")
+        console.print("  Run [bold]uv run llm server start[/bold] to start.")
+
+    if _nginx_is_active():
+        console.print("[green]● nginx[/green]         active")
+    else:
+        console.print("[red]● nginx[/red]         stopped")
 
 
 @app.command("logs")
