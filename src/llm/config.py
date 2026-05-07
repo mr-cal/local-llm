@@ -206,6 +206,11 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     # requests and serves whatever is currently loaded.
     model_key = "local"
 
+    # Without limit.input set, opencode ignores compaction.reserved and fires at
+    # context - max_output (= 32K for Qwen3). Setting limit.input = n_ctx unlocks
+    # the reserved path: usable = n_ctx - reserved, so compaction fires at ~57K.
+    _compaction_reserved = 8192
+
     return {
         "$schema": "https://opencode.ai/config.json",
         "snapshot": True,
@@ -223,6 +228,13 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                 "temperature": 0.1,
             },
         },
+        # Compaction: fire late, keep lots of recent context verbatim so the
+        # model doesn't forget what it was doing mid-task.
+        "compaction": {
+            "reserved": _compaction_reserved,
+            "tail_turns": 10,
+            "preserve_recent_tokens": 20000,
+        },
         "provider": {
             "local-llm": {
                 "name": "Local LLM",
@@ -234,6 +246,11 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                         "name": display_name,
                         "limit": {
                             "context": cfg.server.n_ctx,
+                            # Setting input = context activates the reserved path in
+                            # opencode's overflow calc: usable = input - reserved.
+                            # Without this, reserved is ignored and compaction fires
+                            # at context - max_output (half the window for Qwen3).
+                            "input": cfg.server.n_ctx,
                             "output": max_output,
                         },
                         "tool_call": True,
