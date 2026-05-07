@@ -21,6 +21,7 @@ class ModelEntry(NamedTuple):
     filename: str
     size: str
     description: str
+    max_output: int = 8192  # max tokens the model can generate in one response
 
 
 # Curated catalog of recommended models. Add new entries here as models are released.
@@ -62,8 +63,6 @@ KNOWN_MODELS: list[ModelEntry] = [
         "~42 GB",
         "Qwen 2.5 72B — near-frontier quality (fits in 62 GB)",
     ),
-    # ── Qwen 3 ───────────────────────────────────────────────────────────────
-    # ── Qwen 3 (see Qwen 3.x section below for newer models) ────────────────
     # ── Gemma 4 ──────────────────────────────────────────────────────────────
     ModelEntry(
         "gemma-4-31b-q4",
@@ -108,6 +107,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "Qwen_Qwen3-8B-Q8_0.gguf",
         "~9 GB",
         "Qwen3 8B — fast, near-lossless quant",
+        max_output=32768,
     ),
     ModelEntry(
         "qwen3-14b-q8",
@@ -115,6 +115,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "Qwen_Qwen3-14B-Q8_0.gguf",
         "~16 GB",
         "Qwen3 14B — near-lossless, strong coding",
+        max_output=32768,
     ),
     ModelEntry(
         "qwen3-32b-q4",
@@ -122,6 +123,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "Qwen_Qwen3-32B-Q4_K_M.gguf",
         "~20 GB",
         "Qwen3 32B dense — top-tier coding quality",
+        max_output=32768,
     ),
     ModelEntry(
         "qwen3-30b-moe-q4",
@@ -129,6 +131,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
         "~19 GB",
         "Qwen3 30B MoE — 3.3B active params, fast TG, outperforms QwQ-32B",
+        max_output=32768,
     ),
     # ── Qwen 3.6 (April 2026) ────────────────────────────────────────────────
     ModelEntry(
@@ -137,6 +140,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
         "~21 GB",
         "Qwen3.6 35B MoE — newest, best agentic coding (SWE-bench 73%), 262K ctx",
+        max_output=32768,
     ),
     ModelEntry(
         "qwen3.6-27b-q4",
@@ -144,6 +148,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "Qwen_Qwen3.6-27B-Q4_K_M.gguf",
         "~18 GB",
         "Qwen3.6 27B dense — Apr 2026, 262K context, multimodal",
+        max_output=32768,
     ),
 ]
 

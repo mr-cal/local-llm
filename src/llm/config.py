@@ -41,9 +41,11 @@ port = 8080
 # Each offloaded layer uses ~100–200 MB of shared VRAM depending on the model.
 n_gpu_layers = 20
 
-# Context window in tokens. Larger uses more RAM. 4096 is a safe default.
-# For a 14B Q4 model with 62 GB RAM you can safely go up to 32768.
-n_ctx = 4096
+# Context window in tokens. Larger uses more VRAM for the KV cache.
+# For agentic coding/research tasks, 65536+ is recommended — conversations
+# and file context grow fast. With q8_0 KV cache (~50% savings), a 20 GB model
+# on 31 GB GPU leaves ~11 GB for KV, comfortably fitting 65536 tokens.
+n_ctx = 65536
 
 # CPU inference threads. Recommended: physical core count (not hyperthreads).
 # Ryzen AI 9 HX 370 has 12 physical cores → set 12.
@@ -190,9 +192,67 @@ def config_init(
     console.print("Edit it, then run: [bold]uv run llm config apply[/bold]")
 
 
+def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
+    """Build the opencode provider config dict from current settings."""
+    from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
+    active = cfg.models.active
+    entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
+    display_name = entry.alias if entry else active
+    max_output = entry.max_output if entry else 8192
+
+    # Use a stable generic key so the opencode config never needs updating when
+    # switching models. llama-server ignores the model name in chat completion
+    # requests and serves whatever is currently loaded.
+    model_key = "local"
+
+    return {
+        "$schema": "https://opencode.ai/config.json",
+        "snapshot": True,
+        "watcher": {
+            "ignore": [".venv", "**/*.pyc", "**/__pycache__", "**/node_modules"],
+        },
+        "permission": "allow",
+        "model": f"local-llm/{model_key}",
+        "agent": {
+            "build": {
+                "temperature": 0.3,
+                "steps": 50,
+            },
+            "plan": {
+                "temperature": 0.1,
+            },
+        },
+        "providers": {
+            "local-llm": {
+                "name": "Local LLM",
+                "npm": "@ai-sdk/openai-compatible",
+                "api": f"{cfg.proxy_url}/v1",
+                "options": {"apiKey": cfg.proxy.api_key},
+                "models": {
+                    model_key: {
+                        "name": display_name,
+                        "limit": {
+                            "context": cfg.server.n_ctx,
+                            "output": max_output,
+                        },
+                        "tool_call": True,
+                        "options": {"repeat_penalty": 1.2},
+                    }
+                },
+            }
+        },
+    }
+
+
+_OPENCODE_CONFIG_PATH = Path("~/.config/opencode/config.json")
+
+
 @app.command("show")
 def config_show() -> None:
-    """Print current configuration (masks api_key and hf_token)."""
+    """Print current configuration (masks api_key and hf_token) and opencode config."""
+    import json  # noqa: PLC0415
+
     cfg = load_config()
     _CONFIG_TEMPLATE.splitlines()
     # Build a display-safe version by masking secrets
@@ -219,10 +279,16 @@ def config_show() -> None:
     output = _to_toml_ish(masked)
     console.print(Syntax(output, "toml", theme="monokai"))
 
+    opencode_cfg = _build_opencode_config(cfg)
+    console.print("\n[bold]opencode config[/bold] (~/.config/opencode/config.json):")
+    console.print(Syntax(json.dumps(opencode_cfg, indent=2), "json", theme="monokai"))
+
 
 @app.command("apply")
 def config_apply() -> None:
-    """Render nginx and systemd templates using current config."""
+    """Render nginx/systemd templates and write opencode config using current settings."""
+    import json  # noqa: PLC0415
+
     cfg = load_config()
     project_root = find_config().parent
 
@@ -258,6 +324,13 @@ def config_apply() -> None:
             text = text.replace(placeholder, value)
         dst.write_text(text)
         console.print(f"[green]Rendered[/green] {dst}")
+
+    # Always write opencode config
+    opencode_path = _OPENCODE_CONFIG_PATH.expanduser()
+    opencode_path.parent.mkdir(parents=True, exist_ok=True)
+    opencode_cfg = _build_opencode_config(cfg)
+    opencode_path.write_text(json.dumps(opencode_cfg, indent=2) + "\n")
+    console.print(f"[green]Rendered[/green] {opencode_path}")
 
     console.print("\nNext steps:")
     console.print("  nginx:")
