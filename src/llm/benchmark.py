@@ -126,16 +126,24 @@ def _apply_config(n_gpu_layers: int, flash_attn: bool, ctk: str) -> None:
     config_path = find_config()
     text = config_path.read_text()
 
-    text = re.sub(r"^n_gpu_layers\s*=\s*\d+", f"n_gpu_layers = {n_gpu_layers}", text, flags=re.MULTILINE)
-
+    old_ngl = cfg.server.n_gpu_layers
+    old_extra = list(cfg.server.extra_args)
     new_extra = _build_extra_args(flash_attn, ctk, cfg.server.extra_args)
+
+    text = re.sub(r"^n_gpu_layers\s*=\s*\d+", f"n_gpu_layers = {n_gpu_layers}", text, flags=re.MULTILINE)
     text = re.sub(r"^extra_args\s*=\s*\[.*?\]", f"extra_args = {new_extra!r}", text, flags=re.MULTILINE)
 
     config_path.write_text(text)
-    console.print(
-        f"[green]Config updated:[/green] n_gpu_layers={n_gpu_layers}"
-        f"  flash_attn={flash_attn}  cache_type_k={ctk}"
-    )
+
+    console.print("[green]Config updated:[/green]")
+    if old_ngl != n_gpu_layers:
+        console.print(f"  n_gpu_layers : [red]{old_ngl}[/red] → [green]{n_gpu_layers}[/green]")
+    else:
+        console.print(f"  n_gpu_layers : {n_gpu_layers} [dim](unchanged)[/dim]")
+    if old_extra != new_extra:
+        console.print(f"  extra_args   : [red]{old_extra!r}[/red] → [green]{new_extra!r}[/green]")
+    else:
+        console.print(f"  extra_args   : {new_extra!r} [dim](unchanged)[/dim]")
 
 
 def _ensure_history_file() -> None:
