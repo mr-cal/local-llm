@@ -223,7 +223,7 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                 "temperature": 0.1,
             },
         },
-        "providers": {
+        "provider": {
             "local-llm": {
                 "name": "Local LLM",
                 "npm": "@ai-sdk/openai-compatible",
@@ -245,7 +245,42 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     }
 
 
+_OPENCODE_SCHEMA_URL = "https://opencode.ai/config.json"
 _OPENCODE_CONFIG_PATH = Path("~/.config/opencode/config.json")
+
+
+def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type-arg]
+    """Validate opencode config dict against the live schema. Returns list of error strings."""
+    import copy  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    import warnings  # noqa: PLC0415
+
+    import jsonschema  # noqa: PLC0415
+
+    try:
+        req = urllib.request.Request(
+            _OPENCODE_SCHEMA_URL,
+            headers={"User-Agent": "local-llm-config-validator/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            schema = __import__("json").loads(resp.read())
+    except Exception as exc:
+        return [f"⚠ Could not fetch schema ({exc}) — skipping validation"]
+
+    # Strip the $ref from 'model' field: it points to models.dev enum of known
+    # cloud providers. Custom local providers will never be in that list, so we
+    # validate it as a plain string only.
+    schema = copy.deepcopy(schema)
+    if "model" in schema.get("properties", {}):
+        schema["properties"]["model"] = {"type": "string"}
+
+    errors = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for err in jsonschema.Draft202012Validator(schema).iter_errors(cfg_dict):
+            path = " → ".join(str(p) for p in err.absolute_path) or "(root)"
+            errors.append(f"{path}: {err.message}")
+    return errors
 
 
 @app.command("show")
@@ -282,6 +317,18 @@ def config_show() -> None:
     opencode_cfg = _build_opencode_config(cfg)
     console.print("\n[bold]opencode config[/bold] (~/.config/opencode/config.json):")
     console.print(Syntax(json.dumps(opencode_cfg, indent=2), "json", theme="monokai"))
+
+    console.print("\n[dim]Validating against opencode.ai/config.json schema…[/dim]")
+    errors = _validate_opencode_config(opencode_cfg)
+    fetch_warning = next((e for e in errors if e.startswith("⚠")), None)
+    real_errors = [e for e in errors if not e.startswith("⚠")]
+    if fetch_warning:
+        console.print(f"  [yellow]{fetch_warning}[/yellow]")
+    elif real_errors:
+        for err in real_errors:
+            console.print(f"  [red]✗[/red]  {err}")
+    else:
+        console.print("  [green]✓[/green] Schema valid")
 
 
 @app.command("apply")
@@ -329,6 +376,22 @@ def config_apply() -> None:
     opencode_path = _OPENCODE_CONFIG_PATH.expanduser()
     opencode_path.parent.mkdir(parents=True, exist_ok=True)
     opencode_cfg = _build_opencode_config(cfg)
+
+    console.print("\n[dim]Validating opencode config against schema…[/dim]")
+    errors = _validate_opencode_config(opencode_cfg)
+    fetch_warning = next((e for e in errors if e.startswith("⚠")), None)
+    real_errors = [e for e in errors if not e.startswith("⚠")]
+
+    if fetch_warning:
+        console.print(f"  [yellow]{fetch_warning}[/yellow]")
+    elif real_errors:
+        for err in real_errors:
+            console.print(f"  [red]✗[/red]  {err}")
+        console.print("\n[red]opencode config has schema errors — not written.[/red]")
+        raise typer.Exit(1)
+    else:
+        console.print("  [green]✓[/green] Schema valid")
+
     opencode_path.write_text(json.dumps(opencode_cfg, indent=2) + "\n")
     console.print(f"[green]Rendered[/green] {opencode_path}")
 
