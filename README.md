@@ -195,10 +195,15 @@ This machine has 62 GB RAM — larger models than most systems can run.
 | `qwen2.5-coder-32b-q8` | ~34 GB | High-precision 32B |
 | `qwen2.5-72b-q4` | ~42 GB | Near-frontier quality — fits in 62 GB |
 | `qwen3-30b-moe-q4` | ~17 GB | MoE architecture, efficient at 30B scale |
+| `gemma-4-31b-q4` | ~20 GB | Google Gemma 4 — newest, multimodal |
+| `gemma-3-27b-q4` | ~17 GB | Gemma 3 27B — strong all-rounder, multimodal |
+| `gemma-3-27b-q8` | ~29 GB | Gemma 3 27B — high precision, multimodal |
+| `gemma-3-12b-q4` | ~7 GB | Gemma 3 12B — fast, multimodal |
+| `gemma-3-12b-q8` | ~13 GB | Gemma 3 12B — high precision, multimodal |
 
 Switch models without stopping the server:
 ```bash
-uv run llm model switch Qwen2.5-72B-Instruct-Q4_K_M.gguf
+uv run llm model switch gemma-4-31b-q4
 ```
 
 ---
