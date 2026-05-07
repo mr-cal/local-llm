@@ -399,8 +399,8 @@ def tune(
     best_tg_p3 = 0.0
     for ctk_val, note in [("f16", "full precision"), ("q8_0", "~50% less VRAM")]:
         pp, tg = _bench_tps(rows_p3, n_gpu_layers=best_ngl, flash_attn=best_fa, type_k=ctk_val)
-        # Prefer q8_0 if within 5% of f16 — better OOM safety
-        if ctk_val == "q8_0" and tg >= best_tg_p3 * 0.95:
+        # Prefer q8_0 if within 10% of f16 — halves KV VRAM, better long-ctx safety
+        if ctk_val == "q8_0" and tg >= best_tg_p3 * 0.90:
             best_ctk, best_tg_p3 = ctk_val, tg
         elif ctk_val == "f16":
             best_tg_p3, best_ctk = tg, "f16"
