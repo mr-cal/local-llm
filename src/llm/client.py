@@ -78,8 +78,7 @@ def setup(
     console.print("[bold]Step 1 — Install TLS certificate[/bold]  (in the LXD container)\n")
     if cert_pem:
         console.print(
-            "Save the following certificate to a file on the container, "
-            "then trust it for Node.js:\n"
+            "Save the following certificate to a file on the container, then trust it for Node.js:\n"
         )
         console.print(Syntax(cert_pem, "text", theme="monokai"))
         console.print()
@@ -91,7 +90,7 @@ def setup(
             "EOF\n\n"
             "# Tell Node.js (opencode) to trust it — add to ~/.bashrc\n"
             "echo 'export NODE_EXTRA_CA_CERTS=\"$HOME/.config/opencode/local-llm.pem\"' >> ~/.bashrc\n"
-            "export NODE_EXTRA_CA_CERTS=\"$HOME/.config/opencode/local-llm.pem\""
+            'export NODE_EXTRA_CA_CERTS="$HOME/.config/opencode/local-llm.pem"'
         )
         console.print(Syntax(cert_install, "bash", theme="monokai"))
     else:

@@ -20,10 +20,12 @@ console = Console()
 
 # ── nginx helpers ─────────────────────────────────────────────────────────────
 
+
 def _nginx_is_active() -> bool:
     result = subprocess.run(
         ["systemctl", "is-active", "nginx"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     return result.stdout.strip() == "active"
 

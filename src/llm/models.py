@@ -63,13 +63,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "Qwen 2.5 72B — near-frontier quality (fits in 62 GB)",
     ),
     # ── Qwen 3 ───────────────────────────────────────────────────────────────
-    ModelEntry(
-        "qwen3-30b-moe-q4",
-        "bartowski/Qwen3-30B-A3B-GGUF",
-        "Qwen3-30B-A3B-Q4_K_M.gguf",
-        "~17 GB",
-        "Qwen 3 30B MoE — efficient MoE architecture",
-    ),
+    # ── Qwen 3 (see Qwen 3.x section below for newer models) ────────────────
     # ── Gemma 4 ──────────────────────────────────────────────────────────────
     ModelEntry(
         "gemma-4-31b-q4",
@@ -106,6 +100,50 @@ KNOWN_MODELS: list[ModelEntry] = [
         "google_gemma-3-12b-it-Q8_0.gguf",
         "~13 GB",
         "Gemma 3 12B — high precision, multimodal",
+    ),
+    # ── Qwen 3 ───────────────────────────────────────────────────────────────
+    ModelEntry(
+        "qwen3-8b-q8",
+        "bartowski/Qwen_Qwen3-8B-GGUF",
+        "Qwen_Qwen3-8B-Q8_0.gguf",
+        "~9 GB",
+        "Qwen3 8B — fast, near-lossless quant",
+    ),
+    ModelEntry(
+        "qwen3-14b-q8",
+        "bartowski/Qwen_Qwen3-14B-GGUF",
+        "Qwen_Qwen3-14B-Q8_0.gguf",
+        "~16 GB",
+        "Qwen3 14B — near-lossless, strong coding",
+    ),
+    ModelEntry(
+        "qwen3-32b-q4",
+        "bartowski/Qwen_Qwen3-32B-GGUF",
+        "Qwen_Qwen3-32B-Q4_K_M.gguf",
+        "~20 GB",
+        "Qwen3 32B dense — top-tier coding quality",
+    ),
+    ModelEntry(
+        "qwen3-30b-moe-q4",
+        "bartowski/Qwen_Qwen3-30B-A3B-GGUF",
+        "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
+        "~19 GB",
+        "Qwen3 30B MoE — 3.3B active params, fast TG, outperforms QwQ-32B",
+    ),
+    # ── Qwen 3.6 (April 2026) ────────────────────────────────────────────────
+    ModelEntry(
+        "qwen3.6-35b-moe-q4",
+        "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+        "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
+        "~21 GB",
+        "Qwen3.6 35B MoE — newest, best agentic coding (SWE-bench 73%), 262K ctx",
+    ),
+    ModelEntry(
+        "qwen3.6-27b-q4",
+        "bartowski/Qwen_Qwen3.6-27B-GGUF",
+        "Qwen_Qwen3.6-27B-Q4_K_M.gguf",
+        "~18 GB",
+        "Qwen3.6 27B dense — Apr 2026, 262K context, multimodal",
     ),
 ]
 

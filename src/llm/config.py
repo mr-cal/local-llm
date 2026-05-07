@@ -290,8 +290,7 @@ def config_gencert(
 
     if cert_path.exists() and not force:
         console.print(
-            f"[yellow]Cert already exists:[/yellow] {cert_path}\n"
-            "Use [bold]--force[/bold] to regenerate."
+            f"[yellow]Cert already exists:[/yellow] {cert_path}\nUse [bold]--force[/bold] to regenerate."
         )
         raise typer.Exit(1)
 
