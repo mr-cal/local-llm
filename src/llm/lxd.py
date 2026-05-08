@@ -189,7 +189,7 @@ def _fix_vm_user_uid(container):
     if HOST_GID != CONTAINER_GID:
         console.print(f"  Changing in-VM group GID {CONTAINER_GID} → {HOST_GID} to match host...")
         run(["lxc", "exec", container, "--", "groupmod", "-g", str(HOST_GID), CONTAINER_USER])
-        run(
+        r = subprocess.run(
             [
                 "lxc",
                 "exec",
@@ -197,13 +197,17 @@ def _fix_vm_user_uid(container):
                 "--",
                 "bash",
                 "-c",
-                f"find / -xdev -group {CONTAINER_GID} -exec chgrp {HOST_GID} {{}} + 2>/dev/null; true",
-            ]
+                f"find / -xdev -group {CONTAINER_GID} -exec chgrp {HOST_GID} {{}} + 2>&1",
+            ],
+            capture_output=True,
+            text=True,
         )
+        if r.returncode != 0:
+            console.print(f"[yellow]  Warning:[/yellow] chgrp may have missed some files: {r.stderr.strip()}")
     if HOST_UID != CONTAINER_UID:
         console.print(f"  Changing in-VM user UID {CONTAINER_UID} → {HOST_UID} to match host...")
         run(["lxc", "exec", container, "--", "usermod", "-u", str(HOST_UID), CONTAINER_USER])
-        run(
+        r = subprocess.run(
             [
                 "lxc",
                 "exec",
@@ -211,9 +215,13 @@ def _fix_vm_user_uid(container):
                 "--",
                 "bash",
                 "-c",
-                f"find / -xdev -user {CONTAINER_UID} -exec chown {HOST_UID} {{}} + 2>/dev/null; true",
-            ]
+                f"find / -xdev -user {CONTAINER_UID} -exec chown {HOST_UID} {{}} + 2>&1",
+            ],
+            capture_output=True,
+            text=True,
         )
+        if r.returncode != 0:
+            console.print(f"[yellow]  Warning:[/yellow] chown may have missed some files: {r.stderr.strip()}")
 
 
 def _subid_covers(lines: list[str], name: str, uid: int) -> bool:
