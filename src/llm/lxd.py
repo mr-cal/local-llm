@@ -570,6 +570,38 @@ def setup_nested_lxd(container, step: str = "5/5", uid: int = HOST_UID):
     console.print("  Nested LXD ready.")
 
 
+def _t_venv_exists(container: str) -> None:
+    """Assert that .venv exists in every configured craft directory inside the container."""
+    missing = []
+    for directory in MAKE_SETUP_DIRS:
+        if not os.path.isdir(directory):
+            continue
+        venv = os.path.join(directory, ".venv")
+        r = subprocess.run(
+            ["lxc", "exec", container, "--", "ls", venv],
+            capture_output=True,
+        )
+        if r.returncode != 0:
+            missing.append(directory)
+    assert not missing, f"missing .venv in: {missing}"
+
+
+def _t_venv_interpreter_valid() -> None:
+    """Assert that the venv Python interpreter is executable on the host in all setup dirs."""
+    failures = []
+    for directory in MAKE_SETUP_DIRS:
+        if not os.path.isdir(directory):
+            continue
+        python = os.path.join(directory, ".venv", "bin", "python3")
+        if not os.path.exists(python):
+            failures.append(f"not found: {python}")
+            continue
+        r = subprocess.run([python, "--version"], capture_output=True, text=True)
+        if r.returncode != 0:
+            failures.append(f"{python}: exit {r.returncode}: {r.stderr.strip()}")
+    assert not failures, "\n".join(failures)
+
+
 # -- Verification tests -------------------------------------------------------
 
 
@@ -702,18 +734,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         )
 
     def t_venv_exists():
-        missing = []
-        for directory in MAKE_SETUP_DIRS:
-            if not os.path.isdir(directory):
-                continue
-            venv = os.path.join(directory, ".venv")
-            r = subprocess.run(
-                ["lxc", "exec", container, "--", "ls", venv],
-                capture_output=True,
-            )
-            if r.returncode != 0:
-                missing.append(directory)
-        assert not missing, f"missing .venv in: {missing}"
+        _t_venv_exists(container)
 
     def t_container_user():
         r = subprocess.run(
@@ -728,19 +749,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         )
 
     def t_venv_interpreter_valid():
-        """Venv Python interpreter must be executable on the host in all setup dirs."""
-        failures = []
-        for directory in MAKE_SETUP_DIRS:
-            if not os.path.isdir(directory):
-                continue
-            python = os.path.join(directory, ".venv", "bin", "python3")
-            if not os.path.exists(python):
-                failures.append(f"not found: {python}")
-                continue
-            r = subprocess.run([python, "--version"], capture_output=True, text=True)
-            if r.returncode != 0:
-                failures.append(f"{python}: exit {r.returncode}: {r.stderr.strip()}")
-        assert not failures, "\n".join(failures)
+        _t_venv_interpreter_valid()
 
     def t_pylsp_installed():
         pylsp_bin = f"{CONTAINER_HOME}/.local/bin/pylsp"
@@ -852,38 +861,9 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
 def run_craft_setup_tests(container):
     console.print("\n-- Craft setup verification ----------------------------------------------------")
 
-    def t_venv_exists():
-        missing = []
-        for directory in MAKE_SETUP_DIRS:
-            if not os.path.isdir(directory):
-                continue
-            venv = os.path.join(directory, ".venv")
-            r = subprocess.run(
-                ["lxc", "exec", container, "--", "ls", venv],
-                capture_output=True,
-            )
-            if r.returncode != 0:
-                missing.append(directory)
-        assert not missing, f"missing .venv in: {missing}"
-
-    def t_venv_interpreter_valid():
-        """Venv Python interpreter must be executable on the host in all setup dirs."""
-        failures = []
-        for directory in MAKE_SETUP_DIRS:
-            if not os.path.isdir(directory):
-                continue
-            python = os.path.join(directory, ".venv", "bin", "python3")
-            if not os.path.exists(python):
-                failures.append(f"not found: {python}")
-                continue
-            r = subprocess.run([python, "--version"], capture_output=True, text=True)
-            if r.returncode != 0:
-                failures.append(f"{python}: exit {r.returncode}: {r.stderr.strip()}")
-        assert not failures, "\n".join(failures)
-
     tests = [
-        ("make setup completed (.venv)", t_venv_exists),
-        ("venv Python interpreters valid on host", t_venv_interpreter_valid),
+        ("make setup completed (.venv)", lambda: _t_venv_exists(container)),
+        ("venv Python interpreters valid on host", _t_venv_interpreter_valid),
     ]
 
     results = [check(name, fn) for name, fn in tests]
