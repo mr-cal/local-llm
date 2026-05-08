@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from llm import benchmark, client, config, models, server
+from llm import benchmark, client, config, lxd, models, server
 
 app = typer.Typer(
     name="llm",
@@ -17,6 +17,7 @@ app.add_typer(models.app, name="model")
 app.add_typer(benchmark.app, name="benchmark")
 app.add_typer(client.app, name="client")
 app.add_typer(config.app, name="config")
+app.add_typer(lxd.app, name="lxd")
 
 
 def main() -> None:
