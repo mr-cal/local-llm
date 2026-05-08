@@ -96,9 +96,15 @@ console = Console()
 # -- Helpers ------------------------------------------------------------------
 
 
-def run(cmd, **kwargs):
+def run(cmd, desc: str | None = None, **kwargs):
     console.print(f"  $ {' '.join(str(a) for a in cmd)}")
-    subprocess.run(cmd, check=True, **kwargs)
+    try:
+        subprocess.run(cmd, check=True, **kwargs)
+    except subprocess.CalledProcessError as e:
+        label = desc or " ".join(str(a) for a in cmd[:3])
+        raise subprocess.CalledProcessError(
+            e.returncode, e.cmd, e.output, e.stderr
+        ) from Exception(f"Command failed ({label}): exit {e.returncode}")
 
 
 def run_capture(cmd):
