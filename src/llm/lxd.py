@@ -449,6 +449,68 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
     )
 
 
+def setup_nested_lxd(container, step: str = "5/5", uid: int = HOST_UID):
+    """Install and initialise LXD inside the VM so nested containers can run.
+
+    Steps taken:
+    1. Install the ``lxd`` snap (if not already present).
+    2. Initialise LXD with ``lxd init --auto``.
+    3. Add the VM user to the ``lxd`` group.
+    4. Launch a minimal Ubuntu container to verify nesting works, then delete it.
+    """
+    console.print(f"\n[bold][{step}][/bold] Setting up nested LXD inside VM...")
+
+    console.print("  Installing lxd snap...")
+    run(["lxc", "exec", container, "--", "snap", "install", "lxd"])
+
+    console.print("  Initialising LXD (lxd init --auto)...")
+    run(["lxc", "exec", container, "--", "lxd", "init", "--auto"])
+
+    console.print(f"  Adding uid {uid} to lxd group...")
+    r = subprocess.run(
+        ["lxc", "exec", container, "--", "id", "-un", str(uid)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    vm_username = r.stdout.strip()
+    run(["lxc", "exec", container, "--", "usermod", "-aG", "lxd", vm_username])
+
+    console.print("  Launching nested test container (ubuntu:24.04) to verify nesting...")
+    # usermod -aG doesn't activate the new group in the current session, so use
+    # `sg lxd` to re-exec under the lxd group without requiring a new login.
+    run(
+        [
+            "lxc",
+            "exec",
+            container,
+            f"--user={uid}",
+            f"--env=HOME={CONTAINER_HOME}",
+            "--",
+            "sg",
+            "lxd",
+            "-c",
+            "lxc launch ubuntu:24.04 nested-test",
+        ]
+    )
+    console.print("  Nested container launched. Deleting it...")
+    run(
+        [
+            "lxc",
+            "exec",
+            container,
+            f"--user={uid}",
+            f"--env=HOME={CONTAINER_HOME}",
+            "--",
+            "sg",
+            "lxd",
+            "-c",
+            "lxc delete --force nested-test",
+        ]
+    )
+    console.print("  Nested LXD ready.")
+
+
 # -- Verification tests -------------------------------------------------------
 
 
@@ -654,6 +716,29 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
             f"unexpected command: {servers['python']['command']!r}"
         )
 
+    def t_nested_lxd():
+        r = subprocess.run(
+            [
+                "lxc",
+                "exec",
+                container,
+                f"--user={uid}",
+                f"--env=HOME={CONTAINER_HOME}",
+                "--",
+                "sg",
+                "lxd",
+                "-c",
+                "lxc list --format=json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, f"lxc list failed inside VM: {r.stderr.strip()}"
+        # Confirm the output is valid JSON (list of instances)
+        instances = json.loads(r.stdout)
+        assert isinstance(instances, list), f"expected JSON list, got: {r.stdout!r}"
+
+    is_vm = container_is_vm(container)
     tests = [
         ("Container running", t_running),
         ("build-essential installed", t_build_essential),
@@ -668,6 +753,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         ("opencode config mounted", t_opencode_config_mount),
         ("pylsp installed", t_pylsp_installed),
         ("pylsp registered in lsp-config.json", t_pylsp_lsp_config),
+        *([("nested lxd: lxc list works inside VM", t_nested_lxd)] if is_vm else []),
     ]
 
     results = [check(name, fn) for name, fn in tests]
@@ -797,11 +883,12 @@ def create(
         # VMs have full OS-level isolation — raw.idmap is a container-only feature.
         # Instead, _fix_vm_user_uid changes the in-VM user's UID to match HOST_UID
         # so that bind-mounted files appear as owned by the VM user.
-        # Steps: 1=launch, 2=mounts, 3=packages, 4=pylsp
+        # Steps: 1=launch, 2=mounts, 3=packages, 4=pylsp, 5=nested-lxd
         create_container(container, vm=True)
-        add_mounts(container, step="2/4")
-        install_packages(container, step="3/4", uid=HOST_UID)
-        install_pylsp(container, step="4/4", uid=HOST_UID, gid=HOST_GID)
+        add_mounts(container, step="2/5")
+        install_packages(container, step="3/5", uid=HOST_UID)
+        install_pylsp(container, step="4/5", uid=HOST_UID, gid=HOST_GID)
+        setup_nested_lxd(container, step="5/5", uid=HOST_UID)
     else:
         # Containers: 1=launch, 2=idmap, 3=mounts, 4=packages, 5=pylsp
         create_container(container, vm=False)
@@ -814,9 +901,8 @@ def create(
     effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
     run_tests(container, uid=effective_uid, gid=effective_gid)
 
-    vm_flag = " --lxd-vm" if lxd_vm else ""
     console.print(
-        f"\nNext: run [bold]llm lxd setup-crafts {number}{vm_flag}[/bold] "
+        f"\nNext: run [bold]llm lxd setup-crafts {number}[/bold] "
         "to run 'make setup' in all craft project directories."
     )
 
