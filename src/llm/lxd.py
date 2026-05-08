@@ -96,6 +96,20 @@ console = Console()
 # -- Helpers ------------------------------------------------------------------
 
 
+def _cexec(container: str, uid: int, gid: int, *cmd: str) -> list[str]:
+    """Build an `lxc exec` command running *cmd* as uid/gid inside *container*."""
+    return [
+        "lxc",
+        "exec",
+        container,
+        f"--user={uid}",
+        f"--group={gid}",
+        f"--env=HOME={CONTAINER_HOME}",
+        "--",
+        *cmd,
+    ]
+
+
 def run(cmd, desc: str | None = None, **kwargs):
     console.print(f"  $ {' '.join(str(a) for a in cmd)}")
     try:
@@ -358,13 +372,7 @@ def add_mounts(container, step: str = "3/5", uid: int = CONTAINER_UID, gid: int 
     # create them as root when it sets up the disk devices on the next boot.
     parent_dirs = {str(Path(container_path).parent) for _, _, container_path in MOUNTS}
     for parent in sorted(parent_dirs):
-        run(
-            [
-                "lxc", "exec", container,
-                f"--user={uid}", f"--group={gid}",
-                "--", "mkdir", "-p", parent,
-            ]
-        )
+        run(_cexec(container, uid, gid, "mkdir", "-p", parent))
 
     for name, host_path, container_path in MOUNTS:
         os.makedirs(host_path, exist_ok=True)
@@ -469,22 +477,13 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
     on PATH, and write the gh copilot LSP config into the container."""
     console.print(f"\n[bold][{step}][/bold] Installing pylsp (python-lsp-server) in container...")
 
-    def cexec(*cmd):
-        return [
-            "lxc",
-            "exec",
-            container,
-            f"--user={uid}",
-            f"--group={gid}",
-            f"--env=HOME={CONTAINER_HOME}",
-            "--",
-            *cmd,
-        ]
-
-    run(cexec("uv", "tool", "install", "python-lsp-server"))
+    run(_cexec(container, uid, gid, "uv", "tool", "install", "python-lsp-server"))
     # uv tool update-shell can't detect the shell via lxc exec, so append directly.
     run(
-        cexec(
+        _cexec(
+            container,
+            uid,
+            gid,
             "bash",
             "-c",
             r'grep -qxF "export PATH=$HOME/.local/bin:$PATH" ~/.bashrc'
@@ -495,11 +494,11 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
     console.print(
         f"  Writing LSP config to {CONTAINER_HOME}/.copilot/lsp-config.json in container..."
     )
-    run(cexec("mkdir", "-p", f"{CONTAINER_HOME}/.copilot"))
+    run(_cexec(container, uid, gid, "mkdir", "-p", f"{CONTAINER_HOME}/.copilot"))
 
     # Read any existing config from the container, then merge and write back.
     r = subprocess.run(
-        cexec("cat", f"{CONTAINER_HOME}/.copilot/lsp-config.json"),
+        _cexec(container, uid, gid, "cat", f"{CONTAINER_HOME}/.copilot/lsp-config.json"),
         capture_output=True,
         text=True,
     )
@@ -508,7 +507,7 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
     config_json = json.dumps(existing, indent=2) + "\n"
 
     subprocess.run(
-        cexec("bash", "-c", f"cat > {CONTAINER_HOME}/.copilot/lsp-config.json"),
+        _cexec(container, uid, gid, "bash", "-c", f"cat > {CONTAINER_HOME}/.copilot/lsp-config.json"),
         input=config_json.encode(),
         check=True,
     )
@@ -696,16 +695,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
     def t_write_transparency():
         test_file = f"{HOST_HOME}/dev/.{container}_test_file"
         subprocess.run(
-            [
-                "lxc",
-                "exec",
-                container,
-                f"--user={uid}",
-                f"--group={gid}",
-                "--",
-                "touch",
-                f"{CONTAINER_HOME}/dev/.{container}_test_file",
-            ],
+            _cexec(container, uid, gid, "touch", f"{CONTAINER_HOME}/dev/.{container}_test_file"),
             check=True,
         )
         try:
@@ -718,16 +708,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
 
     def t_passwordless_sudo():
         subprocess.run(
-            [
-                "lxc",
-                "exec",
-                container,
-                f"--user={uid}",
-                "--",
-                "sudo",
-                "-n",
-                "true",
-            ],
+            _cexec(container, uid, gid, "sudo", "-n", "true"),
             capture_output=True,
             check=True,
         )
@@ -760,16 +741,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
     def t_pylsp_installed():
         pylsp_bin = f"{CONTAINER_HOME}/.local/bin/pylsp"
         r = subprocess.run(
-            [
-                "lxc",
-                "exec",
-                container,
-                f"--user={uid}",
-                f"--env=HOME={CONTAINER_HOME}",
-                "--",
-                pylsp_bin,
-                "--version",
-            ],
+            _cexec(container, uid, gid, pylsp_bin, "--version"),
             capture_output=True,
             text=True,
         )
