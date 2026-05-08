@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import time
+import tomllib
 from pathlib import Path
 from typing import Annotated
 
@@ -33,7 +34,25 @@ MOUNTS = [
     ("opencode-config", f"{HOST_HOME}/.config/opencode", f"{CONTAINER_HOME}/.config/opencode"),
 ]
 
-MAKE_SETUP_DIRS = [
+# Path to the user-managed craft directories config (gitignored).
+CRAFT_DIRS_CONFIG = Path(__file__).parent.parent.parent / "craft-dirs.toml"
+
+_CRAFT_DIRS_EXAMPLE = """\
+# craft-dirs.toml — list the craft project directories to set up inside the
+# LXD container/VM.  This file is gitignored; edit it to match your checkout.
+#
+# Each entry is the absolute path to a craft project root that contains a
+# Makefile with a `setup` target.
+
+dirs = [
+    # "{home}/dev/craft/snapcraft/snapcraft-a",
+    # "{home}/dev/craft/snapcraft/snapcraft-main",
+    # "{home}/dev/craft/craft-parts",
+    # "{home}/dev/craft/craft-application",
+]
+""".format(home=HOST_HOME)
+
+_MAKE_SETUP_DIRS_DEFAULT = [
     os.path.join(HOST_HOME, "dev", "craft", "snapcraft", "snapcraft-a"),
     os.path.join(HOST_HOME, "dev", "craft", "snapcraft", "snapcraft-b"),
     os.path.join(HOST_HOME, "dev", "craft", "snapcraft", "snapcraft-main"),
@@ -43,6 +62,18 @@ MAKE_SETUP_DIRS = [
     os.path.join(HOST_HOME, "dev", "craft", "craft-cli"),
     os.path.join(HOST_HOME, "dev", "craft", "craft-grammar"),
 ]
+
+
+def _load_make_setup_dirs() -> list[str]:
+    """Return craft project directories from craft-dirs.toml, or the hardcoded defaults."""
+    if not CRAFT_DIRS_CONFIG.exists():
+        return _MAKE_SETUP_DIRS_DEFAULT
+    with CRAFT_DIRS_CONFIG.open("rb") as f:
+        data = tomllib.load(f)
+    return [str(d) for d in data.get("dirs", [])]
+
+
+MAKE_SETUP_DIRS = _load_make_setup_dirs()
 
 LSP_CONFIG_PATH = f"{CONTAINER_HOME}/.copilot/lsp-config.json"
 
@@ -956,6 +987,14 @@ def setup_crafts(
       llm lxd setup-crafts 1 --lxd-vm   # force VM mode
     """
     container = f"{CONTAINER_PREFIX}-{number}"
+
+    if not CRAFT_DIRS_CONFIG.exists():
+        CRAFT_DIRS_CONFIG.write_text(_CRAFT_DIRS_EXAMPLE)
+        console.print(
+            f"[yellow]Created[/yellow] {CRAFT_DIRS_CONFIG}\n\n"
+            "  Edit it to list your craft project directories, then re-run this command."
+        )
+        raise typer.Exit(0)
 
     if not container_exists(container):
         console.print(

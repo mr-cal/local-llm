@@ -980,8 +980,17 @@ def test_run_tests_uses_custom_uid_gid_for_write_transparency(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_setup_crafts_errors_when_container_missing(monkeypatch):
+def _setup_crafts_with_config(monkeypatch, tmp_path):
+    """Helper: point CRAFT_DIRS_CONFIG at an existing tmp file so tests skip the init branch."""
+    cfg = tmp_path / "craft-dirs.toml"
+    cfg.write_text('dirs = []\n')
+    monkeypatch.setattr(lxd, "CRAFT_DIRS_CONFIG", cfg)
+    monkeypatch.setattr(lxd, "MAKE_SETUP_DIRS", [])
+
+
+def test_setup_crafts_errors_when_container_missing(monkeypatch, tmp_path):
     """setup-crafts exits with error when the container doesn't exist."""
+    _setup_crafts_with_config(monkeypatch, tmp_path)
     monkeypatch.setattr(lxd, "container_exists", lambda _: False)
 
     with pytest.raises(typer.Exit) as exc_info:
@@ -989,8 +998,21 @@ def test_setup_crafts_errors_when_container_missing(monkeypatch):
     assert exc_info.value.exit_code == 1
 
 
+def test_setup_crafts_inits_config_when_missing(monkeypatch, tmp_path):
+    """setup-crafts writes example craft-dirs.toml and exits 0 when config is absent."""
+    cfg = tmp_path / "craft-dirs.toml"
+    monkeypatch.setattr(lxd, "CRAFT_DIRS_CONFIG", cfg)
+
+    with pytest.raises(typer.Exit) as exc_info:
+        lxd.setup_crafts(1)
+    assert exc_info.value.exit_code == 0
+    assert cfg.exists(), "craft-dirs.toml should have been created"
+    assert "dirs" in cfg.read_text()
+
+
 def test_setup_crafts_calls_make_setup_and_tests(monkeypatch, tmp_path):
     """setup-crafts calls run_make_setup then run_craft_setup_tests."""
+    _setup_crafts_with_config(monkeypatch, tmp_path)
     make_calls = []
     test_calls = []
 
@@ -1005,8 +1027,9 @@ def test_setup_crafts_calls_make_setup_and_tests(monkeypatch, tmp_path):
     assert test_calls == ["craft-llm-1"]
 
 
-def test_setup_crafts_uses_host_uid_for_vm(monkeypatch):
+def test_setup_crafts_uses_host_uid_for_vm(monkeypatch, tmp_path):
     """setup-crafts passes HOST_UID/GID when the instance is a VM."""
+    _setup_crafts_with_config(monkeypatch, tmp_path)
     make_calls = []
 
     monkeypatch.setattr(lxd, "container_exists", lambda _: True)
