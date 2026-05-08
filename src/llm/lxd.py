@@ -502,9 +502,21 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
         capture_output=True,
         text=True,
     )
-    existing = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
+    existing: dict = {}
+    if r.returncode == 0 and r.stdout.strip():
+        try:
+            existing = json.loads(r.stdout)
+            if not isinstance(existing, dict):
+                console.print(
+                    "  [yellow]WARNING:[/yellow] lsp-config.json is not a JSON object; overwriting."
+                )
+                existing = {}
+        except json.JSONDecodeError as e:
+            console.print(f"  [yellow]WARNING:[/yellow] lsp-config.json is invalid JSON ({e}); overwriting.")
     existing.setdefault("lspServers", {}).update(PYLSP_LSP_CONFIG["lspServers"])
     config_json = json.dumps(existing, indent=2) + "\n"
+    # Validate before writing — guards against bugs in PYLSP_LSP_CONFIG.
+    json.loads(config_json)
 
     subprocess.run(
         _cexec(container, uid, gid, "bash", "-c", f"cat > {CONTAINER_HOME}/.copilot/lsp-config.json"),
