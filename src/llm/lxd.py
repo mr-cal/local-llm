@@ -129,13 +129,16 @@ def container_is_vm(container):
 # -- Setup steps --------------------------------------------------------------
 
 
+VM_ROOT_DISK_SIZE = "50GB"
+
+
 def create_container(container, vm: bool = False):
     kind = "VM" if vm else "container"
     total_steps = 4 if vm else 5
     console.print(f"\n[bold][1/{total_steps}][/bold] Launching {container} (ubuntu:24.04) as {kind}...")
     launch_cmd = ["lxc", "launch", "ubuntu:24.04", container]
     if vm:
-        launch_cmd.append("--vm")
+        launch_cmd += ["--vm", "--device", f"root,size={VM_ROOT_DISK_SIZE}"]
     run(launch_cmd)
     wait_for_container(container)
     # Rename the default ubuntu user/group to match the host user, and move the
@@ -299,8 +302,21 @@ def configure_idmap(container, step: str = "2/5"):
     wait_for_container(container)
 
 
-def add_mounts(container, step: str = "3/5"):
+def add_mounts(container, step: str = "3/5", uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
     console.print(f"\n[bold][{step}][/bold] Adding bind mounts...")
+
+    # Pre-create mount-point parent directories as the correct user so LXD doesn't
+    # create them as root when it sets up the disk devices on the next boot.
+    parent_dirs = {str(Path(container_path).parent) for _, _, container_path in MOUNTS}
+    for parent in sorted(parent_dirs):
+        run(
+            [
+                "lxc", "exec", container,
+                f"--user={uid}", f"--group={gid}",
+                "--", "mkdir", "-p", parent,
+            ]
+        )
+
     for name, host_path, container_path in MOUNTS:
         os.makedirs(host_path, exist_ok=True)
         run(
@@ -885,7 +901,7 @@ def create(
         # so that bind-mounted files appear as owned by the VM user.
         # Steps: 1=launch, 2=mounts, 3=packages, 4=pylsp, 5=nested-lxd
         create_container(container, vm=True)
-        add_mounts(container, step="2/5")
+        add_mounts(container, step="2/5", uid=HOST_UID, gid=HOST_GID)
         install_packages(container, step="3/5", uid=HOST_UID)
         install_pylsp(container, step="4/5", uid=HOST_UID, gid=HOST_GID)
         setup_nested_lxd(container, step="5/5", uid=HOST_UID)
