@@ -117,6 +117,15 @@ def container_exists(container):
     return any(c["name"] == container for c in json.loads(r.stdout))
 
 
+def container_is_vm(container):
+    """Return True if the named LXD instance is a virtual machine."""
+    r = run_capture(["lxc", "list", container, "--format=json"])
+    if r.returncode != 0:
+        return False
+    instances = json.loads(r.stdout)
+    return any(c["name"] == container and c.get("type") == "virtual-machine" for c in instances)
+
+
 # -- Setup steps --------------------------------------------------------------
 
 
@@ -376,12 +385,16 @@ def run_make_setup(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID
                 f"--user={uid}",
                 f"--group={gid}",
                 f"--env=HOME={CONTAINER_HOME}",
+                f"--env=USER={CONTAINER_USER}",
+                f"--env=LOGNAME={CONTAINER_USER}",
+                # lxc exec with --env replaces the entire environment, so
+                # PATH must be set explicitly to include snap and user binaries.
+                f"--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:{CONTAINER_HOME}/.local/bin",
                 "--env=CI=1",
                 "--",
-                "make",
-                "-C",
-                directory,
-                "setup",
+                "bash",
+                "-c",
+                f"make -C {directory} setup",
             ],
         )
 
@@ -750,16 +763,6 @@ def create(
         bool,
         typer.Option("--recreate", help="Delete the container/VM if it already exists, then recreate it."),
     ] = False,
-    setup_crafts: Annotated[
-        bool,
-        typer.Option(
-            "--setup-crafts",
-            help=(
-                "Run 'make setup' in all craft project directories inside an "
-                "existing container, then verify the venvs."
-            ),
-        ),
-    ] = False,
     lxd_vm: Annotated[
         bool,
         typer.Option("--lxd-vm", help="Create a full LXD VM instead of a container."),
@@ -774,24 +777,9 @@ def create(
       llm lxd create 2 --recreate        # delete and recreate craft-llm-2
 
       llm lxd create 1 --lxd-vm          # create craft-llm-1 as a full VM
-
-      llm lxd create 1 --setup-crafts    # run make setup in all craft dirs
     """
     container = f"{CONTAINER_PREFIX}-{number}"
     kind = "VM" if lxd_vm else "container"
-
-    if setup_crafts:
-        if not container_exists(container):
-            console.print(
-                f"[red]ERROR:[/red] {kind} '{container}' does not exist. "
-                "Create it first without --setup-crafts."
-            )
-            raise typer.Exit(1)
-        effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
-        effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
-        run_make_setup(container, uid=effective_uid, gid=effective_gid)
-        run_craft_setup_tests(container)
-        return
 
     if container_exists(container):
         if not recreate:
@@ -825,3 +813,48 @@ def create(
     effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
     effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
     run_tests(container, uid=effective_uid, gid=effective_gid)
+
+    vm_flag = " --lxd-vm" if lxd_vm else ""
+    console.print(
+        f"\nNext: run [bold]llm lxd setup-crafts {number}{vm_flag}[/bold] "
+        "to run 'make setup' in all craft project directories."
+    )
+
+
+@app.command("setup-crafts")
+def setup_crafts(
+    number: Annotated[int, typer.Argument(help="Container/VM number suffix — targets craft-llm-<number>.")],
+    lxd_vm: Annotated[
+        bool,
+        typer.Option("--lxd-vm", help="Force VM mode (uses HOST_UID/GID). Auto-detected if omitted."),
+    ] = False,
+) -> None:
+    """Run 'make setup' in all craft project directories inside the container/VM.
+
+    The craft project directories are bind-mounted from the host, so the
+    resulting venvs are visible on the host at the same paths.  The instance
+    type (container vs VM) is auto-detected; pass ``--lxd-vm`` to override.
+
+    Examples:
+
+      llm lxd setup-crafts 1             # run make setup in craft-llm-1 (auto-detects VM)
+
+      llm lxd setup-crafts 1 --lxd-vm   # force VM mode
+    """
+    container = f"{CONTAINER_PREFIX}-{number}"
+
+    if not container_exists(container):
+        console.print(
+            f"[red]ERROR:[/red] '{container}' does not exist. "
+            "Create it first with 'llm lxd create'."
+        )
+        raise typer.Exit(1)
+
+    is_vm = lxd_vm or container_is_vm(container)
+    kind = "VM" if is_vm else "container"
+    console.print(f"  Detected {container} as {kind}.")
+
+    effective_uid = HOST_UID if is_vm else CONTAINER_UID
+    effective_gid = HOST_GID if is_vm else CONTAINER_GID
+    run_make_setup(container, uid=effective_uid, gid=effective_gid)
+    run_craft_setup_tests(container)

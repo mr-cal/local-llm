@@ -904,6 +904,8 @@ def test_run_make_setup_uses_custom_uid_gid(monkeypatch, tmp_path):
     flat = [" ".join(c) for c in calls_made]
     assert any("--user=9999" in s for s in flat), "Custom uid not found in lxc exec call"
     assert any("--group=8888" in s for s in flat), "Custom gid not found in lxc exec call"
+    assert any("bash" in s and "make" in s for s in flat), "make not called via bash -c"
+    assert any("/snap/bin" in s for s in flat), "PATH with /snap/bin missing from lxc exec call"
 
 
 def test_install_pylsp_uses_custom_uid_gid(monkeypatch):
@@ -968,3 +970,63 @@ def test_run_tests_uses_custom_uid_gid_for_write_transparency(monkeypatch):
     touch_flat = " ".join(str(x) for x in touch_calls[0])
     assert "--user=9999" in touch_flat, "Custom uid not used in write-transparency touch"
     assert "--group=8888" in touch_flat, "Custom gid not used in write-transparency touch"
+
+
+# ---------------------------------------------------------------------------
+# setup_crafts command
+# ---------------------------------------------------------------------------
+
+
+def test_setup_crafts_errors_when_container_missing(monkeypatch):
+    """setup-crafts exits with error when the container doesn't exist."""
+    monkeypatch.setattr(lxd, "container_exists", lambda _: False)
+
+    with pytest.raises(typer.Exit) as exc_info:
+        lxd.setup_crafts(1)
+    assert exc_info.value.exit_code == 1
+
+
+def test_setup_crafts_calls_make_setup_and_tests(monkeypatch, tmp_path):
+    """setup-crafts calls run_make_setup then run_craft_setup_tests."""
+    make_calls = []
+    test_calls = []
+
+    monkeypatch.setattr(lxd, "container_exists", lambda _: True)
+    monkeypatch.setattr(lxd, "run_make_setup", lambda c, uid, gid: make_calls.append((c, uid, gid)))
+    monkeypatch.setattr(lxd, "run_craft_setup_tests", lambda c: test_calls.append(c))
+
+    lxd.setup_crafts(1)
+
+    assert make_calls == [("craft-llm-1", lxd.CONTAINER_UID, lxd.CONTAINER_GID)]
+    assert test_calls == ["craft-llm-1"]
+
+
+def test_setup_crafts_uses_host_uid_for_vm(monkeypatch):
+    """setup-crafts passes HOST_UID/GID when --lxd-vm is set."""
+    make_calls = []
+
+    monkeypatch.setattr(lxd, "container_exists", lambda _: True)
+    monkeypatch.setattr(lxd, "run_make_setup", lambda c, uid, gid: make_calls.append((uid, gid)))
+    monkeypatch.setattr(lxd, "run_craft_setup_tests", lambda _: None)
+
+    lxd.setup_crafts(1, lxd_vm=True)
+
+    assert make_calls == [(lxd.HOST_UID, lxd.HOST_GID)]
+
+
+def test_create_prints_setup_crafts_hint(monkeypatch):
+    """create prints a hint to run setup-crafts after successful creation."""
+    printed = []
+
+    monkeypatch.setattr(lxd, "container_exists", lambda _: False)
+    monkeypatch.setattr(lxd, "create_container", lambda *a, **kw: None)
+    monkeypatch.setattr(lxd, "configure_idmap", lambda *a, **kw: None)
+    monkeypatch.setattr(lxd, "add_mounts", lambda *a, **kw: None)
+    monkeypatch.setattr(lxd, "install_packages", lambda *a, **kw: None)
+    monkeypatch.setattr(lxd, "install_pylsp", lambda *a, **kw: None)
+    monkeypatch.setattr(lxd, "run_tests", lambda *a, **kw: None)
+    monkeypatch.setattr(lxd.console, "print", lambda s, **kw: printed.append(str(s)))
+
+    lxd.create(1)
+
+    assert any("setup-crafts" in s for s in printed), "setup-crafts hint not printed after create"
