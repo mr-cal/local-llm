@@ -332,18 +332,7 @@ def switch(
     console.print(f"[green]Active model set to[/green] {label}")
 
     if restart:
-        import os
-
         from llm import server as srv
 
-        pid_path = Path(".server.pid")
-        if pid_path.exists():
-            try:
-                pid = int(pid_path.read_text().strip())
-                os.kill(pid, 0)
-                console.print("Restarting server...")
-                srv.restart()
-            except (ValueError, ProcessLookupError):
-                console.print("[dim]Server not running — skipping restart.[/dim]")
-        else:
-            console.print("[dim]Server not running — skipping restart.[/dim]")
+        console.print("Restarting server...")
+        srv.restart()
