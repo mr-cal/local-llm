@@ -37,7 +37,7 @@ MOUNTS = [
 # Path to the user-managed craft directories config (gitignored).
 CRAFT_DIRS_CONFIG = Path(__file__).parent.parent.parent / "craft-dirs.toml"
 
-_CRAFT_DIRS_EXAMPLE = """\
+_CRAFT_DIRS_EXAMPLE = f"""\
 # craft-dirs.toml — list the craft project directories to set up inside the
 # LXD container/VM.  This file is gitignored; edit it to match your checkout.
 #
@@ -45,12 +45,12 @@ _CRAFT_DIRS_EXAMPLE = """\
 # Makefile with a `setup` target.
 
 dirs = [
-    # "{home}/dev/craft/snapcraft/snapcraft-a",
-    # "{home}/dev/craft/snapcraft/snapcraft-main",
-    # "{home}/dev/craft/craft-parts",
-    # "{home}/dev/craft/craft-application",
+    # "{HOST_HOME}/dev/craft/snapcraft/snapcraft-a",
+    # "{HOST_HOME}/dev/craft/snapcraft/snapcraft-main",
+    # "{HOST_HOME}/dev/craft/craft-parts",
+    # "{HOST_HOME}/dev/craft/craft-application",
 ]
-""".format(home=HOST_HOME)
+"""
 
 _MAKE_SETUP_DIRS_DEFAULT = [
     os.path.join(HOST_HOME, "dev", "craft", "snapcraft", "snapcraft-a"),
