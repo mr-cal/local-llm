@@ -185,6 +185,21 @@ def container_is_vm(container):
 
 
 VM_ROOT_DISK_SIZE = "50GB"
+VM_MEMORY = "4GiB"
+VM_SWAP_SIZE = "4G"
+
+
+def _setup_vm_swap(container: str) -> None:
+    """Create a persistent swapfile inside the VM and enable it on boot."""
+    run(
+        ["lxc", "exec", container, "--", "bash", "-c",
+         f"fallocate -l {VM_SWAP_SIZE} /swapfile"
+         f" && chmod 600 /swapfile"
+         f" && mkswap /swapfile"
+         f" && swapon /swapfile"
+         f" && echo '/swapfile none swap sw 0 0' >> /etc/fstab"],
+        desc="create swapfile",
+    )
 
 
 def create_container(container, vm: bool = False):
@@ -193,9 +208,15 @@ def create_container(container, vm: bool = False):
     console.print(f"\n[bold][1/{total_steps}][/bold] Launching {container} (ubuntu:24.04) as {kind}...")
     launch_cmd = ["lxc", "launch", "ubuntu:24.04", container]
     if vm:
-        launch_cmd += ["--vm", "--device", f"root,size={VM_ROOT_DISK_SIZE}"]
+        launch_cmd += [
+            "--vm",
+            "--config", f"limits.memory={VM_MEMORY}",
+            "--device", f"root,size={VM_ROOT_DISK_SIZE}",
+        ]
     run(launch_cmd)
     wait_for_container(container)
+    if vm:
+        _setup_vm_swap(container)
     # Rename the default ubuntu user/group to match the host user, and move the
     # home directory to the same path as on the host.  This ensures venv scripts
     # (whose shebangs reference HOST_HOME) resolve correctly in both environments
