@@ -96,13 +96,17 @@ def wait_for_container(container, timeout=90):
     deadline = time.time() + timeout
     while time.time() < deadline:
         r = subprocess.run(
-            ["lxc", "exec", container, "--", "cloud-init", "status"],
+            ["lxc", "exec", container, "--", "cloud-init", "status", "--format=json"],
             capture_output=True,
             text=True,
         )
-        if r.returncode == 0 and "done" in r.stdout:
-            console.print(" done.")
-            return
+        if r.returncode == 0:
+            try:
+                if json.loads(r.stdout).get("status") == "done":
+                    console.print(" done.")
+                    return
+            except (json.JSONDecodeError, AttributeError):
+                pass
         console.print(".", end="", highlight=False)
         time.sleep(2)
     console.print()

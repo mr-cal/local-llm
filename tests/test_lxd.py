@@ -100,7 +100,7 @@ def test_check_fails_on_arbitrary_exception():
 def test_wait_for_container_succeeds_immediately(monkeypatch):
     """Container becomes ready on the first poll (exec succeeds + cloud-init done)."""
     exec_proc = _make_proc(0)
-    cloud_proc = _make_proc(0, stdout="status: done")
+    cloud_proc = _make_proc(0, stdout='{"status": "done"}')
     call_count = {"n": 0}
 
     def fake_run(cmd, **kwargs):
@@ -125,7 +125,7 @@ def test_wait_for_container_retries_then_succeeds(monkeypatch):
             code = 1 if attempts["exec"] < 2 else 0
             return _make_proc(code)
         attempts["cloud"] += 1
-        return _make_proc(0, stdout="status: done")
+        return _make_proc(0, stdout='{"status": "done"}')
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(lxd.time, "sleep", lambda _: None)
@@ -194,8 +194,9 @@ def test_create_container_vm_adds_vm_flag(monkeypatch):
 
     lxd.create_container("craft-llm-1", vm=True)
 
-    # First call must include --vm
-    assert calls_made[0] == ["lxc", "launch", "ubuntu:24.04", "craft-llm-1", "--vm"]
+    # First call must include --vm and the disk size device
+    assert calls_made[0][:5] == ["lxc", "launch", "ubuntu:24.04", "craft-llm-1", "--vm"]
+    assert "--device" in calls_made[0]
     # User and group rename must still happen
     assert any("usermod" in c for c in calls_made)
     assert any("groupmod" in c for c in calls_made)
@@ -360,9 +361,9 @@ def test_ensure_subid_allocation_skips_when_covered(monkeypatch, tmp_path):
     """Returns False when the entries are already covered."""
     subuid = tmp_path / "subuid"
     subgid = tmp_path / "subgid"
-    # Use a range that covers any realistic UID (0 to 1000000)
-    subuid.write_text("root:0:1000001\n")
-    subgid.write_text("root:0:1000001\n")
+    # Use a range that covers any realistic UID (0 to 2^31)
+    subuid.write_text("root:0:2147483648\n")
+    subgid.write_text("root:0:2147483648\n")
 
     tee_called = []
 
@@ -818,8 +819,10 @@ def test_fix_vm_user_uid_changes_uid_and_gid_when_different(monkeypatch):
 
     def fake_run(cmd, **kwargs):
         calls_made.append(list(cmd))
+        return _make_proc(0)
 
     monkeypatch.setattr(lxd, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(lxd, "HOST_UID", 9999)
     monkeypatch.setattr(lxd, "HOST_GID", 8888)
 
@@ -992,6 +995,7 @@ def test_setup_crafts_calls_make_setup_and_tests(monkeypatch, tmp_path):
     test_calls = []
 
     monkeypatch.setattr(lxd, "container_exists", lambda _: True)
+    monkeypatch.setattr(lxd, "container_is_vm", lambda _: False)
     monkeypatch.setattr(lxd, "run_make_setup", lambda c, uid, gid: make_calls.append((c, uid, gid)))
     monkeypatch.setattr(lxd, "run_craft_setup_tests", lambda c: test_calls.append(c))
 
@@ -1002,14 +1006,15 @@ def test_setup_crafts_calls_make_setup_and_tests(monkeypatch, tmp_path):
 
 
 def test_setup_crafts_uses_host_uid_for_vm(monkeypatch):
-    """setup-crafts passes HOST_UID/GID when --lxd-vm is set."""
+    """setup-crafts passes HOST_UID/GID when the instance is a VM."""
     make_calls = []
 
     monkeypatch.setattr(lxd, "container_exists", lambda _: True)
+    monkeypatch.setattr(lxd, "container_is_vm", lambda _: True)
     monkeypatch.setattr(lxd, "run_make_setup", lambda c, uid, gid: make_calls.append((uid, gid)))
     monkeypatch.setattr(lxd, "run_craft_setup_tests", lambda _: None)
 
-    lxd.setup_crafts(1, lxd_vm=True)
+    lxd.setup_crafts(1)
 
     assert make_calls == [(lxd.HOST_UID, lxd.HOST_GID)]
 
