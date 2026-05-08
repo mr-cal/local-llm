@@ -306,7 +306,6 @@ def config_show() -> None:
     import json  # noqa: PLC0415
 
     cfg = load_config()
-    _CONFIG_TEMPLATE.splitlines()
     # Build a display-safe version by masking secrets
 
     masked = cfg.model_dump()
