@@ -987,6 +987,13 @@ def setup_crafts(
         )
         raise typer.Exit(0)
 
+    if not MAKE_SETUP_DIRS:
+        console.print(
+            f"[yellow]WARNING:[/yellow] {CRAFT_DIRS_CONFIG} exists but 'dirs' is empty.\n\n"
+            "  Populate it with your craft project directories, then re-run this command."
+        )
+        raise typer.Exit(1)
+
     if not container_exists(container):
         console.print(
             f"[red]ERROR:[/red] '{container}' does not exist. "
