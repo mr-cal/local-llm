@@ -511,6 +511,19 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
             r' || echo "export PATH=$HOME/.local/bin:$PATH" >> ~/.bashrc',
         )
     )
+    # Shorten the prompt to just the current directory — the default includes
+    # username and hostname which are too long in a container context.
+    run(
+        _cexec(
+            container,
+            uid,
+            gid,
+            "bash",
+            "-c",
+            r'grep -qxF "export PS1=\"\w\$ \"" ~/.bashrc'
+            r' || echo "export PS1=\"\w\$ \"" >> ~/.bashrc',
+        )
+    )
 
     console.print(
         f"  Writing LSP config to {CONTAINER_HOME}/.copilot/lsp-config.json in container..."
