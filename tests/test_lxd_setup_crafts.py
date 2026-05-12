@@ -58,15 +58,8 @@ def test_container_uid_gid():
     assert lxd.CONTAINER_GID == 1000
 
 
-def _setup_crafts_with_config(monkeypatch, tmp_path):
-    cfg = tmp_path / "craft-dirs.toml"
-    cfg.write_text('dirs = ["/fake/craft/dir"]\n')
-    monkeypatch.setattr(lxd, "CRAFT_DIRS_CONFIG", cfg)
+def test_setup_crafts_errors_when_container_missing(monkeypatch):
     monkeypatch.setattr(lxd, "MAKE_SETUP_DIRS", ["/fake/craft/dir"])
-
-
-def test_setup_crafts_errors_when_container_missing(monkeypatch, tmp_path):
-    _setup_crafts_with_config(monkeypatch, tmp_path)
     monkeypatch.setattr(lxd, "container_exists", lambda _: False)
 
     with pytest.raises(typer.Exit) as exc_info:
@@ -74,30 +67,20 @@ def test_setup_crafts_errors_when_container_missing(monkeypatch, tmp_path):
     assert exc_info.value.exit_code == 1
 
 
-def test_setup_crafts_inits_config_when_missing(monkeypatch, tmp_path):
-    cfg = tmp_path / "craft-dirs.toml"
-    monkeypatch.setattr(lxd, "CRAFT_DIRS_CONFIG", cfg)
-
-    with pytest.raises(typer.Exit) as exc_info:
-        lxd.setup_crafts(1)
-    assert exc_info.value.exit_code == 0
-    assert cfg.exists()
-    assert "dirs" in cfg.read_text()
-
-
-def test_setup_crafts_warns_when_dirs_empty(monkeypatch, tmp_path):
-    cfg = tmp_path / "craft-dirs.toml"
-    cfg.write_text("dirs = []\n")
-    monkeypatch.setattr(lxd, "CRAFT_DIRS_CONFIG", cfg)
+def test_setup_crafts_warns_when_dirs_empty(monkeypatch):
     monkeypatch.setattr(lxd, "MAKE_SETUP_DIRS", [])
 
     with pytest.raises(typer.Exit) as exc_info:
         lxd.setup_crafts(1)
     assert exc_info.value.exit_code == 1
 
+    with pytest.raises(typer.Exit) as exc_info:
+        lxd.setup_crafts(1)
+    assert exc_info.value.exit_code == 1
 
-def test_setup_crafts_calls_make_setup_and_tests(monkeypatch, tmp_path):
-    _setup_crafts_with_config(monkeypatch, tmp_path)
+
+def test_setup_crafts_calls_make_setup_and_tests(monkeypatch):
+    monkeypatch.setattr(lxd, "MAKE_SETUP_DIRS", ["/fake/craft/dir"])
     make_calls = []
     test_calls = []
 
@@ -112,8 +95,8 @@ def test_setup_crafts_calls_make_setup_and_tests(monkeypatch, tmp_path):
     assert test_calls == ["craft-llm-1"]
 
 
-def test_setup_crafts_uses_host_uid_for_vm(monkeypatch, tmp_path):
-    _setup_crafts_with_config(monkeypatch, tmp_path)
+def test_setup_crafts_uses_host_uid_for_vm(monkeypatch):
+    monkeypatch.setattr(lxd, "MAKE_SETUP_DIRS", ["/fake/craft/dir"])
     make_calls = []
 
     monkeypatch.setattr(lxd, "container_exists", lambda _: True)

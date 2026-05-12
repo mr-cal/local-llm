@@ -9,12 +9,13 @@ import json
 import os
 import subprocess
 import time
-import tomllib
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+
+from llm.config import try_load_lxd
 
 CONTAINER_PREFIX = "craft-llm"
 HOST_UID = os.getuid()
@@ -28,53 +29,29 @@ CONTAINER_UID = 1000
 CONTAINER_GID = 1000
 CONTAINER_HOME = HOST_HOME
 
-MOUNTS = [
+_DEFAULT_MOUNTS: list[tuple[str, str, str]] = [
     ("agents", f"{HOST_HOME}/.agents", f"{CONTAINER_HOME}/.agents"),
     ("github", f"{HOST_HOME}/.github", f"{CONTAINER_HOME}/.github"),
     ("dev", f"{HOST_HOME}/dev", f"{CONTAINER_HOME}/dev"),
     ("opencode-config", f"{HOST_HOME}/.config/opencode", f"{CONTAINER_HOME}/.config/opencode"),
 ]
 
-# Path to the user-managed craft directories config (gitignored).
-CRAFT_DIRS_CONFIG = Path(__file__).parent.parent.parent / "craft-dirs.toml"
 
-_CRAFT_DIRS_EXAMPLE = f"""\
-# craft-dirs.toml — list the craft project directories to set up inside the
-# LXD container/VM.  This file is gitignored; edit it to match your checkout.
-#
-# Each entry is the absolute path to a craft project root that contains a
-# Makefile with a `setup` target.
-
-dirs = [
-    # "{HOST_HOME}/dev/craft/snapcraft/snapcraft-a",
-    # "{HOST_HOME}/dev/craft/snapcraft/snapcraft-main",
-    # "{HOST_HOME}/dev/craft/craft-parts",
-    # "{HOST_HOME}/dev/craft/craft-application",
-]
-"""
-
-_MAKE_SETUP_DIRS_DEFAULT = [
-    os.path.join(HOST_HOME, "dev", "craft", "snapcraft", "snapcraft-a"),
-    os.path.join(HOST_HOME, "dev", "craft", "snapcraft", "snapcraft-b"),
-    os.path.join(HOST_HOME, "dev", "craft", "snapcraft", "snapcraft-main"),
-    os.path.join(HOST_HOME, "dev", "craft", "craft-parts"),
-    os.path.join(HOST_HOME, "dev", "craft", "craft-providers"),
-    os.path.join(HOST_HOME, "dev", "craft", "craft-application"),
-    os.path.join(HOST_HOME, "dev", "craft", "craft-cli"),
-    os.path.join(HOST_HOME, "dev", "craft", "craft-grammar"),
-]
+def _load_lxd_globals() -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Load mounts and craft_dirs from config.toml [lxd], falling back to defaults."""
+    lxd = try_load_lxd()
+    if lxd is None:
+        return _DEFAULT_MOUNTS, []
+    mounts = (
+        [(m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser()))
+         for m in lxd.mounts]
+        if lxd.mounts
+        else _DEFAULT_MOUNTS
+    )
+    return mounts, lxd.craft_dirs
 
 
-def _load_make_setup_dirs() -> list[str]:
-    """Return craft project directories from craft-dirs.toml, or the hardcoded defaults."""
-    if not CRAFT_DIRS_CONFIG.exists():
-        return _MAKE_SETUP_DIRS_DEFAULT
-    with CRAFT_DIRS_CONFIG.open("rb") as f:
-        data = tomllib.load(f)
-    return [str(d) for d in data.get("dirs", [])]
-
-
-MAKE_SETUP_DIRS = _load_make_setup_dirs()
+MOUNTS, MAKE_SETUP_DIRS = _load_lxd_globals()
 
 LSP_CONFIG_PATH = f"{CONTAINER_HOME}/.copilot/lsp-config.json"
 
@@ -993,18 +970,11 @@ def setup_crafts(
     """
     container = f"{CONTAINER_PREFIX}-{number}"
 
-    if not CRAFT_DIRS_CONFIG.exists():
-        CRAFT_DIRS_CONFIG.write_text(_CRAFT_DIRS_EXAMPLE)
-        console.print(
-            f"[yellow]Created[/yellow] {CRAFT_DIRS_CONFIG}\n\n"
-            "  Edit it to list your craft project directories, then re-run this command."
-        )
-        raise typer.Exit(0)
-
     if not MAKE_SETUP_DIRS:
         console.print(
-            f"[yellow]WARNING:[/yellow] {CRAFT_DIRS_CONFIG} exists but 'dirs' is empty.\n\n"
-            "  Populate it with your craft project directories, then re-run this command."
+            "[yellow]WARNING:[/yellow] No craft_dirs configured.\n\n"
+            "  Add them to the [lxd] section of config.toml, then re-run this command.\n"
+            "  Run [bold]uv run llm config init[/bold] to create config.toml if it doesn't exist."
         )
         raise typer.Exit(1)
 

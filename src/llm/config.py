@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from rich.console import Console
 from rich.syntax import Syntax
 
@@ -97,6 +97,31 @@ api_key = "change-me-generate-a-strong-random-key"
 # Generate with: uv run llm config gencert
 # (this sets the correct SubjectAltName for the LAN IP — required by modern TLS / Node.js)
 cert_path = "/etc/ssl/local-llm/cert.pem"
+
+[lxd]
+# Craft project directories to run `make setup` in via `llm lxd setup-crafts`.
+# Each must be an absolute path to a project root containing a Makefile with a `setup` target.
+craft_dirs = [
+    # "~/dev/craft/snapcraft/snapcraft-a",
+    # "~/dev/craft/snapcraft/snapcraft-main",
+    # "~/dev/craft/craft-parts",
+    # "~/dev/craft/craft-application",
+]
+
+# Directories to bind-mount from the host into the LXD container/VM.
+# `name` defaults to the basename of `host`; `container` defaults to `host`.
+[[lxd.mounts]]
+host = "~/.agents"
+
+[[lxd.mounts]]
+host = "~/.github"
+
+[[lxd.mounts]]
+host = "~/dev"
+
+[[lxd.mounts]]
+name = "opencode-config"
+host = "~/.config/opencode"
 """
 
 
@@ -123,10 +148,31 @@ class ProxySettings(BaseModel):
     cert_path: str = "/etc/ssl/local-llm/cert.pem"
 
 
+class MountEntry(BaseModel):
+    host: str
+    name: str = ""
+    container: str = ""
+
+    @model_validator(mode="after")
+    def derive_defaults(self) -> MountEntry:
+        host_expanded = str(Path(self.host).expanduser())
+        if not self.name:
+            self.name = Path(host_expanded).name.lstrip(".")
+        if not self.container:
+            self.container = host_expanded
+        return self
+
+
+class LxdSettings(BaseModel):
+    craft_dirs: list[str] = Field(default_factory=list)
+    mounts: list[MountEntry] = Field(default_factory=list)
+
+
 class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     models: ModelsSettings = Field(default_factory=ModelsSettings)
     proxy: ProxySettings = Field(default_factory=ProxySettings)
+    lxd: LxdSettings = Field(default_factory=LxdSettings)
 
     @property
     def models_path(self) -> Path:
@@ -169,6 +215,16 @@ def load_config() -> Settings:
     with config_path.open("rb") as f:
         raw = tomllib.load(f)
     return Settings.model_validate(raw)
+
+
+def try_load_lxd() -> LxdSettings | None:
+    """Load only the [lxd] section from config.toml; return None if the file doesn't exist."""
+    config_path = find_config()
+    if not config_path.exists():
+        return None
+    with config_path.open("rb") as f:
+        raw = tomllib.load(f)
+    return LxdSettings.model_validate(raw.get("lxd", {}))
 
 
 # ── Typer app ─────────────────────────────────────────────────────────────────
