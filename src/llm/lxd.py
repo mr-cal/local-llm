@@ -29,7 +29,7 @@ CONTAINER_GID = 1000
 CONTAINER_HOME = HOST_HOME
 
 MOUNTS = [
-    # ("github", f"{HOST_HOME}/.github", f"{CONTAINER_HOME}/.github"),
+    ("github", f"{HOST_HOME}/.github", f"{CONTAINER_HOME}/.github"),
     ("dev", f"{HOST_HOME}/dev", f"{CONTAINER_HOME}/dev"),
     ("opencode-config", f"{HOST_HOME}/.config/opencode", f"{CONTAINER_HOME}/.config/opencode"),
 ]
