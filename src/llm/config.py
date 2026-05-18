@@ -397,22 +397,35 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     display_name = entry.alias if entry else active
     max_output = entry.max_output if entry else 8192
 
-    provider: dict = {  # type: ignore[type-arg]
-        "baseUrl": cfg.client_url,
-        "api": "openai-completions",
-        "models": [
-            {
-                "id": "local",
-                "name": display_name,
-                "contextWindow": cfg.server.n_ctx,
-                "maxTokens": max_output,
-            }
-        ],
-    }
-    if cfg.client_api_key:
-        provider["apiKey"] = cfg.client_api_key
+    # apiKey is required by pi even for unauthenticated local servers.
+    # Fall back to "local" so the field is always present.
+    api_key = cfg.client_api_key or "local"
 
-    return {"providers": {"local-llm": provider}}
+    return {
+        "providers": {
+            "local-llm": {
+                "baseUrl": cfg.client_url,
+                "api": "openai-completions",
+                "apiKey": api_key,
+                # llama-server compat: no developer role, no reasoning_effort,
+                # uses max_tokens (not max_completion_tokens).
+                "compat": {
+                    "supportsDeveloperRole": False,
+                    "supportsReasoningEffort": False,
+                    "maxTokensField": "max_tokens",
+                },
+                "models": [
+                    {
+                        "id": "local",
+                        "name": display_name,
+                        "contextWindow": cfg.server.n_ctx,
+                        "maxTokens": max_output,
+                        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                    }
+                ],
+            }
+        }
+    }
 
 
 def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type-arg]
