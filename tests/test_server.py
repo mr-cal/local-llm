@@ -1,0 +1,592 @@
+"""Tests for the server management module."""
+
+from __future__ import annotations
+
+import os
+import signal
+import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+import typer
+
+import llm.server as server
+
+
+def _make_proc(returncode=0, stdout="", stderr=""):
+    p = MagicMock()
+    p.returncode = returncode
+    p.stdout = stdout
+    p.stderr = stderr
+    return p
+
+
+# ── nginx helpers ──────────────────────────────────────────────────────────────
+
+
+class TestNginxHelpers:
+    def test_nginx_is_active_true(self, monkeypatch):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, "active"))
+        assert server._nginx_is_active() is True
+
+    def test_nginx_is_active_false(self, monkeypatch):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(1, "inactive"))
+        assert server._nginx_is_active() is False
+
+    def test_nginx_start_success(self, monkeypatch):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
+        assert server._nginx_start() is True
+
+    def test_nginx_start_failure(self, monkeypatch):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(1, ""))
+        assert server._nginx_start() is False
+
+    def test_nginx_reload_success(self, monkeypatch):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
+        assert server._nginx_reload() is True
+
+    def test_nginx_reload_failure(self, monkeypatch):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(1, ""))
+        assert server._nginx_reload() is False
+
+    def test_nginx_stop_success(self, monkeypatch):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
+        assert server._nginx_stop() is True
+
+    def test_nginx_stop_failure(self, monkeypatch):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(1, ""))
+        assert server._nginx_stop() is False
+
+    def test_nginx_ensure_running_starts_when_inactive(self, monkeypatch, fake_console):
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(1, "inactive"))
+        start_called = []
+        reload_called = []
+
+        def fake_run(cmd, **kw):
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "start" in cmd_str and "nginx" in cmd_str:
+                start_called.append(cmd)
+                return _make_proc(0, "")
+            if "reload" in cmd_str and "nginx" in cmd_str:
+                reload_called.append(cmd)
+                return _make_proc(0, "")
+            return _make_proc(0, "")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        server._nginx_ensure_running()
+
+        assert start_called
+        assert not reload_called
+
+    def test_nginx_ensure_running_reloads_when_active(self, monkeypatch, fake_console, _make_proc):
+        reload_called = []
+
+        def fake_run(cmd, **kw):
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "is-active" in cmd_str:
+                return _make_proc(0, "active")
+            if "reload" in cmd_str and "nginx" in cmd_str:
+                reload_called.append(cmd)
+                return _make_proc(0, "")
+            return _make_proc(0, "")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        server._nginx_ensure_running()
+
+        assert reload_called
+
+
+# ── PID file management ──────────────────────────────────────────────────────
+
+
+class TestPidFile:
+    def test_pid_file_path(self):
+        assert server._pid_file().name == ".server.pid"
+
+    def test_log_file_path(self):
+        assert server._log_file().name == ".server.log"
+
+    def test_read_pid_returns_none_when_no_file(self, tmp_path):
+        monkeypatch = pytest.MonkeyPatch()
+        with patch.object(server, "_PID_FILE", tmp_path / "nonexistent.pid"):
+            with patch("os.kill"):
+                result = server._read_pid()
+            assert result is None
+
+    def test_read_pid_returns_pid_when_running(self, tmp_path, fake_pid_file):
+        monkeypatch = pytest.MonkeyPatch()
+        fake_pid_file.write_text("99999")
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                pass  # simulate process exists
+            return None
+
+        with patch.object(server, "_PID_FILE", fake_pid_file):
+            with patch("os.kill", fake_kill):
+                result = server._read_pid()
+            assert result == 99999
+
+    def test_read_pid_returns_none_when_process_gone(self, tmp_path, fake_pid_file):
+        monkeypatch = pytest.MonkeyPatch()
+        fake_pid_file.write_text("99999")
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError()
+            return None
+
+        with patch.object(server, "_PID_FILE", fake_pid_file):
+            with patch("os.kill", fake_kill):
+                result = server._read_pid()
+            assert result is None
+
+    def test_read_pid_handles_corrupt_file(self, tmp_path, fake_pid_file):
+        monkeypatch = pytest.MonkeyPatch()
+        fake_pid_file.write_text("not-a-pid")
+
+        with patch.object(server, "_PID_FILE", fake_pid_file):
+            with patch("os.kill"):
+                result = server._read_pid()
+            assert result is None
+
+    def test_read_pid_handles_permission_error(self, tmp_path, fake_pid_file):
+        monkeypatch = pytest.MonkeyPatch()
+        fake_pid_file.write_text("99999")
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                raise PermissionError()
+            return None
+
+        with patch.object(server, "_PID_FILE", fake_pid_file):
+            with patch("os.kill", fake_kill):
+                result = server._read_pid()
+            assert result is None
+
+
+# ── start command ─────────────────────────────────────────────────────────────
+
+
+class TestStartCommand:
+    def test_start_no_server_configured(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "config.toml").write_text(
+            '[server]\nllama_server_bin = ""\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+        with pytest.raises(typer.Exit):
+            server.start(wait=0)
+
+    def test_start_server_already_running(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+        pid_file = tmp_path / ".server.pid"
+        pid_file.write_text("12345")
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                pass  # process exists
+            return None
+
+        with patch("os.kill", fake_kill):
+            with pytest.raises(typer.Exit):
+                server.start(wait=0)
+
+    def test_start_model_not_found(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "'
+            + str(tmp_path / "models") + '"\n'
+            'active = "missing.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+        (tmp_path / "models").mkdir()
+        # No model file
+
+        with pytest.raises(typer.Exit):
+            server.start(wait=0)
+
+    def test_start_success(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        model_file = models_dir / "model.gguf"
+        model_file.touch()
+        config.write_text(
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            f'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "'
+            + str(models_dir) + '"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+
+        proc = MagicMock()
+        proc.pid = 54321
+
+        def fake_popen(cmd, **kw):
+            return proc
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError()
+            return None
+
+        with patch("subprocess.Popen", fake_popen):
+            with patch("os.kill", fake_kill):
+                with patch("time.monotonic", return_value=999999):
+                    server.start(wait=0)
+
+        # Check PID file was written
+        pid_file = tmp_path / ".server.pid"
+        assert pid_file.exists()
+        assert pid_file.read_text().strip() == "54321"
+
+    def test_start_with_extra_args(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        model_file = models_dir / "model.gguf"
+        model_file.touch()
+        config.write_text(
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = ["--jinja", "--flash-attn"]\n\n'
+            '[models]\ndir = "' + str(models_dir) + '"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+
+        proc = MagicMock()
+        proc.pid = 54321
+        started_cmd = None
+
+        def fake_popen(cmd, **kw):
+            nonlocal started_cmd
+            started_cmd = cmd
+            return proc
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError()
+            return None
+
+        with patch("subprocess.Popen", fake_popen):
+            with patch("os.kill", fake_kill):
+                with patch("time.monotonic", return_value=999999):
+                    server.start(wait=0)
+
+        assert started_cmd is not None
+        assert "--jinja" in started_cmd
+        assert "--flash-attn" in started_cmd
+
+    def test_start_binary_not_found(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        model_file = models_dir / "model.gguf"
+        model_file.touch()
+        config.write_text(
+            '[server]\nllama_server_bin = "/nonexistent/llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "'
+            + str(models_dir) + '"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+
+        def fake_popen(cmd, **kw):
+            raise FileNotFoundError("no such file")
+
+        with patch("subprocess.Popen", fake_popen):
+            with pytest.raises(typer.Exit):
+                server.start(wait=0)
+
+    def test_start_waits_for_ready(self, tmp_path, fake_console, mock_httpx_get):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        model_file = models_dir / "model.gguf"
+        model_file.touch()
+        config.write_text(
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "'
+            + str(models_dir) + '"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+
+        proc = MagicMock()
+        proc.pid = 54321
+
+        def fake_popen(cmd, **kw):
+            return proc
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError()
+            return None
+
+        ready_calls = []
+
+        def fake_monotonic():
+            ready_calls.append(time.time())
+            return 999999  # always "past deadline" for timeout test
+
+        import time as time_module
+
+        with patch("subprocess.Popen", fake_popen):
+            with patch("os.kill", fake_kill):
+                with patch("time.monotonic", fake_monotonic):
+                    server.start(wait=1)
+
+        # Should have checked readiness
+        assert len(ready_calls) > 0
+
+
+# ── stop command ──────────────────────────────────────────────────────────────
+
+
+class TestStopCommand:
+    def test_stop_not_running(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        with patch.object(server, "_read_pid", return_value=None):
+            with pytest.raises(typer.Exit):
+                server.stop()
+
+    def test_stop_success(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        pid_file = tmp_path / ".server.pid"
+        pid_file.write_text("12345")
+        stopped = False
+
+        def fake_kill(pid, sig):
+            if sig == signal.SIGTERM:
+                pass
+            if sig == 0:
+                nonlocal stopped
+                if not stopped:
+                    stopped = True
+                    raise ProcessLookupError()
+                return None
+
+        with patch.object(server, "_read_pid", return_value=12345):
+            with patch("os.kill", fake_kill):
+                server.stop()
+
+        assert not pid_file.exists()
+
+    def test_stop_removes_pid_file(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        pid_file = tmp_path / ".server.pid"
+        pid_file.write_text("12345")
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError()
+            return None
+
+        with patch.object(server, "_read_pid", return_value=12345):
+            with patch("os.kill", fake_kill):
+                server.stop()
+
+        assert not pid_file.exists()
+
+
+# ── restart command ───────────────────────────────────────────────────────────
+
+
+class TestRestartCommand:
+    def test_restart_calls_stop_then_start(self, tmp_path, fake_console, mock_httpx_get):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        model_file = models_dir / "model.gguf"
+        model_file.touch()
+        config.write_text(
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "'
+            + str(models_dir) + '"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+
+        pid_file = tmp_path / ".server.pid"
+        pid_file.write_text("12345")
+        proc = MagicMock()
+        proc.pid = 54321
+
+        stop_calls = []
+        start_calls = []
+
+        def fake_stop():
+            stop_calls.append(True)
+            pid_file.unlink(missing_ok=True)
+
+        def fake_start(wait=5):
+            start_calls.append(True)
+
+        def fake_popen(cmd, **kw):
+            return proc
+
+        def fake_kill(pid, sig):
+            if sig == 0:
+                raise ProcessLookupError()
+            return None
+
+        with patch.object(server, "_read_pid", return_value=12345):
+            with patch.object(server, "_nginx_is_active", return_value=False):
+                with patch.object(server, "_nginx_start", return_value=True):
+                    with patch.object(server, "stop", fake_stop):
+                        with patch.object(server, "start", fake_start):
+                            with patch("subprocess.Popen", fake_popen):
+                                with patch("os.kill", fake_kill):
+                                    with patch("time.monotonic", return_value=999999):
+                                        server.restart()
+
+        assert stop_calls
+        assert start_calls
+
+
+# ── status command ────────────────────────────────────────────────────────────
+
+
+class TestStatusCommand:
+    def test_status_no_server_configured(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[server]\nllama_server_bin = ""\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+        # Should not crash
+        server.status()
+
+    def test_status_running(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+            'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
+            "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+
+        with patch.object(server, "_read_pid", return_value=12345):
+            with patch.object(server, "_nginx_is_active", return_value=True):
+                server.status()
+
+    def test_status_stopped(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        )
+
+        with patch.object(server, "_read_pid", return_value=None):
+            with patch.object(server, "_nginx_is_active", return_value=False):
+                server.status()
+
+
+# ── logs command ─────────────────────────────────────────────────────────────
+
+
+class TestLogsCommand:
+    def test_logs_no_file(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        with patch.object(server, "_log_file", return_value=tmp_path / "nonexistent.log"):
+            with pytest.raises(typer.Exit):
+                server.logs(lines=50)
+
+    def test_logs_show_lines(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        log_file = tmp_path / ".server.log"
+        log_file.write_text("line 1\nline 2\nline 3\n")
+
+        captured = []
+
+        def fake_run(cmd, **kw):
+            captured.append(list(cmd))
+
+        with patch.object(server, "_log_file", return_value=log_file):
+            with patch("subprocess.run", fake_run):
+                server.logs(lines=2)
+
+        assert captured
+        assert "-n" in captured[0]
+        assert "2" in captured[0]
+
+    def test_logs_follow(self, tmp_path, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.chdir(tmp_path)
+        log_file = tmp_path / ".server.log"
+        log_file.write_text("line 1\n")
+
+        captured = []
+
+        def fake_run(cmd, **kw):
+            captured.append(list(cmd))
+
+        with patch.object(server, "_log_file", return_value=log_file):
+            with patch("subprocess.run", fake_run):
+                server.logs(follow=True)
+
+        assert captured
+        assert "-f" in captured[0]
