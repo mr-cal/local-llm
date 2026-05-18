@@ -332,6 +332,9 @@ def switch(
     console.print(f"[green]Active model set to[/green] {label}")
 
     if restart:
+        if not cfg.has_local_server:
+            console.print("[dim]No local server to restart (client-only mode).[/dim]")
+            return
         from llm import server as srv
 
         console.print("Restarting server...")

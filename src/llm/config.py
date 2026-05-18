@@ -21,17 +21,23 @@ CONFIG_FILENAME = "config.toml"
 # so the file is self-documenting. Values below are usable defaults where safe;
 # sensitive fields are left as obvious placeholders.
 _CONFIG_TEMPLATE = """\
-# Local LLM Server Configuration
-# Edit this file, then run:
-#   uv run llm config apply   — render nginx + systemd files
-#   uv run llm server start   — start llama-server
+# Local LLM Configuration
+# Edit this file, then run:  uv run llm config apply
 #
-# Sensitive values (api_key, lan_ip, hf_token) live only here — never committed.
+# Machine roles — set the sections that apply to this machine:
+#   server+client  — runs llama-server AND opencode/pi locally (most common)
+#   server-only    — runs llama-server + nginx for remote clients; no local tools
+#   client-only    — runs opencode/pi and connects to a remote server
+#
+# Sensitive values (api_key, hf_token) live only here — never committed.
+
+# ── SERVER ────────────────────────────────────────────────────────────────────
+# Skip [server] and [models] entirely on a client-only machine.
 
 [server]
 # Path to the llama-server binary.
 # After building llama.cpp: ./llama.cpp/build/bin/llama-server
-# Or after `make install`:    /usr/local/bin/llama-server
+# Or after copying to PATH:  ~/.local/bin/llama-server
 llama_server_bin = "llama-server"
 
 # Internal HTTP port — llama-server listens here; nginx proxies to it.
@@ -39,46 +45,35 @@ port = 8080
 
 # Model layers to offload to Vulkan iGPU (Radeon 890M).
 # 0 = CPU only. Try 20–40 and tune up/down for speed.
-# Each offloaded layer uses ~100–200 MB of shared VRAM depending on the model.
 n_gpu_layers = 20
 
-# Context window in tokens. Larger uses more VRAM for the KV cache.
-# For agentic coding/research tasks, 65536+ is recommended — conversations
-# and file context grow fast. With q8_0 KV cache (~50% savings), a 20 GB model
-# on 31 GB GPU leaves ~11 GB for KV, comfortably fitting 65536 tokens.
+# Context window in tokens. 65536+ recommended for agentic coding tasks.
 n_ctx = 65536
 
 # CPU inference threads. Recommended: physical core count (not hyperthreads).
-# Ryzen AI 9 HX 370 has 12 physical cores → set 12.
 n_threads = 12
 
 # Extra llama-server flags (list of strings).
-# Useful options: "--flash-attn"  "--mlock"  "--no-mmap"
-# Example: extra_args = ["--flash-attn"]
+# Example: extra_args = ["--flash-attn", "--cache-type-k", "q8_0", "--jinja"]
 extra_args = []
 
 [models]
 # Directory containing GGUF model files.
 dir = "~/models"
 
-# Filename of the active model (must be present in dir above).
-# Run `uv run llm model list` to see what's downloaded.
-#
-# Recommended Qwen models for this machine (62 GB RAM):
-#   Qwen2.5-Coder-7B-Instruct-Q8_0.gguf          ~8 GB   fastest
-#   Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf        ~8.5 GB best balance  <- default
-#   Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf        ~18 GB  strong coding
-#   Qwen2.5-Coder-32B-Instruct-Q8_0.gguf           ~34 GB  high precision
-#   Qwen2.5-72B-Instruct-Q4_K_M.gguf               ~42 GB  near-frontier  <- 62 GB advantage
-#   Qwen3-30B-A3B-Q4_K_M.gguf                      ~17 GB  MoE, efficient
+# Active model filename. Run `uv run llm model list` to see options.
 active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
 
-# HuggingFace token — only needed for gated/private models. Leave empty otherwise.
+# HuggingFace token — only needed for gated/private models.
 # Generate at: https://huggingface.co/settings/tokens
 hf_token = ""
 
+# ── PROXY ─────────────────────────────────────────────────────────────────────
+# nginx TLS proxy — allows remote clients to reach llama-server securely.
+# Skip [proxy] on a client-only machine.
+
 [proxy]
-# External HTTPS port nginx listens on (clients connect here).
+# External HTTPS port nginx listens on (remote clients connect here).
 port = 8443
 
 # This machine's LAN IP address.
@@ -88,29 +83,44 @@ lan_ip = "192.168.1.100"
 # LAN subnet allowed through nginx (CIDR). Requests from outside are rejected.
 lan_subnet = "192.168.1.0/24"
 
-# Bearer token clients must include in the Authorization header.
-# Generate a strong key:
-#   python -c "import secrets; print(secrets.token_hex(32))"
+# Bearer token remote clients must include in the Authorization header.
+# Generate: python -c "import secrets; print(secrets.token_hex(32))"
 api_key = "change-me-generate-a-strong-random-key"
 
 # Path to the self-signed TLS certificate (public cert only, not the key).
-# Used by `llm client setup` to display installation instructions for the LXD container.
 # Generate with: uv run llm config gencert
-# (this sets the correct SubjectAltName for the LAN IP — required by modern TLS / Node.js)
 cert_path = "/etc/ssl/local-llm/cert.pem"
+
+# ── CLIENT ────────────────────────────────────────────────────────────────────
+# How opencode, Pi, and other tools on THIS machine connect to the LLM.
+#
+# server+client machine: leave server_url empty — tools connect directly to
+#   the local llama-server at http://127.0.0.1:<port> (no TLS, no auth).
+#
+# client-only machine: set server_url to the remote server's proxy URL,
+#   and set api_key / cert_path to authenticate and trust the TLS cert.
+
+[client]
+# Leave empty on a server+client machine (uses local server directly).
+# Set to remote proxy URL on a client-only machine:
+#   server_url = "https://192.168.1.x:8443/v1"
+server_url = ""
+
+# API key for remote server (from that server's [proxy] api_key).
+api_key = ""
+
+# Path to the remote server's TLS cert PEM, for Node.js tools (Pi, opencode).
+# Copy from the server: scp server:/etc/ssl/local-llm/cert.pem ~/.config/local-llm/cert.pem
+# Then set NODE_EXTRA_CA_CERTS to this path in your shell profile.
+cert_path = ""
 
 [lxd]
 # Craft project directories to run `make setup` in via `llm lxd setup-crafts`.
-# Each must be an absolute path to a project root containing a Makefile with a `setup` target.
 craft_dirs = [
     # "~/dev/craft/snapcraft/snapcraft-a",
-    # "~/dev/craft/snapcraft/snapcraft-main",
-    # "~/dev/craft/craft-parts",
-    # "~/dev/craft/craft-application",
 ]
 
 # Directories to bind-mount from the host into the LXD container/VM.
-# `name` defaults to the basename of `host`; `container` defaults to `host`.
 [[lxd.mounts]]
 host = "~/.agents"
 
@@ -149,6 +159,21 @@ class ProxySettings(BaseModel):
     cert_path: str = "/etc/ssl/local-llm/cert.pem"
 
 
+class ClientSettings(BaseModel):
+    """How client tools (opencode, Pi) on this machine connect to the LLM.
+
+    server+client machine: leave server_url empty — defaults to the local
+    llama-server at http://127.0.0.1:<port> (no TLS, no auth needed).
+
+    client-only machine: set server_url to the remote proxy URL, and
+    api_key / cert_path as needed.
+    """
+
+    server_url: str = ""
+    api_key: str = ""
+    cert_path: str = ""  # local path to remote server's TLS cert (PEM)
+
+
 class MountEntry(BaseModel):
     host: str
     name: str = ""
@@ -173,7 +198,29 @@ class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     models: ModelsSettings = Field(default_factory=ModelsSettings)
     proxy: ProxySettings = Field(default_factory=ProxySettings)
+    client: ClientSettings = Field(default_factory=ClientSettings)
     lxd: LxdSettings = Field(default_factory=LxdSettings)
+
+    @property
+    def has_local_server(self) -> bool:
+        """True if this machine is configured to run llama-server."""
+        return bool(self.server.llama_server_bin)
+
+    @property
+    def client_url(self) -> str:
+        """Base URL (including /v1) for local tools to connect to the LLM.
+
+        Defaults to the local llama-server (no TLS, no auth).
+        Override with [client] server_url for a remote server.
+        """
+        if self.client.server_url:
+            return self.client.server_url
+        return f"{self.internal_url}/v1"
+
+    @property
+    def client_api_key(self) -> str:
+        """API key for client tools. Empty when connecting to the local server."""
+        return self.client.api_key
 
     @property
     def models_path(self) -> Path:
@@ -313,8 +360,8 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
             "local-llm": {
                 "name": "Local LLM",
                 "npm": "@ai-sdk/openai-compatible",
-                "api": f"{cfg.proxy_url}/v1",
-                "options": {"apiKey": cfg.proxy.api_key},
+                "api": cfg.client_url,
+                "options": {"apiKey": cfg.client_api_key or "local"},
                 "models": {
                     model_key: {
                         "name": display_name,
@@ -350,23 +397,22 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     display_name = entry.alias if entry else active
     max_output = entry.max_output if entry else 8192
 
-    return {
-        "providers": {
-            "local-llm": {
-                "baseUrl": f"{cfg.proxy_url}/v1",
-                "api": "openai-completions",
-                "apiKey": cfg.proxy.api_key,
-                "models": [
-                    {
-                        "id": "local",
-                        "name": display_name,
-                        "contextWindow": cfg.server.n_ctx,
-                        "maxTokens": max_output,
-                    }
-                ],
+    provider: dict = {  # type: ignore[type-arg]
+        "baseUrl": cfg.client_url,
+        "api": "openai-completions",
+        "models": [
+            {
+                "id": "local",
+                "name": display_name,
+                "contextWindow": cfg.server.n_ctx,
+                "maxTokens": max_output,
             }
-        }
+        ],
     }
+    if cfg.client_api_key:
+        provider["apiKey"] = cfg.client_api_key
+
+    return {"providers": {"local-llm": provider}}
 
 
 def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type-arg]
@@ -459,12 +505,52 @@ def config_show() -> None:
 
 @app.command("apply")
 def config_apply() -> None:
-    """Render nginx/systemd templates and write opencode config using current settings."""
+    """Render templates and install configs based on this machine's role."""
     import json  # noqa: PLC0415
 
     cfg = load_config()
     project_root = find_config().parent
 
+    # ── Role summary ──────────────────────────────────────────────────────────
+    server_tag = "[green]server[/green]" if cfg.has_local_server else "[dim]client-only[/dim]"
+    client_tag = "[green]client[/green]"
+    client_url_note = cfg.client_url
+    console.print(f"Role: {server_tag} + {client_tag}  →  client connects to [cyan]{client_url_note}[/cyan]\n")
+
+    # ── Client configs (always) ───────────────────────────────────────────────
+    pi_path = _PI_CONFIG_PATH.expanduser()
+    pi_path.parent.mkdir(parents=True, exist_ok=True)
+    pi_cfg = _build_pi_config(cfg)
+    pi_path.write_text(json.dumps(pi_cfg, indent=2) + "\n")
+    console.print(f"[green]Rendered[/green] {pi_path}")
+
+    opencode_path = _OPENCODE_CONFIG_PATH.expanduser()
+    opencode_path.parent.mkdir(parents=True, exist_ok=True)
+    opencode_cfg = _build_opencode_config(cfg)
+
+    console.print("[dim]Validating opencode config against schema…[/dim]")
+    errors = _validate_opencode_config(opencode_cfg)
+    fetch_warning = next((e for e in errors if e.startswith("⚠")), None)
+    real_errors = [e for e in errors if not e.startswith("⚠")]
+
+    if fetch_warning:
+        console.print(f"  [yellow]{fetch_warning}[/yellow]")
+    elif real_errors:
+        for err in real_errors:
+            console.print(f"  [red]✗[/red]  {err}")
+        console.print("\n[red]opencode config has schema errors — not written.[/red]")
+        raise typer.Exit(1)
+    else:
+        console.print("  [green]✓[/green] Schema valid")
+
+    opencode_path.write_text(json.dumps(opencode_cfg, indent=2) + "\n")
+    console.print(f"[green]Rendered[/green] {opencode_path}")
+
+    if not cfg.has_local_server:
+        console.print("\n[dim]Skipping nginx/systemd — no local server configured.[/dim]")
+        return
+
+    # ── Server-side: render templates ─────────────────────────────────────────
     replacements = {
         "%%LAN_IP%%": cfg.proxy.lan_ip,
         "%%LAN_SUBNET%%": cfg.proxy.lan_subnet,
@@ -488,6 +574,7 @@ def config_apply() -> None:
         ),
     ]
 
+    console.print()
     for src, dst in templates:
         if not src.exists():
             console.print(f"[yellow]Template not found, skipping:[/yellow] {src}")
@@ -497,36 +584,6 @@ def config_apply() -> None:
             text = text.replace(placeholder, value)
         dst.write_text(text)
         console.print(f"[green]Rendered[/green] {dst}")
-
-    # Write pi-harness config (unconditional — no schema to validate)
-    pi_path = _PI_CONFIG_PATH.expanduser()
-    pi_path.parent.mkdir(parents=True, exist_ok=True)
-    pi_cfg = _build_pi_config(cfg)
-    pi_path.write_text(json.dumps(pi_cfg, indent=2) + "\n")
-    console.print(f"[green]Rendered[/green] {pi_path}")
-
-    # Always write opencode config
-    opencode_path = _OPENCODE_CONFIG_PATH.expanduser()
-    opencode_path.parent.mkdir(parents=True, exist_ok=True)
-    opencode_cfg = _build_opencode_config(cfg)
-
-    console.print("\n[dim]Validating opencode config against schema…[/dim]")
-    errors = _validate_opencode_config(opencode_cfg)
-    fetch_warning = next((e for e in errors if e.startswith("⚠")), None)
-    real_errors = [e for e in errors if not e.startswith("⚠")]
-
-    if fetch_warning:
-        console.print(f"  [yellow]{fetch_warning}[/yellow]")
-    elif real_errors:
-        for err in real_errors:
-            console.print(f"  [red]✗[/red]  {err}")
-        console.print("\n[red]opencode config has schema errors — not written.[/red]")
-        raise typer.Exit(1)
-    else:
-        console.print("  [green]✓[/green] Schema valid")
-
-    opencode_path.write_text(json.dumps(opencode_cfg, indent=2) + "\n")
-    console.print(f"[green]Rendered[/green] {opencode_path}")
 
     # ── nginx ─────────────────────────────────────────────────────────────────
     console.print("\n[bold]nginx[/bold]")

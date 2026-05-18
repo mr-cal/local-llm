@@ -98,12 +98,16 @@ def start(
     wait: Annotated[int, typer.Option("--wait", help="Seconds to wait for server to be ready.")] = 5,
 ) -> None:
     """Start llama-server using settings from config.toml."""
+    cfg = load_config()
+
+    if not cfg.has_local_server:
+        console.print("[yellow]No local server configured.[/yellow]  Set [server] llama_server_bin in config.toml.")
+        raise typer.Exit(1)
+
     existing = _read_pid()
     if existing:
         console.print(f"[yellow]Server already running[/yellow] (PID {existing})")
         raise typer.Exit(1)
-
-    cfg = load_config()
 
     if not cfg.model_path.exists():
         console.print(f"[red]Model file not found:[/red] {cfg.model_path}")
@@ -214,6 +218,16 @@ def restart() -> None:
 @app.command("status")
 def status() -> None:
     """Show whether llama-server and nginx are running."""
+    from llm.config import load_config  # noqa: PLC0415 (already imported at top)
+    cfg = load_config()
+
+    if not cfg.has_local_server:
+        console.print("[dim]No local server configured — client-only mode.[/dim]")
+        console.print(f"  Connecting to: [cyan]{cfg.client_url}[/cyan]")
+        if _nginx_is_active():
+            console.print("[green]● nginx[/green]         active")
+        return
+
     pid = _read_pid()
     if pid:
         cfg = load_config()
