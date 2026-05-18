@@ -130,7 +130,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "bartowski/Qwen_Qwen3-30B-A3B-GGUF",
         "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
         "~19 GB",
-        "Qwen3 30B MoE — 3.3B active params, fast TG, outperforms QwQ-32B",
+        "Qwen3 30B MoE — fast TG, outperforms QwQ-32B",
         max_output=32768,
     ),
     # ── Qwen 3.6 (April 2026) ────────────────────────────────────────────────
@@ -139,7 +139,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
         "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
         "~21 GB",
-        "Qwen3.6 35B MoE — newest, best agentic coding (SWE-bench 73%), 262K ctx",
+        "Qwen3.6 35B MoE — SWE-bench 73%, 262K ctx",
         max_output=32768,
     ),
     ModelEntry(
@@ -205,7 +205,7 @@ def list_models() -> None:
     table.add_column("", width=2)  # active marker
     table.add_column("Alias", style="cyan")
     table.add_column("Size", style="green", justify="right")
-    table.add_column("Description", style="white")
+    table.add_column("Description", style="white", max_width=60, no_wrap=False)
     table.add_column("Downloaded", justify="center")
 
     for m in KNOWN_MODELS:

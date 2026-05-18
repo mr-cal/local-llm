@@ -152,6 +152,8 @@ def start(
     console.print(f"  Model  : {cfg.models.active}")
     console.print(f"  Port   : {cfg.server.port}")
     console.print(f"  Layers : {cfg.server.n_gpu_layers} (Vulkan iGPU)")
+    if cfg.server.extra_args:
+        console.print(f"  Extra  : {' '.join(cfg.server.extra_args)}")
     console.print(f"  Logs   : {log_path.resolve()}")
 
     if wait > 0:
@@ -215,9 +217,16 @@ def status() -> None:
     pid = _read_pid()
     if pid:
         cfg = load_config()
+        from llm.models import KNOWN_MODELS  # noqa: PLC0415
+        entry = next((m for m in KNOWN_MODELS if m.filename == cfg.models.active), None)
+        display = entry.alias if entry else cfg.models.active
         console.print(f"[green]● llama-server[/green]  PID {pid}  port {cfg.server.port}")
-        console.print(f"  Model : {cfg.models.active}")
-        console.print(f"  Logs  : {_log_file().resolve()}")
+        console.print(f"  Model  : {display}  [dim]({cfg.models.active})[/dim]")
+        console.print(f"  Layers : {cfg.server.n_gpu_layers}")
+        if cfg.server.extra_args:
+            console.print(f"  Extra  : {' '.join(cfg.server.extra_args)}")
+        log = _log_file().resolve()
+        console.print(f"  Logs   : {log}  [dim](uv run llm server logs -f)[/dim]")
     else:
         console.print("[red]● llama-server[/red]  stopped")
         console.print("  Run [bold]uv run llm server start[/bold] to start.")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Annotated
@@ -232,7 +233,24 @@ def try_load_lxd() -> LxdSettings | None:
 app = typer.Typer(help="Manage configuration and render templates.", no_args_is_help=True)
 
 
-@app.command("init")
+def _sudo(*args: str, desc: str) -> bool:
+    """Run a sudo command, printing what runs. Returns True on success."""
+    cmd = ["sudo", *args]
+    console.print(f"  [dim]$ {' '.join(cmd)}[/dim]")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        msg = (result.stderr or result.stdout).strip()
+        console.print(f"  [red]✗[/red]  {desc}" + (f": {msg}" if msg else ""))
+        return False
+    console.print(f"  [green]✓[/green]  {desc}")
+    return True
+
+
+def _systemctl_is_active(unit: str) -> bool:
+    return subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True).stdout.strip() == "active"
+
+
+
 def config_init(
     force: Annotated[bool, typer.Option("--force", help="Overwrite existing config.")] = False,
 ) -> None:
@@ -510,13 +528,42 @@ def config_apply() -> None:
     opencode_path.write_text(json.dumps(opencode_cfg, indent=2) + "\n")
     console.print(f"[green]Rendered[/green] {opencode_path}")
 
-    console.print("\nNext steps:")
-    console.print("  nginx:")
-    console.print("    sudo cp nginx/llm-proxy.conf /etc/nginx/sites-available/llm")
-    console.print("    sudo nginx -t && sudo systemctl reload nginx")
-    console.print("  systemd:")
-    console.print("    sudo cp systemd/llm-server.service /etc/systemd/system/")
-    console.print("    sudo systemctl daemon-reload && sudo systemctl enable --now llm-server")
+    # ── nginx ─────────────────────────────────────────────────────────────────
+    console.print("\n[bold]nginx[/bold]")
+    nginx_src = project_root / "nginx" / "llm-proxy.conf"
+    nginx_avail = Path("/etc/nginx/sites-available/llm")
+    nginx_enabled = Path("/etc/nginx/sites-enabled/llm")
+    if not nginx_src.exists():
+        console.print("  [yellow]nginx/llm-proxy.conf not found — skipping[/yellow]")
+    else:
+        if _sudo("cp", str(nginx_src), str(nginx_avail), desc="install conf"):
+            if not nginx_enabled.exists():
+                _sudo("ln", "-sf", str(nginx_avail), str(nginx_enabled), desc="enable site")
+            test = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
+            if test.returncode != 0:
+                console.print(f"  [red]✗[/red]  nginx -t failed:\n{test.stderr.strip()}")
+            else:
+                console.print("  [green]✓[/green]  nginx -t passed")
+                if _systemctl_is_active("nginx"):
+                    _sudo("systemctl", "reload", "nginx", desc="reload nginx")
+                else:
+                    _sudo("systemctl", "start", "nginx", desc="start nginx")
+
+    # ── systemd ───────────────────────────────────────────────────────────────
+    console.print("\n[bold]systemd[/bold]")
+    svc_src = project_root / "systemd" / "llm-server.service"
+    svc_dst = Path("/etc/systemd/system/llm-server.service")
+    if not svc_src.exists():
+        console.print("  [yellow]systemd/llm-server.service not found — skipping[/yellow]")
+    else:
+        if _sudo("cp", str(svc_src), str(svc_dst), desc="install service"):
+            _sudo("systemctl", "daemon-reload", desc="daemon-reload")
+            _sudo("systemctl", "enable", "llm-server", desc="enable llm-server")
+            if _systemctl_is_active("llm-server"):
+                console.print(
+                    "  [dim]llm-server is running — restart to pick up changes:[/dim]\n"
+                    "    [bold]uv run llm server restart[/bold]"
+                )
 
 
 @app.command("gencert")

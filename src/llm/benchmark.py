@@ -451,6 +451,7 @@ def _build_extra_args(flash_attn: bool, ctk: str, current_extra: list[str]) -> l
     return keep
 
 
+@app.command("history")
 def history(
     last: Annotated[int, typer.Option("-n", help="Show last N results.")] = 20,
 ) -> None:
