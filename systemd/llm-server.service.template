@@ -9,6 +9,9 @@
 Description=Local LLM Server (llama-server / llama.cpp)
 After=network.target
 Wants=network.target
+# Give up after 5 failed starts within 10 minutes
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -21,7 +24,7 @@ ExecStart=%%LLAMA_SERVER_BIN%% \
     --threads %%N_THREADS%%
 
 Restart=on-failure
-RestartSec=5s
+RestartSec=30s
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=llm-server
