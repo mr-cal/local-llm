@@ -229,7 +229,7 @@ def try_load_lxd() -> LxdSettings | None:
 
 # ── Typer app ─────────────────────────────────────────────────────────────────
 
-app = typer.Typer(help="Manage configuration and render templates.")
+app = typer.Typer(help="Manage configuration and render templates.", no_args_is_help=True)
 
 
 @app.command("init")
@@ -320,6 +320,35 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
 
 _OPENCODE_SCHEMA_URL = "https://opencode.ai/config.json"
 _OPENCODE_CONFIG_PATH = Path("~/.config/opencode/config.json")
+_PI_CONFIG_PATH = Path("~/.pi/agent/models.json")
+
+
+def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
+    """Build the pi-harness models.json config dict from current settings."""
+    from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
+    active = cfg.models.active
+    entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
+    display_name = entry.alias if entry else active
+    max_output = entry.max_output if entry else 8192
+
+    return {
+        "providers": {
+            "local-llm": {
+                "baseUrl": f"{cfg.proxy_url}/v1",
+                "api": "openai-completions",
+                "apiKey": cfg.proxy.api_key,
+                "models": [
+                    {
+                        "id": "local",
+                        "name": display_name,
+                        "contextWindow": cfg.server.n_ctx,
+                        "maxTokens": max_output,
+                    }
+                ],
+            }
+        }
+    }
 
 
 def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type-arg]
@@ -342,16 +371,19 @@ def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type
 
     # Strip the $ref from 'model' field: it points to models.dev enum of known
     # cloud providers. Custom local providers will never be in that list, so we
-    # validate it as a plain string only.
+    # validate it as a plain string only. Use setdefault to handle any schema shape.
     schema = copy.deepcopy(schema)
-    if "model" in schema.get("properties", {}):
-        schema["properties"]["model"] = {"type": "string"}
+    schema.setdefault("properties", {})["model"] = {"type": "string"}
 
     errors = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for err in jsonschema.Draft202012Validator(schema).iter_errors(cfg_dict):
             path = " → ".join(str(p) for p in err.absolute_path) or "(root)"
+            # Skip residual model-enum errors — local providers are never in the
+            # cloud-provider enum that models.dev maintains.
+            if path == "model":
+                continue
             errors.append(f"{path}: {err.message}")
     return errors
 
@@ -402,6 +434,10 @@ def config_show() -> None:
     else:
         console.print("  [green]✓[/green] Schema valid")
 
+    pi_cfg = _build_pi_config(cfg)
+    console.print("\n[bold]pi config[/bold] (~/.pi/agent/models.json):")
+    console.print(Syntax(json.dumps(pi_cfg, indent=2), "json", theme="monokai"))
+
 
 @app.command("apply")
 def config_apply() -> None:
@@ -443,6 +479,13 @@ def config_apply() -> None:
             text = text.replace(placeholder, value)
         dst.write_text(text)
         console.print(f"[green]Rendered[/green] {dst}")
+
+    # Write pi-harness config (unconditional — no schema to validate)
+    pi_path = _PI_CONFIG_PATH.expanduser()
+    pi_path.parent.mkdir(parents=True, exist_ok=True)
+    pi_cfg = _build_pi_config(cfg)
+    pi_path.write_text(json.dumps(pi_cfg, indent=2) + "\n")
+    console.print(f"[green]Rendered[/green] {pi_path}")
 
     # Always write opencode config
     opencode_path = _OPENCODE_CONFIG_PATH.expanduser()

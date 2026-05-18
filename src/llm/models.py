@@ -11,7 +11,7 @@ from rich.table import Table
 
 from llm.config import find_config, load_config
 
-app = typer.Typer(help="Download, list, and switch GGUF models.")
+app = typer.Typer(help="Download, list, and switch GGUF models.", no_args_is_help=True)
 console = Console()
 
 

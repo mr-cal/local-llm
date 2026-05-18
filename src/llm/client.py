@@ -11,7 +11,7 @@ from rich.syntax import Syntax
 
 from llm.config import find_config, load_config
 
-app = typer.Typer(help="Print client setup instructions.")
+app = typer.Typer(help="Print client setup instructions.", no_args_is_help=True)
 console = Console()
 
 _PLACEHOLDER_URL = "https://<SERVER_LAN_IP>:8443/v1"

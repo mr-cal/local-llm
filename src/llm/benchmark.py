@@ -18,7 +18,7 @@ from rich.table import Table
 
 from llm.config import find_config, load_config
 
-app = typer.Typer(help="Benchmark inference speed.")
+app = typer.Typer(help="Benchmark inference speed.", no_args_is_help=True)
 console = Console()
 
 HISTORY_FILE = Path("logs/benchmark-history.csv")

@@ -67,7 +67,7 @@ PYLSP_LSP_CONFIG = {
     }
 }
 
-app = typer.Typer(help="Create and manage LXD containers/VMs for local LLM development.")
+app = typer.Typer(help="Create and manage LXD containers/VMs for local LLM development.", no_args_is_help=True)
 console = Console()
 
 

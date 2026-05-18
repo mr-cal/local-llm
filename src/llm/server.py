@@ -14,7 +14,7 @@ from rich.console import Console
 
 from llm.config import load_config
 
-app = typer.Typer(help="Manage the llama-server process.")
+app = typer.Typer(help="Manage the llama-server process.", no_args_is_help=True)
 console = Console()
 
 
@@ -51,11 +51,13 @@ def _nginx_stop() -> bool:
 def _nginx_ensure_running() -> None:
     """Start nginx if it isn't already running; reload if it is."""
     if _nginx_is_active():
+        console.print("[dim]  (sudo systemctl reload nginx)[/dim]")
         if _nginx_reload():
             console.print("[green]nginx[/green]       reloaded")
         else:
             console.print("[yellow]nginx[/yellow]       reload failed — check: sudo nginx -t")
     else:
+        console.print("[dim]  (sudo systemctl start nginx)[/dim]")
         if _nginx_start():
             console.print("[green]nginx[/green]       started")
         else:
