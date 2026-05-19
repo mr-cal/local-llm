@@ -530,6 +530,23 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
         )
     )
 
+    # Write a fish conf.d snippet so `llm <n>` can pass CRAFT_CWD via the
+    # environment and have the login shell cd there automatically.  This avoids
+    # the "no job control" errors that arise from `su - user -c "exec $SHELL"`.
+    fish_conf_dir = f"{CONTAINER_HOME}/.config/fish/conf.d"
+    craft_cwd_fish = (
+        "# cd to CRAFT_CWD when set (passed by the host `llm` fish function)\n"
+        "if set -q CRAFT_CWD; and test -d $CRAFT_CWD\n"
+        "    cd $CRAFT_CWD\n"
+        "end\n"
+    )
+    run(_cexec(container, uid, gid, "mkdir", "-p", fish_conf_dir))
+    subprocess.run(
+        _cexec(container, uid, gid, "bash", "-c", f"cat > {fish_conf_dir}/craft-cwd.fish"),
+        input=craft_cwd_fish.encode(),
+        check=True,
+    )
+
     console.print(f"  Writing LSP config to {CONTAINER_HOME}/.copilot/lsp-config.json in container...")
     run(_cexec(container, uid, gid, "mkdir", "-p", f"{CONTAINER_HOME}/.copilot"))
 
