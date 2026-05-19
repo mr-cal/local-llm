@@ -33,6 +33,7 @@ _DEFAULT_MOUNTS: list[tuple[str, str, str]] = [
     ("agents", f"{HOST_HOME}/.agents", f"{CONTAINER_HOME}/.agents"),
     ("github", f"{HOST_HOME}/.github", f"{CONTAINER_HOME}/.github"),
     ("dev", f"{HOST_HOME}/dev", f"{CONTAINER_HOME}/dev"),
+    ("pi", f"{HOST_HOME}/.pi", f"{CONTAINER_HOME}/.pi"),
     ("opencode-config", f"{HOST_HOME}/.config/opencode", f"{CONTAINER_HOME}/.config/opencode"),
 ]
 
@@ -456,6 +457,24 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
     console.print("  Installing astral-uv...")
     run(["lxc", "exec", container, "--", "snap", "install", "astral-uv", "--classic"])
 
+    console.print("  Installing nodejs (for pi)...")
+    run(
+        [
+            "lxc", "exec", container, "--",
+            "bash", "-c", "set -euo pipefail && "
+            "apt-get update -q && "
+            "apt-get install -y nodejs npm curl && "
+            "curl -fsSL https://deb.nodesource.com/setup_22.x "
+            "| bash - && "
+            "apt-get install -y nodejs"
+        ]
+    )
+
+    console.print("  Installing pi (@earendil-works/pi-coding-agent)...")
+    run(
+        ["lxc", "exec", container, "--", "npm", "install", "-g", "@earendil-works/pi-coding-agent"],
+    )
+
     console.print("  Setting fish as the default shell...")
     run(
         ["lxc", "exec", container, "--", "chsh", "-s", "/usr/bin/fish", CONTAINER_USER],
@@ -808,6 +827,25 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         shell = r.stdout.strip().split(":")[-1]
         assert shell == "/usr/bin/fish", f"shell is {shell!r}, expected '/usr/bin/fish'"
 
+    def t_pi_installed():
+        r = subprocess.run(
+            ["lxc", "exec", container, "--", "pi", "--version"],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, f"pi not found in container: {r.stderr.strip()}"
+
+    def t_pi_mount():
+        # Verify ~/.pi mount point exists in the container.
+        r = subprocess.run(
+            ["lxc", "exec", container, "--", "stat", "-c", "%a", f"{CONTAINER_HOME}/.pi"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        mode = r.stdout.strip()
+        assert mode != "", "~/.pi is not accessible in the container"
+
     def t_venv_exists():
         _t_venv_exists(container)
 
@@ -879,12 +917,14 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         ("uv installed", t_uv_installed),
         ("fish installed", t_fish_installed),
         ("fish is the default shell", t_fish_default_shell),
+        ("pi installed", t_pi_installed),
         ("dev mount readable", t_dev_mount_read),
         ("dev mount ownership transparent", t_dev_ownership),
         (".github mount works", t_github_mount),
         ("Write transparency", t_write_transparency),
         (f"container user is {CONTAINER_USER!r}", t_container_user),
         ("opencode config mounted", t_opencode_config_mount),
+        ("pi mount exists", t_pi_mount),
         ("pylsp installed", t_pylsp_installed),
         ("pylsp registered in lsp-config.json", t_pylsp_lsp_config),
         *([("nested lxd: lxc list works inside VM", t_nested_lxd)] if is_vm else []),
@@ -903,7 +943,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
             f"  UID/GID mapping: transparent (host {HOST_UID}:{HOST_GID} <-> container {CONTAINER_USER})"
         )
         console.print(f"  Container user: {CONTAINER_USER}")
-        console.print("  Packages: build-essential, gh, astral-uv")
+        console.print("  Packages: build-essential, gh, astral-uv, pi")
         console.print("  sudo: passwordless for container user")
         console.print("  Next: run 'gh auth login', 'gh copilot', and '/allow-all'")
         console.print(" PAT token perms: all repos, actions, issues, merge queues, metadata, pull requests")
