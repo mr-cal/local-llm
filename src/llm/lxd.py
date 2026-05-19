@@ -774,7 +774,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
 
     def t_opencode_config_mount():
         r = subprocess.run(
-            ["lxc", "exec", container, "--", "cat", f"{CONTAINER_HOME}/.config/opencode/opencode.json"],
+            ["lxc", "exec", container, "--", "cat", f"{CONTAINER_HOME}/.config/opencode/config.json"],
             capture_output=True,
             text=True,
         )
