@@ -3,11 +3,171 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
 from rich.console import Console
+
+
+@pytest.fixture
+def tmp_config_cwd(tmp_config: Path, monkeypatch) -> Path:
+    """Write a standard config.toml and chdir to its parent.
+
+    Combines the common pattern of tmp_config + monkeypatch.chdir.
+    """
+    monkeypatch.chdir(tmp_config.parent)
+    return tmp_config
+
+
+@pytest.fixture
+def tmp_config_with_lxd(tmp_path: Path, monkeypatch) -> Path:
+    """Write a config.toml with an lxd section (mounts) and chdir to parent."""
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+        'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
+        "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
+        'api_key = "test-key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = ["~/dev/craft"]\n'
+        "\n[[lxd.mounts]]\n"
+        'host = "~/.agents"\n'
+        "\n[[lxd.mounts]]\n"
+        'host = "~/dev"\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    return config
+
+
+@pytest.fixture
+def tmp_config_full(tmp_path: Path, monkeypatch) -> Path:
+    """Write a full config.toml with all sections and chdir to parent.
+
+    Suitable for tests that exercise config-init, config-gencert, config-apply.
+    """
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+        'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+        'api_key = "test-key"\ncert_path = "cert.pem"\n\n[client]\n'
+        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    return config
+
+
+@pytest.fixture
+def tmp_config_with_models_dir(tmp_path: Path, monkeypatch) -> Path:
+    """Write a full config.toml with a configurable models directory and chdir to parent.
+
+    Returns the path to the config file. The caller can read/modify the file
+    before using it with load_config() or _models_dir().
+    """
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "' + str(tmp_path / "models") + '"\n'
+        'active = "test.gguf"\nhf_token = ""\n\n[proxy]\n'
+        "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
+        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\n'
+        "craft_dirs = []\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    return config
+
+
+@pytest.fixture
+def tmp_config_server(tmp_path: Path, monkeypatch):
+    """Set up a full server test environment.
+
+    Creates config.toml with a working server config, a models directory
+    with model.gguf, and chdirs to tmp_path. Returns the tuple
+    (config_path, tmp_path) so tests can modify the config or inspect
+    created files.
+    """
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "' + str(tmp_path / "models") + '"\n'
+        'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+    )
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "model.gguf").touch()
+    monkeypatch.chdir(tmp_path)
+    return config, tmp_path
+
+
+@pytest.fixture
+def tmp_config_gencert(tmp_path: Path, monkeypatch) -> Path:
+    """Write a full config.toml with relative cert_path and chdir to parent.
+
+    Similar to tmp_config_full but with cert_path pointing to tmp_path,
+    which is required for config-gencert tests (certs are written to config dir).
+    """
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+        'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+        'api_key = "test-key"\ncert_path = "cert.pem"\n\n[client]\n'
+        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    return config
+
+
+@pytest.fixture
+def mock_urlopen(monkeypatch):
+    """Mock urllib.request.urlopen to raise an exception (no-network simulation).
+
+    Returns the patched open function for tests that need to re-use it.
+    """
+    def _urlopen(*a, **kw):
+        raise Exception("no network")
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    return _urlopen
+
+
+@pytest.fixture
+def tmp_config_bench(tmp_path: Path) -> Path:
+    """Write a minimal benchmark config.toml and return its path.
+
+    Suitable for tests that exercise _apply_config or _run_llama_bench_raw.
+    """
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+        'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+    )
+    return config
+
+
+@pytest.fixture
+def tmp_bench_history(tmp_path: Path, monkeypatch):
+    """Create a benchmark history CSV file under tmp_path/logs and chdir to tmp_path.
+
+    Returns the path to the history file.
+    """
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    history_file = logs_dir / "benchmark-history.csv"
+    history_file.write_text(
+        "timestamp,model,backend,pp_tps,tg_tps,ctx,n_tokens,n_gpu_layers\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    return history_file
 
 
 @pytest.fixture
@@ -24,6 +184,16 @@ def fake_console(monkeypatch):
     monkeypatch.setattr("llm.client.console.print", lambda *a, **kw: _print(*a, **kw))
     monkeypatch.setattr("llm.models.console.print", lambda *a, **kw: _print(*a, **kw))
     return calls
+
+
+@pytest.fixture
+def fake_file(tmp_path: Path):
+    """Create a file under tmp_path with configurable content and return its path."""
+    def _inner(name: str = "file", content: bytes | str = b"") -> Path:
+        f = tmp_path / name
+        f.write_bytes(content if isinstance(content, bytes) else content.encode())
+        return f
+    return _inner
 
 
 @pytest.fixture
@@ -58,6 +228,55 @@ def tmp_config(tmp_path: Path) -> Path:
         "craft_dirs = []\n"
     )
     return config
+
+
+@pytest.fixture
+def tmp_client_config(tmp_path: Path) -> Path:
+    """Write a client-test config.toml and return its path.
+
+    Suitable for tests exercising the client module's setup command.
+    The caller can read/modify the file before using it.
+    """
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
+        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
+        'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
+        "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
+        'api_key = "test-key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\n'
+        "craft_dirs = []\n"
+    )
+    return config
+
+
+@pytest.fixture
+def fake_find_config(monkeypatch, tmp_path: Path):
+    """Patch client.find_config to return a path, and chdir to tmp_path.
+
+    Returns the path so the caller can write/modify the config file.
+    """
+    config_path = tmp_path / "config.toml"
+
+    def _fake_find():
+        return config_path
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("llm.client.find_config", _fake_find)
+    return config_path
+
+
+@pytest.fixture
+def fake_no_config(monkeypatch, tmp_path: Path):
+    """Patch client.find_config to return a nonexistent path, and chdir to tmp_path."""
+    nonexistent = tmp_path / "nonexistent.toml"
+
+    def _fake_find():
+        return nonexistent
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("llm.client.find_config", _fake_find)
+    return nonexistent
 
 
 @pytest.fixture

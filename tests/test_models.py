@@ -126,40 +126,19 @@ class TestResolve:
 
 
 class TestModelsDir:
-    def test_creates_directory(self, tmp_path):
-        config = tmp_path / "config.toml"
-        models_dir = tmp_path / "models"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "'
-            + str(models_dir) + '"\nactive = "test.gguf"\nhf_token = ""\n\n[proxy]\n'
-            "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
-            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
-
-        import os
-        os.chdir(tmp_path)
-
+    def test_creates_directory(self, tmp_config_with_models_dir):
         result = _models_dir()
-        assert result == models_dir
+        expected = tmp_config_with_models_dir.parent / "models"
+        assert result == expected
         assert result.exists()
 
-    def test_returns_configured_directory(self, tmp_path):
-        config = tmp_path / "config.toml"
-        models_dir = tmp_path / "custom-models"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "'
-            + str(models_dir) + '"\nactive = "test.gguf"\nhf_token = ""\n\n[proxy]\n'
-            "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
-            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
-
-        import os
-        os.chdir(tmp_path)
-
+    def test_returns_configured_directory(self, tmp_config_with_models_dir, monkeypatch):
+        config = tmp_config_with_models_dir
+        models_dir = tmp_config_with_models_dir.parent / "custom-models"
+        content = config.read_text()
+        content = content.replace('dir = "' + str(tmp_config_with_models_dir.parent / "models") + '"',
+                                  'dir = "' + str(models_dir) + '"')
+        config.write_text(content)
         result = _models_dir()
         assert result == models_dir
 
@@ -168,22 +147,16 @@ class TestModelsDir:
 
 
 class TestFmtSize:
-    def test_formats_small_file(self, tmp_path):
-        f = tmp_path / "small.gguf"
-        f.write_text("x" * 1_000_000)  # ~1 MB
-        result = _fmt_size(f)
+    def test_formats_small_file(self, fake_file):
+        result = _fmt_size(fake_file("small.gguf", b"x" * 1_000_000))
         assert "0.0 GB" in result
 
-    def test_formats_large_file(self, tmp_path):
-        f = tmp_path / "large.gguf"
-        f.write_text("x" * (2 * 1_073_741_824))  # 2 GB
-        result = _fmt_size(f)
+    def test_formats_large_file(self, fake_file):
+        result = _fmt_size(fake_file("large.gguf", b"x" * (2 * 1_073_741_824)))
         assert "2.0 GB" in result
 
-    def test_format_contains_gb(self, tmp_path):
-        f = tmp_path / "medium.gguf"
-        f.write_text("x" * 536_870_912)  # 0.5 GB
-        result = _fmt_size(f)
+    def test_format_contains_gb(self, fake_file):
+        result = _fmt_size(fake_file("medium.gguf", b"x" * 536_870_912))
         assert "GB" in result
         assert "0.5" in result
 

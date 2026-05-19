@@ -279,40 +279,18 @@ class TestRunLlamaBench:
 
 
 class TestApplyConfig:
-    def test_updates_n_gpu_layers(self, tmp_path, fake_console):
-        monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.chdir(tmp_path)
-
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
+    def test_updates_n_gpu_layers(self, tmp_config_bench, fake_console, monkeypatch):
+        monkeypatch.chdir(tmp_config_bench.parent)
 
         benchmark._apply_config(n_gpu_layers=48, flash_attn=False, ctk="f16")
-        content = config.read_text()
+        content = tmp_config_bench.read_text()
         assert "n_gpu_layers = 48" in content
 
-    def test_updates_extra_args(self, tmp_path, fake_console):
-        monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.chdir(tmp_path)
-
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
+    def test_updates_extra_args(self, tmp_config_bench, fake_console, monkeypatch):
+        monkeypatch.chdir(tmp_config_bench.parent)
 
         benchmark._apply_config(n_gpu_layers=20, flash_attn=True, ctk="q8_0")
-        content = config.read_text()
+        content = tmp_config_bench.read_text()
         assert "--flash-attn" in content
         assert "--cache-type-k" in content
         assert "q8_0" in content
@@ -323,8 +301,8 @@ class TestApplyConfig:
 
 class TestHistoryFileOps:
     def test_creates_history_file(self, tmp_path, fake_console):
-        monkeypatch = pytest.MonkeyPatch()
         history_path = tmp_path / "logs" / "benchmark-history.csv"
+        monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(benchmark, "HISTORY_FILE", history_path)
 
         benchmark._ensure_history_file()
@@ -334,8 +312,8 @@ class TestHistoryFileOps:
         assert "timestamp" in content
 
     def test_appends_result(self, tmp_path, fake_console):
-        monkeypatch = pytest.MonkeyPatch()
         history_path = tmp_path / "logs" / "benchmark-history.csv"
+        monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(benchmark, "HISTORY_FILE", history_path)
 
         benchmark._ensure_history_file()
@@ -409,19 +387,8 @@ class TestBuildExtraArgs:
 
 
 class TestRunLlamaBenchRaw:
-    def test_skips_when_no_bench(self, tmp_path, fake_console):
-        monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.chdir(tmp_path)
-
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
+    def test_skips_when_no_bench(self, tmp_config_bench, fake_console, monkeypatch):
+        monkeypatch.chdir(tmp_config_bench.parent)
 
         from llm.config import load_config
         cfg = load_config()
@@ -439,21 +406,14 @@ class TestRunLlamaBenchRaw:
 class TestHistoryCommand:
     def test_no_history_shows_warning(self, tmp_path, fake_console, monkeypatch):
         monkeypatch.chdir(tmp_path)
-
         monkeypatch.setattr(benchmark, "HISTORY_FILE", Path("/nonexistent/file.csv"))
 
         with pytest.raises(click.exceptions.Exit):
             benchmark.history()
 
-    def test_empty_history_shows_warning(self, tmp_path, fake_console, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-
-        logs_dir = tmp_path / "logs"
-        logs_dir.mkdir()
-        history_file = logs_dir / "benchmark-history.csv"
-        history_file.write_text("timestamp,model,backend,pp_tps,tg_tps,ctx,n_tokens,n_gpu_layers\n")
-
-        monkeypatch.setattr(benchmark, "HISTORY_FILE", history_file)
+    def test_empty_history_shows_warning(self, tmp_bench_history, fake_console):
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(benchmark, "HISTORY_FILE", tmp_bench_history)
 
         # No data rows -> returns without exit
         benchmark.history()
@@ -472,7 +432,6 @@ class TestHistoryCommand:
         )
 
         monkeypatch.setattr(benchmark, "HISTORY_FILE", history_file)
-        monkeypatch.setattr(Path, "open", lambda self, *a, **kw: open(self, *a, **kw))
 
         benchmark.history(last=2)
 
@@ -489,7 +448,6 @@ class TestHistoryCommand:
         )
 
         monkeypatch.setattr(benchmark, "HISTORY_FILE", history_file)
-        monkeypatch.setattr(Path, "open", lambda self, *a, **kw: open(self, *a, **kw))
 
         benchmark.history(last=100)
 

@@ -477,44 +477,19 @@ class TestConfigShow:
 
 
 class TestConfigApply:
-    def test_applies_client_configs_only(self, tmp_path, fake_console, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-
-        # Create a minimal config without a server (client-only)
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[proxy]\nport = 8443\nlan_ip = "10.0.0.5"\n'
-            'lan_subnet = "10.0.0.0/24"\napi_key = "remote-key"\n'
-            'cert_path = "/etc/ssl/local-llm/cert.pem"\n\n[client]\n'
-            'server_url = "https://10.0.0.5:8443/v1"\napi_key = "remote-key"\n'
-            'cert_path = "/home/user/.config/local-llm/cert.pem"\n\n'
-            "[lxd]\ncraft_dirs = []\n"
-        )
+    def test_applies_client_configs_only(self, tmp_config_client_only, fake_console, monkeypatch):
+        monkeypatch.chdir(tmp_config_client_only.parent)
 
         with patch("urllib.request.urlopen", side_effect=Exception("no network")):
             config_apply()
 
-        # Check that pi config was written
-        pi_path = _PI_CONFIG_PATH.expanduser()
-        # The actual path depends on HOME; we can check the tmp_path parent
         # Instead, let's test the _build_pi_config directly
         pi_cfg = _build_pi_config(Settings(client=ClientSettings(server_url="https://10.0.0.5:8443/v1")))
         assert "providers" in pi_cfg
 
-    def test_render_templates_and_apply(self, tmp_path, fake_console, fake_template_files, monkeypatch, _make_proc):
-        monkeypatch.chdir(tmp_path)
-
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "test-key"\ncert_path = "/etc/ssl/local-llm/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
-        (tmp_path / "models").mkdir()
-        (tmp_path / "models" / "model.gguf").write_text("fake")
+    def test_render_templates_and_apply(self, tmp_config_full, fake_console, fake_template_files, monkeypatch, _make_proc):
+        (tmp_config_full.parent / "models").mkdir()
+        (tmp_config_full.parent / "models" / "model.gguf").write_text("fake")
 
         with patch("urllib.request.urlopen", side_effect=Exception("no network")):
             monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
@@ -522,14 +497,14 @@ class TestConfigApply:
             config_apply()
 
         # Check nginx config was rendered
-        nginx_conf = tmp_path / "nginx" / "llm-proxy.conf"
+        nginx_conf = tmp_config_full.parent / "nginx" / "llm-proxy.conf"
         assert nginx_conf.exists()
         content = nginx_conf.read_text()
         assert "192.168.1.100" in content
         assert "8443" in content
 
         # Check systemd service was rendered
-        svc = tmp_path / "systemd" / "llm-server.service"
+        svc = tmp_config_full.parent / "systemd" / "llm-server.service"
         assert svc.exists()
         content = svc.read_text()
         assert "llama-server" in content
@@ -539,22 +514,9 @@ class TestConfigApply:
 
 
 class TestConfigGencert:
-    def test_gencert_creates_cert(self, tmp_path, fake_console, monkeypatch, _make_proc):
-        monkeypatch.chdir(tmp_path)
-
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "test-key"\ncert_path = "cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
-
+    def test_gencert_creates_cert(self, tmp_config_gencert, fake_console, monkeypatch, _make_proc):
         def fake_subprocess_run(cmd, **kw):
             if "openssl" in cmd:
-                # Simulate successful cert creation
                 cert_dir = Path(cmd[cmd.index("-out") + 1]).parent
                 cert_dir.mkdir(parents=True, exist_ok=True)
                 (cert_dir / "cert.pem").write_text("fake-cert")
@@ -567,48 +529,26 @@ class TestConfigGencert:
 
         config_gencert()
 
-        cert = tmp_path / "cert.pem"
-        key = tmp_path / "key.pem"
+        cert = tmp_config_gencert.parent / "cert.pem"
+        key = tmp_config_gencert.parent / "key.pem"
         assert cert.exists()
         assert key.exists()
 
-    def test_gencert_exits_when_exists(self, tmp_path, fake_console, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "test-key"\ncert_path = "cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
-
-        (tmp_path / "cert.pem").write_text("existing-cert")
+    def test_gencert_exits_when_exists(self, tmp_config_gencert, fake_console, monkeypatch):
+        cert = tmp_config_gencert.parent / "cert.pem"
+        cert.write_text("existing-cert")
         monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
 
         with pytest.raises(typer.Exit):
             config_gencert()
 
-    def test_gencert_overwrite_with_force(self, tmp_path, fake_console, monkeypatch, _make_proc):
-        monkeypatch.chdir(tmp_path)
-
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "test-key"\ncert_path = "cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-        )
-
-        (tmp_path / "cert.pem").write_text("existing")
+    def test_gencert_overwrite_with_force(self, tmp_config_gencert, fake_console, monkeypatch, _make_proc):
+        cert = tmp_config_gencert.parent / "cert.pem"
+        cert.write_text("existing")
 
         def fake_subprocess_run(cmd, **kw):
             if "openssl" in cmd:
-                (tmp_path / "cert.pem").write_text("new-cert")
+                cert.write_text("new-cert")
                 return _make_proc(0, "")
             return _make_proc(0, "")
 
@@ -616,7 +556,7 @@ class TestConfigGencert:
 
         config_gencert(force=True)
 
-        assert (tmp_path / "cert.pem").read_text() == "new-cert"
+        assert cert.read_text() == "new-cert"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
