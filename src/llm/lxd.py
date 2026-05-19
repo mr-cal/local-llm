@@ -458,7 +458,7 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
 
     console.print("  Setting fish as the default shell...")
     run(
-        ["lxc", "exec", container, "--", "chsh", "-s", "/usr/bin/fish"],
+        ["lxc", "exec", container, "--", "chsh", "-s", "/usr/bin/fish", CONTAINER_USER],
     )
 
 
@@ -711,15 +711,20 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         )
 
     def t_dev_mount_read():
+        # Verify ~/dev mount point is readable in the container.
+        # We check the mount point itself rather than a specific subdirectory
+        # because users may have ~/dev/cal, ~/dev/craft, both, or neither.
         r = subprocess.run(
-            ["lxc", "exec", container, "--", "ls", f"{CONTAINER_HOME}/dev/craft"],
+            ["lxc", "exec", container, "--", "stat", "-c", "%a", f"{CONTAINER_HOME}/dev"],
             capture_output=True,
             text=True,
             check=True,
         )
-        assert "snapcraft" in r.stdout, f"snapcraft not listed: {r.stdout!r}"
+        mode = r.stdout.strip()
+        assert mode != "", "~/dev is not accessible in the container"
 
     def t_dev_ownership():
+        # Verify ~/dev is owned by the container user.
         r = subprocess.run(
             [
                 "lxc",
@@ -729,7 +734,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
                 "stat",
                 "-c",
                 "%U",
-                f"{CONTAINER_HOME}/dev/craft/snapcraft",
+                f"{CONTAINER_HOME}/dev",
             ],
             capture_output=True,
             text=True,
