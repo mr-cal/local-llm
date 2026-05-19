@@ -114,6 +114,17 @@ api_key = ""
 # Then set NODE_EXTRA_CA_CERTS to this path in your shell profile.
 cert_path = ""
 
+# ── MODEL COST ────────────────────────────────────────────────────────────────
+# Per-token pricing used when generating pi's models.json.
+# Set to 0 for free local models.  For cloud APIs, use the provider's rates.
+# Values are in USD per token.
+
+[model_cost]
+input = 0.0          # cost per input token
+output = 0.0         # cost per output token
+cache_write = 0.0    # cost per cached token written (5M tokens in API docs)
+cache_read = 0.0     # cost per cached token read (1M tokens in API docs)
+
 [lxd]
 # Craft project directories to run `make setup` in via `llm lxd setup-crafts`.
 craft_dirs = [
@@ -143,6 +154,27 @@ class ServerSettings(BaseModel):
     n_ctx: int = 4096
     n_threads: int = 12
     extra_args: list[str] = Field(default_factory=list)
+
+
+class ModelCostSettings(BaseModel):
+    """Per-token cost for pi's models.json.
+
+    Prices are in USD per token.  Defaults are zero because local models
+    are free — override for cloud-hosted APIs or when you want cost tracking.
+    """
+
+    input: float = 0.0  # $ per input token
+    output: float = 0.0  # $ per output token
+    cache_write: float = 0.0  # $ per cached (KV cache) token write
+    cache_read: float = 0.0  # $ per cached (KV cache) token read
+
+    def to_cost_dict(self) -> dict:  # type: ignore[type-arg]
+        return {
+            "input": self.input,
+            "output": self.output,
+            "cacheWrite": self.cache_write,
+            "cacheRead": self.cache_read,
+        }
 
 
 class ModelsSettings(BaseModel):
@@ -197,6 +229,7 @@ class LxdSettings(BaseModel):
 class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     models: ModelsSettings = Field(default_factory=ModelsSettings)
+    model_cost: ModelCostSettings = Field(default_factory=ModelCostSettings, alias="model_cost")
     proxy: ProxySettings = Field(default_factory=ProxySettings)
     client: ClientSettings = Field(default_factory=ClientSettings)
     lxd: LxdSettings = Field(default_factory=LxdSettings)
@@ -420,7 +453,7 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                         "name": display_name,
                         "contextWindow": cfg.server.n_ctx,
                         "maxTokens": max_output,
-                        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+                        "cost": cfg.model_cost.to_cost_dict(),
                     }
                 ],
             }

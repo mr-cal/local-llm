@@ -406,7 +406,7 @@ def add_mounts(container, step: str = "3/5", uid: int = CONTAINER_UID, gid: int 
 def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
     console.print(f"\n[bold][{step}][/bold] Installing packages...")
     run(["lxc", "exec", container, "--", "apt-get", "update", "-q"])
-    run(["lxc", "exec", container, "--", "apt-get", "install", "-y", "build-essential", "kitty-terminfo"])
+    run(["lxc", "exec", container, "--", "apt-get", "install", "-y", "build-essential", "kitty-terminfo", "fish"])
 
     console.print("  Installing gh CLI...")
     gh_setup = (
@@ -442,6 +442,11 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
 
     console.print("  Installing astral-uv...")
     run(["lxc", "exec", container, "--", "snap", "install", "astral-uv", "--classic"])
+
+    console.print("  Setting fish as the default shell...")
+    run(
+        ["lxc", "exec", container, "--", "chsh", "-s", "/usr/bin/fish"],
+    )
 
 
 def run_make_setup(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
@@ -751,6 +756,23 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
             check=True,
         )
 
+    def t_fish_installed():
+        subprocess.run(
+            ["lxc", "exec", container, "--", "fish", "--version"],
+            capture_output=True,
+            check=True,
+        )
+
+    def t_fish_default_shell():
+        r = subprocess.run(
+            ["lxc", "exec", container, "--", "getent", "passwd", CONTAINER_USER],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        shell = r.stdout.strip().split(":")[-1]
+        assert shell == "/usr/bin/fish", f"shell is {shell!r}, expected '/usr/bin/fish'"
+
     def t_venv_exists():
         _t_venv_exists(container)
 
@@ -820,6 +842,8 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         ("gh installed", t_gh_installed),
         ("passwordless sudo works", t_passwordless_sudo),
         ("uv installed", t_uv_installed),
+        ("fish installed", t_fish_installed),
+        ("fish is the default shell", t_fish_default_shell),
         ("dev mount readable", t_dev_mount_read),
         ("dev mount ownership transparent", t_dev_ownership),
         (".github mount works", t_github_mount),
