@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import typer
@@ -192,18 +192,18 @@ class TestSettings:
 
 
 class TestFindConfig:
-    def test_finds_config_in_cwd(self, tmp_config):
-        with patch("llm.config.Path.cwd", return_value=tmp_config.parent):
-            assert find_config() == tmp_config
+    def test_finds_config_in_cwd(self, tmp_config, mocker):
+        mocker.patch("llm.config.Path.cwd", return_value=tmp_config.parent)
+        assert find_config() == tmp_config
 
-    def test_walks_up_to_find_config(self, tmp_path):
+    def test_walks_up_to_find_config(self, tmp_path, mocker):
         subdir = tmp_path / "deep" / "nested"
         subdir.mkdir(parents=True)
         (tmp_path / "config.toml").write_text("[server]\n")
-        with patch("llm.config.Path.cwd", return_value=subdir):
-            assert find_config() == tmp_path / "config.toml"
+        mocker.patch("llm.config.Path.cwd", return_value=subdir)
+        assert find_config() == tmp_path / "config.toml"
 
-    def test_stops_at_pyproject_toml(self, tmp_path):
+    def test_stops_at_pyproject_toml(self, tmp_path, mocker):
         config = tmp_path / "config.toml"
         config.write_text("[server]\n")
         pyproject = tmp_path / "pyproject.toml"
@@ -211,15 +211,15 @@ class TestFindConfig:
         # CWD is inside a subdir with pyproject but no config
         subdir = tmp_path / "sub"
         subdir.mkdir()
-        with patch("llm.config.Path.cwd", return_value=subdir):
-            result = find_config()
-            # Should walk up past subdir, find pyproject at tmp_path, stop
-            # but config.toml is at tmp_path so it finds it first
-            assert result == config
+        mocker.patch("llm.config.Path.cwd", return_value=subdir)
+        result = find_config()
+        # Should walk up past subdir, find pyproject at tmp_path, stop
+        # but config.toml is at tmp_path so it finds it first
+        assert result == config
 
-    def test_returns_cwd_when_no_config_found(self, tmp_path):
-        with patch("llm.config.Path.cwd", return_value=tmp_path):
-            assert find_config() == tmp_path / "config.toml"
+    def test_returns_cwd_when_no_config_found(self, tmp_path, mocker):
+        mocker.patch("llm.config.Path.cwd", return_value=tmp_path)
+        assert find_config() == tmp_path / "config.toml"
 
 
 class TestLoadConfig:
@@ -437,8 +437,8 @@ class TestBuildPiConfig:
 
 
 class TestValidateOpencodeConfig:
-    def test_returns_warning_when_cannot_fetch_schema(self, monkeypatch):
-        monkeypatch.setattr(
+    def test_returns_warning_when_cannot_fetch_schema(self, mocker):
+        mocker.patch(
             "urllib.request.urlopen",
             MagicMock(side_effect=Exception("no network")),
         )
@@ -459,38 +459,38 @@ class TestValidateOpencodeConfig:
 
 
 class TestConfigShow:
-    def test_prints_config_and_opencode(self, tmp_config, fake_console, monkeypatch):
+    def test_prints_config_and_opencode(self, tmp_config, fake_console, mocker, monkeypatch):
         monkeypatch.chdir(tmp_config.parent)
         # config_show calls load_config() and _validate_opencode_config
         # It should run without errors
-        with patch("urllib.request.urlopen", side_effect=Exception("no network")):
-            config_show()
+        mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
+        config_show()
 
 
 # ── config_apply ───────────────────────────────────────────────────────────────
 
 
 class TestConfigApply:
-    def test_applies_client_configs_only(self, tmp_config_client_only, fake_console, monkeypatch):
+    def test_applies_client_configs_only(self, tmp_config_client_only, fake_console, mocker, monkeypatch):
         monkeypatch.chdir(tmp_config_client_only.parent)
 
-        with patch("urllib.request.urlopen", side_effect=Exception("no network")):
-            config_apply()
+        mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
+        config_apply()
 
         # Instead, let's test the _build_pi_config directly
         pi_cfg = _build_pi_config(Settings(client=ClientSettings(server_url="https://10.0.0.5:8443/v1")))
         assert "providers" in pi_cfg
 
     def test_render_templates_and_apply(
-        self, tmp_config_full, fake_console, fake_template_files, monkeypatch, _make_proc
+        self, tmp_config_full, fake_console, fake_template_files, monkeypatch, _make_proc, mocker
     ):
         (tmp_config_full.parent / "models").mkdir()
         (tmp_config_full.parent / "models" / "model.gguf").write_text("fake")
 
-        with patch("urllib.request.urlopen", side_effect=Exception("no network")):
-            monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
-            monkeypatch.setattr(os.path, "exists", lambda x: True)
-            config_apply()
+        mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
+        monkeypatch.setattr(os.path, "exists", lambda x: True)
+        config_apply()
 
         # Check nginx config was rendered
         nginx_conf = tmp_config_full.parent / "nginx" / "llm-proxy.conf"

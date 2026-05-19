@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import click
 import pytest
@@ -385,7 +385,7 @@ class TestBuildExtraArgs:
 
 
 class TestRunLlamaBenchRaw:
-    def test_skips_when_no_bench(self, tmp_config_bench, fake_console, monkeypatch):
+    def test_skips_when_no_bench(self, tmp_config_bench, fake_console, monkeypatch, mocker):
         monkeypatch.chdir(tmp_config_bench.parent)
 
         from llm.config import load_config
@@ -394,8 +394,8 @@ class TestRunLlamaBenchRaw:
         def fake_find():
             return None
 
-        with patch.object(benchmark, "_find_bench_bin", fake_find):
-            benchmark._run_llama_bench_raw(cfg)
+        mocker.patch.object(benchmark, "_find_bench_bin", fake_find)
+        benchmark._run_llama_bench_raw(cfg)
 
 
 # ── history command ───────────────────────────────────────────────────────────
