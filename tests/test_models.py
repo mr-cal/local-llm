@@ -2,24 +2,15 @@
 
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
-import typer
-
 from llm.models import (
     KNOWN_MODELS,
-    ModelEntry,
     _by_alias,
     _by_filename,
+    _catalog_table,
     _fmt_size,
     _models_dir,
     _resolve,
-    _catalog_table,
 )
-
 
 # ── KNOWN_MODELS catalog ──────────────────────────────────────────────────────
 

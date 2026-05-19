@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import os
 import signal
 import subprocess
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
 
 import llm.server as server
-
 
 # ── nginx helpers ──────────────────────────────────────────────────────────────
 
@@ -181,9 +178,8 @@ class TestStartCommand:
                 pass  # process exists
             return None
 
-        with patch("os.kill", fake_kill):
-            with pytest.raises(typer.Exit):
-                server.start(wait=0)
+        with patch("os.kill", fake_kill), pytest.raises(typer.Exit):
+            server.start(wait=0)
 
     def test_start_model_not_found(self, tmp_config_server, fake_console, monkeypatch):
         config, tmp_path = tmp_config_server
@@ -209,11 +205,13 @@ class TestStartCommand:
         def fake_run(cmd, **kw):
             return _make_proc(0, "")
 
-        with patch("subprocess.Popen", fake_popen):
-            with patch("os.kill", fake_kill):
-                with patch("time.monotonic", return_value=999999):
-                    with patch("subprocess.run", fake_run):
-                        server.start(wait=0)
+        with (
+            patch("subprocess.Popen", fake_popen),
+            patch("os.kill", fake_kill),
+            patch("time.monotonic", return_value=999999),
+            patch("subprocess.run", fake_run),
+        ):
+            server.start(wait=0)
 
         # Check PID file was written
         pid_file = tmp_path / ".server.pid"
@@ -244,11 +242,13 @@ class TestStartCommand:
         def fake_run(cmd, **kw):
             return _make_proc(0, "")
 
-        with patch("subprocess.Popen", fake_popen):
-            with patch("os.kill", fake_kill):
-                with patch("time.monotonic", return_value=999999):
-                    with patch("subprocess.run", fake_run):
-                        server.start(wait=0)
+        with (
+            patch("subprocess.Popen", fake_popen),
+            patch("os.kill", fake_kill),
+            patch("time.monotonic", return_value=999999),
+            patch("subprocess.run", fake_run),
+        ):
+            server.start(wait=0)
 
         assert started_cmd is not None
         assert "--jinja" in started_cmd
@@ -262,11 +262,12 @@ class TestStartCommand:
         def fake_popen(cmd, **kw):
             raise FileNotFoundError("no such file")
 
-        with patch("subprocess.Popen", fake_popen):
-            with pytest.raises(typer.Exit):
-                server.start(wait=0)
+        with patch("subprocess.Popen", fake_popen), pytest.raises(typer.Exit):
+            server.start(wait=0)
 
-    def test_start_waits_for_ready(self, tmp_config_server, fake_console, mock_httpx_get, monkeypatch, _make_proc):
+    def test_start_waits_for_ready(
+        self, tmp_config_server, fake_console, mock_httpx_get, monkeypatch, _make_proc
+    ):
         config, tmp_path = tmp_config_server
 
         proc = MagicMock()
@@ -289,11 +290,13 @@ class TestStartCommand:
             ready_calls.append(time.time())
             return 999999  # always "past deadline" for timeout test
 
-        with patch("subprocess.Popen", fake_popen):
-            with patch("os.kill", fake_kill):
-                with patch("time.monotonic", fake_monotonic):
-                    with patch("subprocess.run", fake_run):
-                        server.start(wait=1)
+        with (
+            patch("subprocess.Popen", fake_popen),
+            patch("os.kill", fake_kill),
+            patch("time.monotonic", fake_monotonic),
+            patch("subprocess.run", fake_run),
+        ):
+            server.start(wait=1)
 
         # Should have checked readiness
         assert len(ready_calls) > 0
@@ -304,9 +307,10 @@ class TestStartCommand:
 
 class TestStopCommand:
     def test_stop_not_running(self, tmp_config_server, fake_console, monkeypatch):
-        with patch.object(server, "_read_pid", return_value=None):
-            with pytest.raises(typer.Exit):
-                server.stop()
+        with pytest.raises(typer.Exit), patch.object(
+            server, "_read_pid", return_value=None
+        ):
+            server.stop()
 
     def test_stop_success(self, tmp_config_server, fake_console, monkeypatch):
         _, tmp_path = tmp_config_server
@@ -324,9 +328,8 @@ class TestStopCommand:
                     raise ProcessLookupError()
                 return None
 
-        with patch.object(server, "_read_pid", return_value=12345):
-            with patch("os.kill", fake_kill):
-                server.stop()
+        with patch.object(server, "_read_pid", return_value=12345), patch("os.kill", fake_kill):
+            server.stop()
 
         assert not pid_file.exists()
 
@@ -340,9 +343,8 @@ class TestStopCommand:
                 raise ProcessLookupError()
             return None
 
-        with patch.object(server, "_read_pid", return_value=12345):
-            with patch("os.kill", fake_kill):
-                server.stop()
+        with patch.object(server, "_read_pid", return_value=12345), patch("os.kill", fake_kill):
+            server.stop()
 
         assert not pid_file.exists()
 
@@ -351,7 +353,9 @@ class TestStopCommand:
 
 
 class TestRestartCommand:
-    def test_restart_calls_stop_then_start(self, tmp_config_server, fake_console, mock_httpx_get, monkeypatch):
+    def test_restart_calls_stop_then_start(
+        self, tmp_config_server, fake_console, mock_httpx_get, monkeypatch
+    ):
         config, tmp_path = tmp_config_server
 
         pid_file = tmp_path / ".server.pid"
@@ -377,15 +381,17 @@ class TestRestartCommand:
                 raise ProcessLookupError()
             return None
 
-        with patch.object(server, "_read_pid", return_value=12345):
-            with patch.object(server, "_nginx_is_active", return_value=False):
-                with patch.object(server, "_nginx_start", return_value=True):
-                    with patch.object(server, "stop", fake_stop):
-                        with patch.object(server, "start", fake_start):
-                            with patch("subprocess.Popen", fake_popen):
-                                with patch("os.kill", fake_kill):
-                                    with patch("time.monotonic", return_value=999999):
-                                        server.restart()
+        with (
+            patch.object(server, "_read_pid", return_value=12345),
+            patch.object(server, "_nginx_is_active", return_value=False),
+            patch.object(server, "_nginx_start", return_value=True),
+            patch.object(server, "stop", fake_stop),
+            patch.object(server, "start", fake_start),
+            patch("subprocess.Popen", fake_popen),
+            patch("os.kill", fake_kill),
+            patch("time.monotonic", return_value=999999),
+        ):
+            server.restart()
 
         assert stop_calls
         assert start_calls
@@ -408,16 +414,18 @@ class TestStatusCommand:
         content = config.read_text().replace('"model.gguf"', '"Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"')
         config.write_text(content)
 
-        with patch.object(server, "_read_pid", return_value=12345):
-            with patch.object(server, "_nginx_is_active", return_value=True):
-                server.status()
+        with patch.object(server, "_read_pid", return_value=12345), patch.object(
+            server, "_nginx_is_active", return_value=True
+        ):
+            server.status()
 
     def test_status_stopped(self, tmp_config_server, fake_console, monkeypatch):
         config, tmp_path = tmp_config_server
 
-        with patch.object(server, "_read_pid", return_value=None):
-            with patch.object(server, "_nginx_is_active", return_value=False):
-                server.status()
+        with patch.object(server, "_read_pid", return_value=None), patch.object(
+            server, "_nginx_is_active", return_value=False
+        ):
+            server.status()
 
 
 # ── logs command ─────────────────────────────────────────────────────────────
@@ -426,9 +434,10 @@ class TestStatusCommand:
 class TestLogsCommand:
     def test_logs_no_file(self, tmp_config_server, fake_console, monkeypatch):
         _, tmp_path = tmp_config_server
-        with patch.object(server, "_log_file", return_value=tmp_path / "nonexistent.log"):
-            with pytest.raises(typer.Exit):
-                server.logs(lines=50)
+        with pytest.raises(typer.Exit), patch.object(
+            server, "_log_file", return_value=tmp_path / "nonexistent.log"
+        ):
+            server.logs(lines=50)
 
     def test_logs_show_lines(self, tmp_config_server, fake_console, monkeypatch):
         _, tmp_path = tmp_config_server
@@ -440,9 +449,11 @@ class TestLogsCommand:
         def fake_run(cmd, **kw):
             captured.append(list(cmd))
 
-        with patch.object(server, "_log_file", return_value=log_file):
-            with patch("subprocess.run", fake_run):
-                server.logs(lines=2)
+        with (
+            patch.object(server, "_log_file", return_value=log_file),
+            patch("subprocess.run", fake_run),
+        ):
+            server.logs(lines=2)
 
         assert captured
         assert "-2" in captured[0]
@@ -458,9 +469,11 @@ class TestLogsCommand:
         def fake_run(cmd, **kw):
             captured.append(list(cmd))
 
-        with patch.object(server, "_log_file", return_value=log_file):
-            with patch("subprocess.run", fake_run):
-                server.logs(follow=True)
+        with (
+            patch.object(server, "_log_file", return_value=log_file),
+            patch("subprocess.run", fake_run),
+        ):
+            server.logs(follow=True)
 
         assert captured
         assert "-f" in captured[0]

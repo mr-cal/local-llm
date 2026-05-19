@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-import typer
 import click
+import pytest
 
 import llm.benchmark as benchmark
 
@@ -461,7 +459,7 @@ class TestModuleConstants:
 
     def test_history_headers(self):
         expected = ["timestamp", "model", "backend", "pp_tps", "tg_tps", "ctx", "n_tokens", "n_gpu_layers"]
-        assert benchmark.HISTORY_HEADERS == expected
+        assert expected == benchmark.HISTORY_HEADERS
 
     def test_default_prompt(self):
         assert len(benchmark._DEFAULT_PROMPT) > 0

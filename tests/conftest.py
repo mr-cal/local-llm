@@ -3,11 +3,9 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-import typer
-from rich.console import Console
 
 
 @pytest.fixture
@@ -67,14 +65,18 @@ def tmp_config_with_models_dir(tmp_path: Path, monkeypatch) -> Path:
     before using it with load_config() or _models_dir().
     """
     config = tmp_path / "config.toml"
+    models_dir = tmp_path / "models"
     config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "' + str(tmp_path / "models") + '"\n'
-        'active = "test.gguf"\nhf_token = ""\n\n[proxy]\n'
-        "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
-        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\n'
-        "craft_dirs = []\n"
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\n'
+        'n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n'
+        'extra_args = []\n\n[models]\ndir = "'
+        + str(models_dir)
+        + '"\nactive = "test.gguf"\nhf_token = ""\n'
+        '\n[proxy]\nport = 8443\n'
+        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n'
+        '\n[client]\nserver_url = ""\napi_key = ""\ncert_path = ""\n'
+        '\n[lxd]\ncraft_dirs = []\n'
     )
     monkeypatch.chdir(tmp_path)
     return config
@@ -90,13 +92,18 @@ def tmp_config_server(tmp_path: Path, monkeypatch):
     created files.
     """
     config = tmp_path / "config.toml"
+    models_dir = tmp_path / "models"
     config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "' + str(tmp_path / "models") + '"\n'
-        'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+        '[server]\nllama_server_bin = "llama-server"\nport = 8080\n'
+        'n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n'
+        'extra_args = []\n\n[models]\ndir = "'
+        + str(models_dir)
+        + '"\nactive = "model.gguf"\nhf_token = ""\n'
+        '\n[proxy]\nport = 8443\n'
         'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n'
+        '\n[client]\nserver_url = ""\napi_key = ""\ncert_path = ""\n'
+        '\n[lxd]\ncraft_dirs = []\n'
     )
     (tmp_path / "models").mkdir()
     (tmp_path / "models" / "model.gguf").touch()
@@ -569,6 +576,7 @@ def fake_template_files(tmp_path: Path):
     svc = tmp_path / "systemd" / "llm-server.service.template"
     svc.parent.mkdir(parents=True)
     svc.write_text(
-        "%%LLAMA_SERVER_BIN%% %%MODELS_DIR%% %%ACTIVE_MODEL%% %%N_GPU_LAYERS%% %%N_CTX%% %%N_THREADS%% %%USER%%\n"
+        "%%LLAMA_SERVER_BIN%% %%MODELS_DIR%% %%ACTIVE_MODEL%%\n"
+        "%%N_GPU_LAYERS%% %%N_CTX%% %%N_THREADS%% %%USER%%\n"
     )
     return {"nginx": nginx_conf, "systemd": svc}

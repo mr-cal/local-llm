@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
 import typer
 
 import llm.client as client
-
 
 # ── setup command ─────────────────────────────────────────────────────────────
 
@@ -40,12 +36,16 @@ class TestSetupCommand:
 
     def test_setup_default_api_key_warning(self, fake_find_config, fake_console):
         fake_find_config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
+            '[server]\nllama_server_bin = "llama-server"\nport = 8080\n'
+            'n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n'
+            'extra_args = []\n\n[models]\ndir = "~/models"\n'
+            'active = "model.gguf"\nhf_token = ""\n'
+            '\n[proxy]\nport = 8443\n'
             'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "change-me-generate-a-strong-random-key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+            'api_key = "change-me-generate-a-strong-random-key"\n'
+            'cert_path = "/etc/ssl/cert.pem"\n'
+            '\n[client]\nserver_url = ""\napi_key = ""\ncert_path = ""\n'
+            '\n[lxd]\ncraft_dirs = []\n'
         )
 
         client.setup()
@@ -86,13 +86,13 @@ class TestModuleConstants:
         assert "<SERVER_LAN_IP>" in client._PLACEHOLDER_URL
 
     def test_placeholder_key(self):
-        assert "<your-api-key>" == client._PLACEHOLDER_KEY
+        assert client._PLACEHOLDER_KEY == "<your-api-key>"
 
     def test_placeholder_model(self):
         assert client._PLACEHOLDER_MODEL.endswith(".gguf")
 
     def test_placeholder_ip(self):
-        assert "<SERVER_LAN_IP>" == client._PLACEHOLDER_IP
+        assert client._PLACEHOLDER_IP == "<SERVER_LAN_IP>"
 
 
 # ── App definition ───────────────────────────────────────────────────────────

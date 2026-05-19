@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import copy
-import json
 import os
-import re
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -16,13 +13,11 @@ import typer
 from llm.config import (
     ClientSettings,
     LxdSettings,
-    MountEntry,
     ModelsSettings,
+    MountEntry,
     ProxySettings,
     ServerSettings,
     Settings,
-    _PI_CONFIG_PATH,
-    _OPENCODE_CONFIG_PATH,
     _build_opencode_config,
     _build_pi_config,
     _sudo,
@@ -36,7 +31,6 @@ from llm.config import (
     load_config,
     try_load_lxd,
 )
-
 
 # ── Model classes ──────────────────────────────────────────────────────────────
 
@@ -120,18 +114,18 @@ class TestMountEntry:
 
 class TestLxdSettings:
     def test_defaults(self):
-        l = LxdSettings()
-        assert l.craft_dirs == []
-        assert l.mounts == []
+        lxd = LxdSettings()
+        assert lxd.craft_dirs == []
+        assert lxd.mounts == []
 
     def test_with_mounts(self):
         mounts = [
             MountEntry(host="/home/user/.agents"),
             MountEntry(host="/home/user/dev"),
         ]
-        l = LxdSettings(craft_dirs=["~/dev/craft/snapcraft"], mounts=mounts)
-        assert len(l.craft_dirs) == 1
-        assert len(l.mounts) == 2
+        lxd = LxdSettings(craft_dirs=["~/dev/craft/snapcraft"], mounts=mounts)
+        assert len(lxd.craft_dirs) == 1
+        assert len(lxd.mounts) == 2
 
 
 class TestSettings:
@@ -487,7 +481,9 @@ class TestConfigApply:
         pi_cfg = _build_pi_config(Settings(client=ClientSettings(server_url="https://10.0.0.5:8443/v1")))
         assert "providers" in pi_cfg
 
-    def test_render_templates_and_apply(self, tmp_config_full, fake_console, fake_template_files, monkeypatch, _make_proc):
+    def test_render_templates_and_apply(
+        self, tmp_config_full, fake_console, fake_template_files, monkeypatch, _make_proc
+    ):
         (tmp_config_full.parent / "models").mkdir()
         (tmp_config_full.parent / "models" / "model.gguf").write_text("fake")
 
@@ -534,7 +530,9 @@ class TestConfigGencert:
         assert cert.exists()
         assert key.exists()
 
-    def test_gencert_exits_when_exists(self, tmp_config_gencert, fake_console, monkeypatch):
+    def test_gencert_exits_when_exists(
+        self, tmp_config_gencert, fake_console, monkeypatch, _make_proc
+    ):
         cert = tmp_config_gencert.parent / "cert.pem"
         cert.write_text("existing-cert")
         monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))

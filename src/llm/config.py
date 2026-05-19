@@ -294,7 +294,10 @@ def _sudo(*args: str, desc: str) -> bool:
 
 
 def _systemctl_is_active(unit: str) -> bool:
-    return subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True).stdout.strip() == "active"
+    result = subprocess.run(
+        ["systemctl", "is-active", unit], capture_output=True, text=True
+    )
+    return result.stdout.strip() == "active"
 
 
 
@@ -528,7 +531,10 @@ def config_apply() -> None:
     server_tag = "[green]server[/green]" if cfg.has_local_server else "[dim]client-only[/dim]"
     client_tag = "[green]client[/green]"
     client_url_note = cfg.client_url
-    console.print(f"Role: {server_tag} + {client_tag}  →  client connects to [cyan]{client_url_note}[/cyan]\n")
+    console.print(
+        f"Role: {server_tag} + {client_tag}  →  client connects to "
+        f"[cyan]{client_url_note}[/cyan]\n"
+    )
 
     # ── Client configs (always) ───────────────────────────────────────────────
     pi_path = _PI_CONFIG_PATH.expanduser()

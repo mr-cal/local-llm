@@ -101,7 +101,10 @@ def start(
     cfg = load_config()
 
     if not cfg.has_local_server:
-        console.print("[yellow]No local server configured.[/yellow]  Set [server] llama_server_bin in config.toml.")
+        console.print(
+            "[yellow]No local server configured.[/yellow]  "
+            "Set [server] llama_server_bin in config.toml."
+        )
         raise typer.Exit(1)
 
     existing = _read_pid()
