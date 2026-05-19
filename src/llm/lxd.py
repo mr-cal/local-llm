@@ -406,7 +406,20 @@ def add_mounts(container, step: str = "3/5", uid: int = CONTAINER_UID, gid: int 
 def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
     console.print(f"\n[bold][{step}][/bold] Installing packages...")
     run(["lxc", "exec", container, "--", "apt-get", "update", "-q"])
-    run(["lxc", "exec", container, "--", "apt-get", "install", "-y", "build-essential", "kitty-terminfo", "fish"])
+    run(
+        [
+            "lxc",
+            "exec",
+            container,
+            "--",
+            "apt-get",
+            "install",
+            "-y",
+            "build-essential",
+            "kitty-terminfo",
+            "fish",
+        ]
+    )
 
     console.print("  Installing gh CLI...")
     gh_setup = (
