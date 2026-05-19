@@ -1,10 +1,52 @@
 # local-llm
 
-Run a local [Qwen](https://huggingface.co/Qwen) model on your machine and expose it securely over your LAN as an OpenAI-compatible API — ready for use with [opencode](https://opencode.ai) or any compatible client.
+Run a local model on your machine and expose it securely over your LAN as an OpenAI-compatible API — ready for use with [opencode](https://opencode.ai) or any compatible client.
 
 **Engine:** [llama.cpp](https://github.com/ggerganov/llama.cpp) (`llama-server`) with Vulkan backend for iGPU acceleration
 **Proxy:** nginx (HTTPS + Bearer-token auth + LAN IP allowlist)
 **CLI:** single `uv run llm` entry point
+
+---
+
+## How it works
+
+```
+LAN client (opencode, curl, …)
+        │
+        │  HTTPS :8443  +  Bearer token
+        ▼
+     nginx proxy
+     ├─ TLS termination (self-signed cert with SAN)
+     ├─ Bearer token check  (rejects wrong / missing key)
+     └─ subnet allowlist    (rejects requests outside LAN)
+        │
+        │  HTTP :8080  (localhost only)
+        ▼
+  llama-server (llama.cpp)
+  └─ loads your GGUF model
+```
+
+**nginx** sits between the network and `llama-server`, which only binds to `127.0.0.1`. This means:
+- `llama-server` is never directly reachable from the LAN.
+- All remote requests go through nginx, which enforces TLS, the Bearer token, and a subnet allowlist.
+- Client tools on the *same* machine connect directly to `http://127.0.0.1:8080` — no TLS or auth needed.
+
+**TLS cert:** Generated with `uv run llm config gencert`. The cert must include a SubjectAltName (SAN) matching the server's LAN IP — Node.js (and modern clients) reject certs that only have a `CN=`. The `gencert` command handles this automatically.
+
+**API key:** A random hex token stored in `config.toml` under `[proxy] api_key`. nginx checks that every request includes `Authorization: Bearer <key>`. Generate one with:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+---
+
+## Machine roles
+
+| Role | Description |
+|---|---|
+| **server+client** | Runs llama-server AND opencode/pi on the same machine. Client tools connect directly to `http://127.0.0.1:8080` — no TLS or auth overhead. Most common setup. |
+| **server-only** | Runs llama-server + nginx proxy. Remote clients connect over HTTPS with a Bearer token. |
+| **client-only** | Runs opencode/pi only; connects to a remote server via HTTPS with a Bearer token. No `[server]`, `[models]`, or `[proxy]` sections needed. |
 
 ---
 
@@ -33,19 +75,25 @@ uv sync
 ### 2 — Build llama-server with Vulkan
 
 ```bash
-apt install cmake libvulkan-dev glslc spirv-headers spirv-tools nginx
+sudo apt install cmake libvulkan-dev glslc spirv-headers spirv-tools nginx
 git clone https://github.com/ggerganov/llama.cpp
 cd llama.cpp
 cmake -B build -DGGML_VULKAN=ON
 cmake --build build --config Release -j$(nproc)
-# Install to ~/.local/bin so it's on your PATH
 mkdir -p ~/.local/bin
 cp build/bin/llama-server build/bin/llama-bench ~/.local/bin/
 ```
 
-Ensure `~/.local/bin` is on your PATH (add to `~/.bashrc` / `~/.zshrc` if needed):
+Ensure `~/.local/bin` is on your PATH.
+
+**bash** — add to `~/.bashrc`:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
+```
+
+**fish** — run once:
+```fish
+fish_add_path ~/.local/bin
 ```
 
 Verify:
@@ -57,28 +105,46 @@ llama-server --version
 
 ```bash
 uv run llm config init
-```
-
-This creates `config.toml` (gitignored) with every option pre-commented. Edit it:
-
-```bash
 $EDITOR config.toml
 ```
 
-Key fields to set:
+This creates `config.toml` (gitignored) with every option pre-commented. Key sections:
 
+**Server + proxy** (skip on a client-only machine):
 ```toml
 [server]
-llama_server_bin = "~/.local/bin/llama-server"  # or just "llama-server" if ~/.local/bin is on PATH
+llama_server_bin = "llama-server"  # full path if not on PATH
 n_gpu_layers = 20      # tune for your iGPU — higher offloads more layers
+n_ctx = 65536          # context window; 65536+ recommended for agentic tasks
+n_threads = 12         # physical core count (not hyperthreads)
+extra_args = []        # e.g. ["--flash-attn", "--cache-type-k", "q8_0", "--jinja"]
 
 [models]
+dir = "~/models"
 active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+hf_token = ""          # only needed for gated/private HuggingFace models
 
 [proxy]
-lan_ip     = "192.168.1.x"     # this machine's LAN IP
-lan_subnet = "192.168.1.0/24"  # your local subnet
-api_key    = "..."             # see below for generating one
+port = 8443
+lan_ip = "192.168.1.x"       # this machine's LAN IP
+lan_subnet = "192.168.1.0/24"
+api_key = "..."               # generate one (see below)
+cert_path = "/etc/ssl/local-llm/cert.pem"
+```
+
+**Client** (on a server+client machine, leave `server_url` empty — it defaults to the local server):
+```toml
+[client]
+server_url = ""   # set to "https://192.168.1.x:8443/v1" on a client-only machine
+api_key = ""      # remote server's api_key (client-only)
+cert_path = ""    # path to the remote server's cert.pem (client-only)
+```
+
+**Optional — per-token cost tracking** (used by pi):
+```toml
+[model_cost]
+input = 0.0
+output = 0.0
 ```
 
 Generate a strong API key:
@@ -100,86 +166,96 @@ uv run llm model download bartowski/Qwen2.5-72B-Instruct-GGUF \
     --file Qwen2.5-72B-Instruct-Q4_K_M.gguf
 ```
 
-### 5 — Start the server
+### 5 — Generate the TLS certificate
+
+```bash
+uv run llm config gencert
+```
+
+This generates a self-signed cert at `/etc/ssl/local-llm/cert.pem` (and `key.pem`) with the correct SubjectAltName for your `lan_ip`. Use `--force` to regenerate if your LAN IP changes.
+
+### 6 — Apply config
+
+```bash
+uv run llm config apply
+```
+
+This renders all templates and installs everything in one step:
+
+- **opencode** — writes `~/.config/opencode/config.json` (validates against the live schema)
+- **pi** — writes `~/.pi/agent/models.json`
+- **nginx** — renders the proxy config, copies it to `/etc/nginx/sites-available/llm`, enables the site, and starts or reloads nginx
+- **systemd** — renders the service file, installs it to `/etc/systemd/system/`, runs `daemon-reload`, and enables the service
+
+On a client-only machine, the nginx and systemd steps are skipped.
+
+### 7 — Start the server
 
 ```bash
 uv run llm server start
 uv run llm server status
 ```
 
-### 6 — Set up nginx proxy
+`server start` also ensures nginx is running. The server auto-starts on boot via the systemd service installed by `config apply`.
 
-```bash
-# Render the nginx config with your real settings
-uv run llm config apply
+---
 
-# Generate a self-signed TLS certificate
-sudo mkdir -p /etc/ssl/local-llm
-sudo openssl req -x509 -newkey rsa:4096 \
-    -keyout /etc/ssl/local-llm/key.pem \
-    -out /etc/ssl/local-llm/cert.pem \
-    -days 3650 -nodes -subj "/CN=local-llm"
+## Client setup (remote machine or LXD container)
 
-# Install and enable the site
-sudo cp nginx/llm-proxy.conf /etc/nginx/sites-available/llm
-sudo ln -s /etc/nginx/sites-available/llm /etc/nginx/sites-enabled/llm
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-### 7 — Connect from your LXD container
-
-**On the server**, generate the connection instructions:
+**On the server**, generate connection instructions:
 
 ```bash
 uv run llm client setup
 ```
 
-This prints the exact `export` commands and config for your specific server IP and API key. Copy and paste the output into the LXD container.
+This prints step-by-step instructions with your real IP, API key, and cert content filled in.
 
-**In the LXD container** — you only need two env vars and opencode. No Python CLI required:
+**On the client machine** — you only need env vars and opencode. No Python CLI or `config.toml` required:
 
 ```bash
 # Install opencode
 curl -fsSL https://opencode.ai/install | sh
-
-# Test connectivity
-curl -sk https://192.168.1.x:8443/health \
-  -H "Authorization: Bearer your-api-key"
-
-# Start coding
-opencode
 ```
 
-**Option A — env vars** (add to `~/.bashrc`):
+**Step 1 — Trust the TLS cert** (copy the PEM block from `client setup` output):
+
+```bash
+mkdir -p ~/.config/opencode
+cat > ~/.config/opencode/local-llm.pem << 'EOF'
+<paste cert here>
+EOF
+```
+
+**bash** — add to `~/.bashrc`:
+```bash
+export NODE_EXTRA_CA_CERTS="$HOME/.config/opencode/local-llm.pem"
+```
+
+**fish** — add to `~/.config/fish/config.fish`:
+```fish
+set -gx NODE_EXTRA_CA_CERTS $HOME/.config/opencode/local-llm.pem
+```
+
+**Step 2 — Set connection env vars**:
+
+**bash** — add to `~/.bashrc`:
 ```bash
 export OPENAI_BASE_URL="https://192.168.1.x:8443/v1"
 export OPENAI_API_KEY="your-api-key"
 ```
 
-**Option B — opencode config** (`~/.config/opencode/opencode.json`):
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "local-llm": {
-      "api": "openai",
-      "name": "Local LLM (llama-server)",
-      "options": {
-        "apiKey": "your-api-key",
-        "baseURL": "https://192.168.1.x:8443/v1"
-      },
-      "models": {
-        "Qwen2.5-Coder-14B-Instruct-Q4_K_M": {
-          "name": "Qwen2.5-Coder-14B-Instruct-Q4_K_M"
-        }
-      }
-    }
-  },
-  "model": "local-llm/Qwen2.5-Coder-14B-Instruct-Q4_K_M"
-}
+**fish** — add to `~/.config/fish/config.fish`:
+```fish
+set -gx OPENAI_BASE_URL "https://192.168.1.x:8443/v1"
+set -gx OPENAI_API_KEY "your-api-key"
 ```
 
-> **The `llm` CLI is a server management tool.** The client container does not need this repo, `uv`, or a `config.toml`.
+**Step 3 — Test connectivity**:
+```bash
+curl -s --cacert ~/.config/opencode/local-llm.pem \
+  https://192.168.1.x:8443/health \
+  -H "Authorization: Bearer your-api-key"
+```
 
 ---
 
@@ -194,7 +270,12 @@ This machine has 62 GB RAM — larger models than most systems can run.
 | `qwen2.5-coder-32b-q4` | ~18 GB | Strong coding model |
 | `qwen2.5-coder-32b-q8` | ~34 GB | High-precision 32B |
 | `qwen2.5-72b-q4` | ~42 GB | Near-frontier quality — fits in 62 GB |
-| `qwen3-30b-moe-q4` | ~17 GB | MoE architecture, efficient at 30B scale |
+| `qwen3-8b-q8` | ~9 GB | Qwen3 8B — fast, near-lossless |
+| `qwen3-14b-q8` | ~16 GB | Qwen3 14B — near-lossless, strong coding |
+| `qwen3-32b-q4` | ~20 GB | Qwen3 32B dense — top-tier coding quality |
+| `qwen3-30b-moe-q4` | ~19 GB | Qwen3 30B MoE — fast, outperforms QwQ-32B |
+| `qwen3.6-35b-moe-q4` | ~21 GB | Qwen3.6 35B MoE — SWE-bench 73%, 262K ctx |
+| `qwen3.6-27b-q4` | ~18 GB | Qwen3.6 27B dense — Apr 2026, 262K ctx, multimodal |
 | `gemma-4-31b-q4` | ~20 GB | Google Gemma 4 — newest, multimodal |
 | `gemma-3-27b-q4` | ~17 GB | Gemma 3 27B — strong all-rounder, multimodal |
 | `gemma-3-27b-q8` | ~29 GB | Gemma 3 27B — high precision, multimodal |
@@ -231,17 +312,40 @@ Results are appended to `logs/benchmark-history.csv` (gitignored).
 
 ---
 
-## Auto-start with systemd
+## LXD containers
 
 ```bash
-uv run llm config apply   # renders systemd/llm-server.service
+# Create and configure an LXD container for development
+uv run llm lxd create <name>
 
-# Install (replace YOUR_USER)
-sed -i 's/%i/YOUR_USER/' systemd/llm-server.service
-sudo cp systemd/llm-server.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now llm-server
+# Run `make setup` in each craft_dir configured in config.toml
+uv run llm lxd setup-crafts <name>
+```
+
+Configure mounts and craft project paths in `config.toml` under `[lxd]`:
+```toml
+[lxd]
+craft_dirs = [
+    "~/dev/craft/snapcraft",
+]
+
+[[lxd.mounts]]
+host = "~/dev"
+
+[[lxd.mounts]]
+name = "opencode-config"
+host = "~/.config/opencode"
+```
+
+---
+
+## Auto-start with systemd
+
+`uv run llm config apply` installs and enables the systemd service automatically. To check or control it manually:
+
+```bash
 sudo systemctl status llm-server
+sudo systemctl restart llm-server
 ```
 
 ---
@@ -249,8 +353,8 @@ sudo systemctl status llm-server
 ## All Commands
 
 ```
-uv run llm server start          Start llama-server
-uv run llm server stop           Stop llama-server
+uv run llm server start          Start llama-server (also starts nginx)
+uv run llm server stop           Stop llama-server and nginx
 uv run llm server restart        Restart llama-server
 uv run llm server status         Show running status
 uv run llm server logs [-f]      Tail server logs
@@ -262,11 +366,15 @@ uv run llm model switch <name>   Set active model + restart
 uv run llm benchmark run         Run API + optionally raw benchmark
 uv run llm benchmark history     Show past benchmark results
 
-uv run llm client setup          Print opencode connection instructions
+uv run llm client setup          Print connection instructions for a remote client
 
 uv run llm config init           Generate config.toml with examples
-uv run llm config show           Print current settings (masked)
-uv run llm config apply          Render nginx + systemd templates
+uv run llm config show           Print current settings (masked) + opencode/pi config
+uv run llm config apply          Render templates + install nginx/systemd/opencode/pi configs
+uv run llm config gencert        Generate self-signed TLS cert with correct SAN
+
+uv run llm lxd create <name>     Create and configure an LXD container
+uv run llm lxd setup-crafts      Run make setup in configured craft directories
 ```
 
 ---
@@ -276,7 +384,6 @@ uv run llm config apply          Render nginx + systemd templates
 - `config.toml` is **gitignored** — it contains your API key, LAN IP, and HF token.
 - nginx enforces both a Bearer token and a source-IP subnet allowlist.
 - TLS (self-signed) encrypts traffic on the LAN.
-- The LXD container on the client side adds an additional isolation boundary.
 - The server only listens internally (`127.0.0.1`); nginx handles the LAN exposure.
 
 ---
