@@ -221,7 +221,7 @@ class TestStartCommand:
         config, tmp_path = tmp_config_server
         # Add extra args
         content = config.read_text()
-        content = content.replace('extra_args = []', 'extra_args = ["--jinja", "--flash-attn"]')
+        content = content.replace("extra_args = []", 'extra_args = ["--jinja", "--flash-attn"]')
         config.write_text(content)
 
         proc = MagicMock()

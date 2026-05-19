@@ -127,8 +127,10 @@ class TestModelsDir:
         config = tmp_config_with_models_dir
         models_dir = tmp_config_with_models_dir.parent / "custom-models"
         content = config.read_text()
-        content = content.replace('dir = "' + str(tmp_config_with_models_dir.parent / "models") + '"',
-                                  'dir = "' + str(models_dir) + '"')
+        content = content.replace(
+            'dir = "' + str(tmp_config_with_models_dir.parent / "models") + '"',
+            'dir = "' + str(models_dir) + '"',
+        )
         config.write_text(content)
         result = _models_dir()
         assert result == models_dir

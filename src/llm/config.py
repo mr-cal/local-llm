@@ -294,11 +294,8 @@ def _sudo(*args: str, desc: str) -> bool:
 
 
 def _systemctl_is_active(unit: str) -> bool:
-    result = subprocess.run(
-        ["systemctl", "is-active", unit], capture_output=True, text=True
-    )
+    result = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
     return result.stdout.strip() == "active"
-
 
 
 def config_init(
@@ -532,15 +529,24 @@ def config_apply() -> None:
     client_tag = "[green]client[/green]"
     client_url_note = cfg.client_url
     console.print(
-        f"Role: {server_tag} + {client_tag}  →  client connects to "
-        f"[cyan]{client_url_note}[/cyan]\n"
+        f"Role: {server_tag} + {client_tag}  →  client connects to [cyan]{client_url_note}[/cyan]\n"
     )
 
     # ── Client configs (always) ───────────────────────────────────────────────
     pi_path = _PI_CONFIG_PATH.expanduser()
     pi_path.parent.mkdir(parents=True, exist_ok=True)
     pi_cfg = _build_pi_config(cfg)
-    pi_path.write_text(json.dumps(pi_cfg, indent=2) + "\n")
+
+    # Merge into existing models.json rather than overwriting, preserving other providers.
+    existing: dict = {}
+    if pi_path.exists():
+        with pi_path.open("r") as f:
+            existing = json.load(f)
+    merged = {
+        **existing,
+        "providers": {**existing.get("providers", {}), **pi_cfg.get("providers", {})},
+    }
+    pi_path.write_text(json.dumps(merged, indent=2) + "\n")
     console.print(f"[green]Rendered[/green] {pi_path}")
 
     opencode_path = _OPENCODE_CONFIG_PATH.expanduser()

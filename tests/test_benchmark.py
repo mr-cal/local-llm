@@ -234,8 +234,7 @@ class TestBenchTps:
 class TestRunLlamaBench:
     def test_runs_bench_with_correct_args(self, tmp_path, fake_console):
         bench = tmp_path / "llama-bench"
-        bench.write_text("#!/bin/bash\necho 'n_gpu_layers,n_prompt,n_gen,avg_ts'\n"
-                         "echo '20,512,0,10.0'\n")
+        bench.write_text("#!/bin/bash\necho 'n_gpu_layers,n_prompt,n_gen,avg_ts'\necho '20,512,0,10.0'\n")
         bench.chmod(0o755)
 
         model = tmp_path / "model.gguf"
@@ -316,16 +315,18 @@ class TestHistoryFileOps:
 
         benchmark._ensure_history_file()
 
-        benchmark._append_result({
-            "timestamp": "2026-01-01T00:00:00",
-            "model": "test-model",
-            "backend": "llama-server",
-            "pp_tps": "10.0",
-            "tg_tps": "20.0",
-            "ctx": "4096",
-            "n_tokens": 100,
-            "n_gpu_layers": 20,
-        })
+        benchmark._append_result(
+            {
+                "timestamp": "2026-01-01T00:00:00",
+                "model": "test-model",
+                "backend": "llama-server",
+                "pp_tps": "10.0",
+                "tg_tps": "20.0",
+                "ctx": "4096",
+                "n_tokens": 100,
+                "n_gpu_layers": 20,
+            }
+        )
 
         content = history_path.read_text()
         assert "test-model" in content
@@ -389,6 +390,7 @@ class TestRunLlamaBenchRaw:
         monkeypatch.chdir(tmp_config_bench.parent)
 
         from llm.config import load_config
+
         cfg = load_config()
 
         def fake_find():

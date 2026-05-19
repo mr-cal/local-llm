@@ -37,15 +37,15 @@ class TestSetupCommand:
     def test_setup_default_api_key_warning(self, fake_find_config, fake_console):
         fake_find_config.write_text(
             '[server]\nllama_server_bin = "llama-server"\nport = 8080\n'
-            'n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n'
+            "n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n"
             'extra_args = []\n\n[models]\ndir = "~/models"\n'
             'active = "model.gguf"\nhf_token = ""\n'
-            '\n[proxy]\nport = 8443\n'
+            "\n[proxy]\nport = 8443\n"
             'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
             'api_key = "change-me-generate-a-strong-random-key"\n'
             'cert_path = "/etc/ssl/cert.pem"\n'
             '\n[client]\nserver_url = ""\napi_key = ""\ncert_path = ""\n'
-            '\n[lxd]\ncraft_dirs = []\n'
+            "\n[lxd]\ncraft_dirs = []\n"
         )
 
         client.setup()

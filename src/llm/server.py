@@ -102,8 +102,7 @@ def start(
 
     if not cfg.has_local_server:
         console.print(
-            "[yellow]No local server configured.[/yellow]  "
-            "Set [server] llama_server_bin in config.toml."
+            "[yellow]No local server configured.[/yellow]  Set [server] llama_server_bin in config.toml."
         )
         raise typer.Exit(1)
 
@@ -222,6 +221,7 @@ def restart() -> None:
 def status() -> None:
     """Show whether llama-server and nginx are running."""
     from llm.config import load_config  # noqa: PLC0415 (already imported at top)
+
     cfg = load_config()
 
     if not cfg.has_local_server:
@@ -235,6 +235,7 @@ def status() -> None:
     if pid:
         cfg = load_config()
         from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
         entry = next((m for m in KNOWN_MODELS if m.filename == cfg.models.active), None)
         display = entry.alias if entry else cfg.models.active
         console.print(f"[green]● llama-server[/green]  PID {pid}  port {cfg.server.port}")

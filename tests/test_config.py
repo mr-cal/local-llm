@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -175,9 +176,7 @@ class TestSettings:
         models_dir.mkdir()
         active_file = models_dir / "test.gguf"
         active_file.touch()
-        s = Settings(
-            models=ModelsSettings(dir=str(models_dir), active="test.gguf")
-        )
+        s = Settings(models=ModelsSettings(dir=str(models_dir), active="test.gguf"))
         assert s.model_path == active_file
 
     def test_model_path_missing(self, tmp_path):
@@ -505,6 +504,102 @@ class TestConfigApply:
         content = svc.read_text()
         assert "llama-server" in content
 
+    def test_creates_pi_models_json_from_scratch(
+        self,
+        tmp_config_full,
+        fake_console,
+        fake_template_files,
+        monkeypatch,
+        _make_proc,
+        mocker,
+        fake_pi_config_path,
+    ):
+        """When models.json doesn't exist, create it with local-llm provider."""
+        (tmp_config_full.parent / "models").mkdir()
+        (tmp_config_full.parent / "models" / "model.gguf").write_text("fake")
+        assert not fake_pi_config_path.exists()
+
+        mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
+        monkeypatch.setattr(os.path, "exists", lambda x: True)
+        config_apply()
+
+        assert fake_pi_config_path.exists()
+        data = json.loads(fake_pi_config_path.read_text())
+        assert "providers" in data
+        assert "local-llm" in data["providers"]
+
+    def test_merges_pi_models_json_with_other_provider(
+        self,
+        tmp_config_full,
+        fake_console,
+        fake_template_files,
+        monkeypatch,
+        _make_proc,
+        mocker,
+        fake_pi_config_path,
+    ):
+        """When models.json exists with another provider, merge adds/updates local-llm."""
+        (tmp_config_full.parent / "models").mkdir()
+        (tmp_config_full.parent / "models" / "model.gguf").write_text("fake")
+
+        existing = {
+            "providers": {
+                "anthropic": {"baseUrl": "https://api.anthropic.com", "apiKey": "sk-xxx"},
+                "other": {"baseUrl": "https://other.example.com", "apiKey": "key"},
+            }
+        }
+        fake_pi_config_path.write_text(json.dumps(existing, indent=2))
+
+        mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
+        monkeypatch.setattr(os.path, "exists", lambda x: True)
+        config_apply()
+
+        data = json.loads(fake_pi_config_path.read_text())
+        assert "anthropic" in data["providers"]
+        assert "other" in data["providers"]
+        assert "local-llm" in data["providers"]
+        assert data["providers"]["local-llm"]["baseUrl"].startswith("http://127.0.0.1")
+        # Other providers must be untouched
+        assert data["providers"]["anthropic"]["apiKey"] == "sk-xxx"
+        assert data["providers"]["other"]["baseUrl"] == "https://other.example.com"
+
+    def test_updates_local_llm_in_existing_models_json(
+        self,
+        tmp_config_full,
+        fake_console,
+        fake_template_files,
+        monkeypatch,
+        _make_proc,
+        mocker,
+        fake_pi_config_path,
+    ):
+        """When local-llm already exists in models.json, it gets overwritten with new values."""
+        (tmp_config_full.parent / "models").mkdir()
+        (tmp_config_full.parent / "models" / "model.gguf").write_text("fake")
+
+        existing = {
+            "providers": {
+                "local-llm": {
+                    "baseUrl": "http://127.0.0.1:7070/v1",
+                    "apiKey": "old-key",
+                },
+                "anthropic": {"baseUrl": "https://api.anthropic.com"},
+            }
+        }
+        fake_pi_config_path.write_text(json.dumps(existing, indent=2))
+
+        mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
+        monkeypatch.setattr(os.path, "exists", lambda x: True)
+        config_apply()
+
+        data = json.loads(fake_pi_config_path.read_text())
+        assert data["providers"]["local-llm"]["baseUrl"] == "http://127.0.0.1:8080/v1"
+        assert data["providers"]["local-llm"]["apiKey"] == "local"
+        assert "anthropic" in data["providers"]
+
 
 # ── config_gencert ─────────────────────────────────────────────────────────────
 
@@ -530,9 +625,7 @@ class TestConfigGencert:
         assert cert.exists()
         assert key.exists()
 
-    def test_gencert_exits_when_exists(
-        self, tmp_config_gencert, fake_console, monkeypatch, _make_proc
-    ):
+    def test_gencert_exits_when_exists(self, tmp_config_gencert, fake_console, monkeypatch, _make_proc):
         cert = tmp_config_gencert.parent / "cert.pem"
         cert.write_text("existing-cert")
         monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))

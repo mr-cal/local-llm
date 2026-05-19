@@ -43,8 +43,7 @@ def _load_lxd_globals() -> tuple[list[tuple[str, str, str]], list[str]]:
     if lxd is None:
         return _DEFAULT_MOUNTS, []
     mounts = (
-        [(m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser()))
-         for m in lxd.mounts]
+        [(m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser())) for m in lxd.mounts]
         if lxd.mounts
         else _DEFAULT_MOUNTS
     )
@@ -97,9 +96,9 @@ def run(cmd, desc: str | None = None, **kwargs):
         subprocess.run(cmd, check=True, **kwargs)
     except subprocess.CalledProcessError as e:
         label = desc or " ".join(str(a) for a in cmd[:3])
-        raise subprocess.CalledProcessError(
-            e.returncode, e.cmd, e.output, e.stderr
-        ) from Exception(f"Command failed ({label}): exit {e.returncode}")
+        raise subprocess.CalledProcessError(e.returncode, e.cmd, e.output, e.stderr) from Exception(
+            f"Command failed ({label}): exit {e.returncode}"
+        )
 
 
 def run_capture(cmd):
@@ -173,12 +172,19 @@ VM_SWAP_SIZE = "4G"
 def _setup_vm_swap(container: str) -> None:
     """Create a persistent swapfile inside the VM and enable it on boot."""
     run(
-        ["lxc", "exec", container, "--", "bash", "-c",
-         f"fallocate -l {VM_SWAP_SIZE} /swapfile"
-         f" && chmod 600 /swapfile"
-         f" && mkswap /swapfile"
-         f" && swapon /swapfile"
-         f" && echo '/swapfile none swap sw 0 0' >> /etc/fstab"],
+        [
+            "lxc",
+            "exec",
+            container,
+            "--",
+            "bash",
+            "-c",
+            f"fallocate -l {VM_SWAP_SIZE} /swapfile"
+            f" && chmod 600 /swapfile"
+            f" && mkswap /swapfile"
+            f" && swapon /swapfile"
+            f" && echo '/swapfile none swap sw 0 0' >> /etc/fstab",
+        ],
         desc="create swapfile",
     )
 
@@ -191,8 +197,10 @@ def create_container(container, vm: bool = False):
     if vm:
         launch_cmd += [
             "--vm",
-            "--config", f"limits.memory={VM_MEMORY}",
-            "--device", f"root,size={VM_ROOT_DISK_SIZE}",
+            "--config",
+            f"limits.memory={VM_MEMORY}",
+            "--device",
+            f"root,size={VM_ROOT_DISK_SIZE}",
         ]
     run(launch_cmd)
     wait_for_container(container)
@@ -447,9 +455,7 @@ def run_make_setup(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID
     console.print("\nRunning make setup in craft directories (in container)...")
     for directory in MAKE_SETUP_DIRS:
         if not os.path.isdir(directory):
-            console.print(
-                f"  [yellow]WARNING:[/yellow] directory not found on host, skipping: {directory}"
-            )
+            console.print(f"  [yellow]WARNING:[/yellow] directory not found on host, skipping: {directory}")
             continue
         console.print(f"  Running make setup in {directory}...")
         run(
@@ -506,9 +512,7 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
         )
     )
 
-    console.print(
-        f"  Writing LSP config to {CONTAINER_HOME}/.copilot/lsp-config.json in container..."
-    )
+    console.print(f"  Writing LSP config to {CONTAINER_HOME}/.copilot/lsp-config.json in container...")
     run(_cexec(container, uid, gid, "mkdir", "-p", f"{CONTAINER_HOME}/.copilot"))
 
     # Read any existing config from the container, then merge and write back.
@@ -758,9 +762,7 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
             check=True,
         )
         name = r.stdout.strip()
-        assert name == CONTAINER_USER, (
-            f"uid {uid} maps to {name!r}, expected {CONTAINER_USER!r}"
-        )
+        assert name == CONTAINER_USER, f"uid {uid} maps to {name!r}, expected {CONTAINER_USER!r}"
 
     def t_venv_interpreter_valid():
         _t_venv_interpreter_valid()
@@ -837,25 +839,17 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
     if all(results):
         console.print("=" * 60)
         console.print("craft-llm container is ready!")
+        console.print(f"  Mounts: ~/.github, ~/dev, ~/.config/opencode  ->  {CONTAINER_HOME}/{{...}}")
         console.print(
-            f"  Mounts: ~/.github, ~/dev, ~/.config/opencode  ->  {CONTAINER_HOME}/{{...}}"
-        )
-        console.print(
-            f"  UID/GID mapping: transparent "
-            f"(host {HOST_UID}:{HOST_GID} <-> container {CONTAINER_USER})"
+            f"  UID/GID mapping: transparent (host {HOST_UID}:{HOST_GID} <-> container {CONTAINER_USER})"
         )
         console.print(f"  Container user: {CONTAINER_USER}")
         console.print("  Packages: build-essential, gh, astral-uv")
         console.print("  sudo: passwordless for container user")
         console.print("  Next: run 'gh auth login', 'gh copilot', and '/allow-all'")
-        console.print(
-            " PAT token perms: "
-            "all repos, actions, issues, merge queues, metadata, pull requests"
-        )
+        console.print(" PAT token perms: all repos, actions, issues, merge queues, metadata, pull requests")
         console.print("            user: copilot, gists")
-        console.print(
-            f"  pylsp: installed in container (~/.local/bin), config at {LSP_CONFIG_PATH}"
-        )
+        console.print(f"  pylsp: installed in container (~/.local/bin), config at {LSP_CONFIG_PATH}")
         console.print(f"  All {total} tests passed.")
         console.print("=" * 60)
     else:
@@ -983,8 +977,7 @@ def setup_crafts(
 
     if not container_exists(container):
         console.print(
-            f"[red]ERROR:[/red] '{container}' does not exist. "
-            "Create it first with 'llm lxd create'."
+            f"[red]ERROR:[/red] '{container}' does not exist. Create it first with 'llm lxd create'."
         )
         raise typer.Exit(1)
 

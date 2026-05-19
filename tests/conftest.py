@@ -26,7 +26,7 @@ def tmp_config_with_lxd(tmp_path: Path, monkeypatch) -> Path:
         '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
         'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
         'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
-        "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
+        'port = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
         'api_key = "test-key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
         'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = ["~/dev/craft"]\n'
         "\n[[lxd.mounts]]\n"
@@ -68,15 +68,13 @@ def tmp_config_with_models_dir(tmp_path: Path, monkeypatch) -> Path:
     models_dir = tmp_path / "models"
     config.write_text(
         '[server]\nllama_server_bin = "llama-server"\nport = 8080\n'
-        'n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n'
-        'extra_args = []\n\n[models]\ndir = "'
-        + str(models_dir)
-        + '"\nactive = "test.gguf"\nhf_token = ""\n'
-        '\n[proxy]\nport = 8443\n'
+        "n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n"
+        'extra_args = []\n\n[models]\ndir = "' + str(models_dir) + '"\nactive = "test.gguf"\nhf_token = ""\n'
+        "\n[proxy]\nport = 8443\n"
         'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
         'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n'
         '\n[client]\nserver_url = ""\napi_key = ""\ncert_path = ""\n'
-        '\n[lxd]\ncraft_dirs = []\n'
+        "\n[lxd]\ncraft_dirs = []\n"
     )
     monkeypatch.chdir(tmp_path)
     return config
@@ -95,15 +93,13 @@ def tmp_config_server(tmp_path: Path, monkeypatch):
     models_dir = tmp_path / "models"
     config.write_text(
         '[server]\nllama_server_bin = "llama-server"\nport = 8080\n'
-        'n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n'
-        'extra_args = []\n\n[models]\ndir = "'
-        + str(models_dir)
-        + '"\nactive = "model.gguf"\nhf_token = ""\n'
-        '\n[proxy]\nport = 8443\n'
+        "n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n"
+        'extra_args = []\n\n[models]\ndir = "' + str(models_dir) + '"\nactive = "model.gguf"\nhf_token = ""\n'
+        "\n[proxy]\nport = 8443\n"
         'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
         'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n'
         '\n[client]\nserver_url = ""\napi_key = ""\ncert_path = ""\n'
-        '\n[lxd]\ncraft_dirs = []\n'
+        "\n[lxd]\ncraft_dirs = []\n"
     )
     (tmp_path / "models").mkdir()
     (tmp_path / "models" / "model.gguf").touch()
@@ -137,8 +133,10 @@ def mock_urlopen(monkeypatch):
 
     Returns the patched open function for tests that need to re-use it.
     """
+
     def _urlopen(*a, **kw):
         raise Exception("no network")
+
     monkeypatch.setattr("urllib.request.urlopen", _urlopen)
     return _urlopen
 
@@ -170,9 +168,7 @@ def tmp_bench_history(tmp_path: Path, monkeypatch):
     logs_dir = tmp_path / "logs"
     logs_dir.mkdir()
     history_file = logs_dir / "benchmark-history.csv"
-    history_file.write_text(
-        "timestamp,model,backend,pp_tps,tg_tps,ctx,n_tokens,n_gpu_layers\n"
-    )
+    history_file.write_text("timestamp,model,backend,pp_tps,tg_tps,ctx,n_tokens,n_gpu_layers\n")
     monkeypatch.chdir(tmp_path)
     return history_file
 
@@ -196,16 +192,19 @@ def fake_console(monkeypatch):
 @pytest.fixture
 def fake_file(tmp_path: Path):
     """Create a file under tmp_path with configurable content and return its path."""
+
     def _inner(name: str = "file", content: bytes | str = b"") -> Path:
         f = tmp_path / name
         f.write_bytes(content if isinstance(content, bytes) else content.encode())
         return f
+
     return _inner
 
 
 @pytest.fixture
 def _make_proc():
     """Create a MagicMock that mimics subprocess.CompletedProcess."""
+
     def _inner(
         returncode: int = 0, stdout: str = "", stderr: str = "", stdout_bytes: bytes = b""
     ) -> MagicMock:
@@ -215,6 +214,7 @@ def _make_proc():
         p.stderr = stderr
         p.stdout_bytes = stdout_bytes
         return p
+
     return _inner
 
 
@@ -229,7 +229,7 @@ def tmp_config(tmp_path: Path) -> Path:
         '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
         'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
         'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
-        "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
+        'port = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
         'api_key = "test-key-1234"\ncert_path = "/etc/ssl/local-llm/cert.pem"\n\n[client]\n'
         'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\n'
         "craft_dirs = []\n"
@@ -249,7 +249,7 @@ def tmp_client_config(tmp_path: Path) -> Path:
         '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
         'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
         'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
-        "port = 8443\nlan_ip = \"192.168.1.100\"\nlan_subnet = \"192.168.1.0/24\"\n"
+        'port = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
         'api_key = "test-key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
         'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\n'
         "craft_dirs = []\n"
@@ -519,9 +519,9 @@ def fake_history_file(tmp_path: Path) -> Path:
 def fake_bench_bin(tmp_path: Path) -> Path:
     """Create a fake llama-bench binary that outputs CSV."""
     bench = tmp_path / "llama-bench"
-    bench.write_text("#!/bin/bash\necho 'prompt_tokens,generation_tokens,avg_ts'\n"
-                     'echo "100,0,10.5"\n'
-                     'echo "0,200,25.3"\n')
+    bench.write_text(
+        '#!/bin/bash\necho \'prompt_tokens,generation_tokens,avg_ts\'\necho "100,0,10.5"\necho "0,200,25.3"\n'
+    )
     bench.chmod(0o755)
     return bench
 
@@ -558,10 +558,7 @@ def fake_service_template(tmp_path: Path) -> Path:
     systemd_dir = tmp_path / "systemd"
     systemd_dir.mkdir()
     svc = systemd_dir / "llm-server.service.template"
-    svc.write_text(
-        "[Service]\n"
-        "ExecStart=%%LLAMA_SERVER_BIN%% --model %%MODELS_DIR%%/%%ACTIVE_MODEL%%\n"
-    )
+    svc.write_text("[Service]\nExecStart=%%LLAMA_SERVER_BIN%% --model %%MODELS_DIR%%/%%ACTIVE_MODEL%%\n")
     return svc
 
 
@@ -570,9 +567,7 @@ def fake_template_files(tmp_path: Path):
     """Create both nginx and systemd template files."""
     nginx_conf = tmp_path / "nginx" / "llm-proxy.conf.template"
     nginx_conf.parent.mkdir(parents=True)
-    nginx_conf.write_text(
-        "%%LAN_IP%% %%LAN_SUBNET%% %%PROXY_PORT%% %%SERVER_PORT%% %%API_KEY%%\n"
-    )
+    nginx_conf.write_text("%%LAN_IP%% %%LAN_SUBNET%% %%PROXY_PORT%% %%SERVER_PORT%% %%API_KEY%%\n")
     svc = tmp_path / "systemd" / "llm-server.service.template"
     svc.parent.mkdir(parents=True)
     svc.write_text(
@@ -580,3 +575,22 @@ def fake_template_files(tmp_path: Path):
         "%%N_GPU_LAYERS%% %%N_CTX%% %%N_THREADS%% %%USER%%\n"
     )
     return {"nginx": nginx_conf, "systemd": svc}
+
+
+@pytest.fixture
+def fake_pi_config_path(tmp_path: Path):
+    """Patch the pi config path to point under tmp_path and return the path.
+
+    Returns (patched_path, tmp_path) so callers can write a pre-existing
+    models.json and inspect the written result.
+    """
+    pi_dir = tmp_path / ".pi" / "agent"
+    pi_dir.mkdir(parents=True)
+    fake_path = pi_dir / "models.json"
+
+    from llm import config as config_mod  # noqa: PLC0415
+
+    orig_path = config_mod._PI_CONFIG_PATH
+    config_mod._PI_CONFIG_PATH = fake_path
+    yield fake_path
+    config_mod._PI_CONFIG_PATH = orig_path
