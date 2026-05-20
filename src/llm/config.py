@@ -289,6 +289,7 @@ def _systemctl_is_active(unit: str) -> bool:
     return result.stdout.strip() == "active"
 
 
+@app.command("init")
 def config_init(
     force: Annotated[bool, typer.Option("--force", help="Overwrite existing config.")] = False,
 ) -> None:

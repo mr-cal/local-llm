@@ -27,6 +27,7 @@ from llm.config import (
     _sudo,
     _systemctl_is_active,
     _validate_opencode_config,
+    app,
     config_apply,
     config_gencert,
     config_init,
@@ -504,6 +505,55 @@ class TestConfigInit:
         assert "output = 0.0" in content
         assert "cache_write = 0.0" in content
         assert "cache_read = 0.0" in content
+
+
+# ── config_init CLI ────────────────────────────────────────────────────────────
+
+
+class TestConfigInitCLI:
+    """CLI-level tests for `llm config init` via TyperRunner."""
+
+    def test_cli_init_creates_config(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        runner = CliRunner()
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 0
+        config = tmp_path / "config.toml"
+        assert config.exists()
+        content = config.read_text()
+        assert "[server]" in content
+
+    def test_cli_init_exits_when_exists(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        runner = CliRunner()
+        (tmp_path / "config.toml").write_text("existing")
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 1
+        assert "already exists" in result.stdout
+
+    def test_cli_init_force_overwrites(self, tmp_path, monkeypatch):
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        runner = CliRunner()
+        (tmp_path / "config.toml").write_text("existing")
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["init", "--force"])
+        assert result.exit_code == 0
+        content = (tmp_path / "config.toml").read_text()
+        assert "[server]" in content  # overwritten with template
+
+    def test_cli_init_help(self):
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["init", "--help"])
+        assert result.exit_code == 0
+        assert "Create config.toml" in result.stdout
+        assert "--force" in result.stdout
 
 
 # ── _build_opencode_config / _build_pi_config ──────────────────────────────────
