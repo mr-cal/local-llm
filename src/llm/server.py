@@ -236,7 +236,12 @@ def status() -> None:
         cfg = load_config()
         from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
-        entry = next((m for m in KNOWN_MODELS if m.filename == cfg.models.active), None)
+        # Resolve: check config catalog first, then KNOWN_MODELS
+        entry = cfg.models.by_alias(cfg.models.active)
+        if entry is None:
+            entry = cfg.models.by_filename(cfg.models.active)
+        if entry is None and cfg.models.has_catalog is False:
+            entry = next((m for m in KNOWN_MODELS if m.filename == cfg.models.active), None)
         display = entry.alias if entry else cfg.models.active
         console.print(f"[green]● llama-server[/green]  PID {pid}  port {cfg.server.port}")
         console.print(f"  Model  : {display}  [dim]({cfg.models.active})[/dim]")

@@ -3,168 +3,190 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, NamedTuple
+from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from llm.config import find_config, load_config
+from llm.config import ModelEntry, find_config, load_config
 
 app = typer.Typer(help="Download, list, and switch GGUF models.", no_args_is_help=True)
 console = Console()
 
 
-class ModelEntry(NamedTuple):
-    alias: str
-    repo: str
-    filename: str
-    size: str
-    description: str
-    max_output: int = 8192  # max tokens the model can generate in one response
+# ── KNOWN_MODELS catalog (dual-catalog fallback) ──────────────────────────────
+# Kept as a default fallback during Phase 1 migration. When the user has
+# [[models.list]] entries in config.toml, those take priority.
 
-
-# Curated catalog of recommended models. Add new entries here as models are released.
-# Both alias and filename are accepted everywhere (download, switch).
 KNOWN_MODELS: list[ModelEntry] = [
     # ── Qwen 2.5 Coder ───────────────────────────────────────────────────────
     ModelEntry(
-        "qwen2.5-coder-7b-q8",
-        "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
-        "Qwen2.5-Coder-7B-Instruct-Q8_0.gguf",
-        "~8 GB",
-        "Qwen 2.5 Coder 7B — fastest, good for quick tasks",
+        alias="qwen2.5-coder-7b-q8",
+        repo="bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+        filename="Qwen2.5-Coder-7B-Instruct-Q8_0.gguf",
+        size="~8 GB",
+        description="Qwen 2.5 Coder 7B — fastest, good for quick tasks",
     ),
     ModelEntry(
-        "qwen2.5-coder-14b-q4",
-        "bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
-        "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
-        "~8.5 GB",
-        "Qwen 2.5 Coder 14B — best speed/quality balance (default)",
+        alias="qwen2.5-coder-14b-q4",
+        repo="bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
+        filename="Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+        size="~8.5 GB",
+        description="Qwen 2.5 Coder 14B — best speed/quality balance (default)",
     ),
     ModelEntry(
-        "qwen2.5-coder-32b-q4",
-        "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
-        "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
-        "~18 GB",
-        "Qwen 2.5 Coder 32B — strong coding model",
+        alias="qwen2.5-coder-32b-q4",
+        repo="bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
+        filename="Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
+        size="~18 GB",
+        description="Qwen 2.5 Coder 32B — strong coding model",
     ),
     ModelEntry(
-        "qwen2.5-coder-32b-q8",
-        "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
-        "Qwen2.5-Coder-32B-Instruct-Q8_0.gguf",
-        "~34 GB",
-        "Qwen 2.5 Coder 32B — high precision",
+        alias="qwen2.5-coder-32b-q8",
+        repo="bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
+        filename="Qwen2.5-Coder-32B-Instruct-Q8_0.gguf",
+        size="~34 GB",
+        description="Qwen 2.5 Coder 32B — high precision",
     ),
     ModelEntry(
-        "qwen2.5-72b-q4",
-        "bartowski/Qwen2.5-72B-Instruct-GGUF",
-        "Qwen2.5-72B-Instruct-Q4_K_M.gguf",
-        "~42 GB",
-        "Qwen 2.5 72B — near-frontier quality (fits in 62 GB)",
+        alias="qwen2.5-72b-q4",
+        repo="bartowski/Qwen2.5-72B-Instruct-GGUF",
+        filename="Qwen2.5-72B-Instruct-Q4_K_M.gguf",
+        size="~42 GB",
+        description="Qwen 2.5 72B — near-frontier quality (fits in 62 GB)",
     ),
     # ── Gemma 4 ──────────────────────────────────────────────────────────────
     ModelEntry(
-        "gemma-4-31b-q4",
-        "bartowski/google_gemma-4-31B-it-GGUF",
-        "google_gemma-4-31B-it-Q4_K_M.gguf",
-        "~20 GB",
-        "Gemma 4 31B — newest Google model, multimodal",
+        alias="gemma-4-31b-q4",
+        repo="bartowski/google_gemma-4-31B-it-GGUF",
+        filename="google_gemma-4-31B-it-Q4_K_M.gguf",
+        size="~20 GB",
+        description="Gemma 4 31B — newest Google model, multimodal",
     ),
     # ── Gemma 3 ──────────────────────────────────────────────────────────────
     ModelEntry(
-        "gemma-3-27b-q4",
-        "bartowski/google_gemma-3-27b-it-GGUF",
-        "google_gemma-3-27b-it-Q4_K_M.gguf",
-        "~17 GB",
-        "Gemma 3 27B — strong all-rounder, multimodal",
+        alias="gemma-3-27b-q4",
+        repo="bartowski/google_gemma-3-27b-it-GGUF",
+        filename="google_gemma-3-27b-it-Q4_K_M.gguf",
+        size="~17 GB",
+        description="Gemma 3 27B — strong all-rounder, multimodal",
     ),
     ModelEntry(
-        "gemma-3-27b-q8",
-        "bartowski/google_gemma-3-27b-it-GGUF",
-        "google_gemma-3-27b-it-Q8_0.gguf",
-        "~29 GB",
-        "Gemma 3 27B — high precision, multimodal",
+        alias="gemma-3-27b-q8",
+        repo="bartowski/google_gemma-3-27b-it-GGUF",
+        filename="google_gemma-3-27b-it-Q8_0.gguf",
+        size="~29 GB",
+        description="Gemma 3 27B — high precision, multimodal",
     ),
     ModelEntry(
-        "gemma-3-12b-q4",
-        "bartowski/google_gemma-3-12b-it-GGUF",
-        "google_gemma-3-12b-it-Q4_K_M.gguf",
-        "~7 GB",
-        "Gemma 3 12B — fast, good quality, multimodal",
+        alias="gemma-3-12b-q4",
+        repo="bartowski/google_gemma-3-12b-it-GGUF",
+        filename="google_gemma-3-12b-it-Q4_K_M.gguf",
+        size="~7 GB",
+        description="Gemma 3 12B — fast, good quality, multimodal",
     ),
     ModelEntry(
-        "gemma-3-12b-q8",
-        "bartowski/google_gemma-3-12b-it-GGUF",
-        "google_gemma-3-12b-it-Q8_0.gguf",
-        "~13 GB",
-        "Gemma 3 12B — high precision, multimodal",
+        alias="gemma-3-12b-q8",
+        repo="bartowski/google_gemma-3-12b-it-GGUF",
+        filename="google_gemma-3-12b-it-Q8_0.gguf",
+        size="~13 GB",
+        description="Gemma 3 12B — high precision, multimodal",
     ),
     # ── Qwen 3 ───────────────────────────────────────────────────────────────
     ModelEntry(
-        "qwen3-8b-q8",
-        "bartowski/Qwen_Qwen3-8B-GGUF",
-        "Qwen_Qwen3-8B-Q8_0.gguf",
-        "~9 GB",
-        "Qwen3 8B — fast, near-lossless quant",
+        alias="qwen3-8b-q8",
+        repo="bartowski/Qwen_Qwen3-8B-GGUF",
+        filename="Qwen_Qwen3-8B-Q8_0.gguf",
+        size="~9 GB",
+        description="Qwen3 8B — fast, near-lossless quant",
         max_output=32768,
     ),
     ModelEntry(
-        "qwen3-14b-q8",
-        "bartowski/Qwen_Qwen3-14B-GGUF",
-        "Qwen_Qwen3-14B-Q8_0.gguf",
-        "~16 GB",
-        "Qwen3 14B — near-lossless, strong coding",
+        alias="qwen3-14b-q8",
+        repo="bartowski/Qwen_Qwen3-14B-GGUF",
+        filename="Qwen_Qwen3-14B-Q8_0.gguf",
+        size="~16 GB",
+        description="Qwen3 14B — near-lossless, strong coding",
         max_output=32768,
     ),
     ModelEntry(
-        "qwen3-32b-q4",
-        "bartowski/Qwen_Qwen3-32B-GGUF",
-        "Qwen_Qwen3-32B-Q4_K_M.gguf",
-        "~20 GB",
-        "Qwen3 32B dense — top-tier coding quality",
+        alias="qwen3-32b-q4",
+        repo="bartowski/Qwen_Qwen3-32B-GGUF",
+        filename="Qwen_Qwen3-32B-Q4_K_M.gguf",
+        size="~20 GB",
+        description="Qwen3 32B dense — top-tier coding quality",
         max_output=32768,
     ),
     ModelEntry(
-        "qwen3-30b-moe-q4",
-        "bartowski/Qwen_Qwen3-30B-A3B-GGUF",
-        "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
-        "~19 GB",
-        "Qwen3 30B MoE — fast TG, outperforms QwQ-32B",
+        alias="qwen3-30b-moe-q4",
+        repo="bartowski/Qwen_Qwen3-30B-A3B-GGUF",
+        filename="Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
+        size="~19 GB",
+        description="Qwen3 30B MoE — fast TG, outperforms QwQ-32B",
         max_output=32768,
     ),
     # ── Qwen 3.6 (April 2026) ────────────────────────────────────────────────
     ModelEntry(
-        "qwen3.6-35b-moe-q4",
-        "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
-        "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
-        "~21 GB",
-        "Qwen3.6 35B MoE — SWE-bench 73%, 262K ctx",
+        alias="qwen3.6-35b-moe-q4",
+        repo="bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+        filename="Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
+        size="~21 GB",
+        description="Qwen3.6 35B MoE — SWE-bench 73%, 262K ctx",
         max_output=32768,
     ),
     ModelEntry(
-        "qwen3.6-27b-q4",
-        "bartowski/Qwen_Qwen3.6-27B-GGUF",
-        "Qwen_Qwen3.6-27B-Q4_K_M.gguf",
-        "~18 GB",
-        "Qwen3.6 27B dense — Apr 2026, 262K context, multimodal",
+        alias="qwen3.6-27b-q4",
+        repo="bartowski/Qwen_Qwen3.6-27B-GGUF",
+        filename="Qwen_Qwen3.6-27B-Q4_K_M.gguf",
+        size="~18 GB",
+        description="Qwen3.6 27B dense — Apr 2026, 262K context, multimodal",
         max_output=32768,
     ),
 ]
 
-# ── Lookup helpers ────────────────────────────────────────────────────────────
+
+# ── Lookup helpers ───────────────────────────────────────────────────────────
 
 
-def _by_alias(alias: str) -> ModelEntry | None:
-    return next((m for m in KNOWN_MODELS if m.alias == alias), None)
+def _by_alias(alias: str, model_list: list[ModelEntry] | None = None) -> ModelEntry | None:
+    """Resolve alias → ModelEntry from a specific list (or KNOWN_MODELS)."""
+    if not model_list:
+        model_list = KNOWN_MODELS
+    return next((m for m in model_list if m.alias == alias), None)
 
 
-def _by_filename(filename: str) -> ModelEntry | None:
-    return next((m for m in KNOWN_MODELS if m.filename == filename), None)
+def _by_filename(filename: str, model_list: list[ModelEntry] | None = None) -> ModelEntry | None:
+    """Resolve filename → ModelEntry from a specific list (or KNOWN_MODELS)."""
+    if not model_list:
+        model_list = KNOWN_MODELS
+    return next((m for m in model_list if m.filename == filename), None)
 
 
-def _resolve(target: str) -> ModelEntry | None:
-    """Resolve an alias or filename to a ModelEntry, or None if unknown."""
+def _resolve(
+    target: str,
+    *,
+    _fallback_list: list[ModelEntry] | None = None,
+) -> ModelEntry | None:
+    """Resolve alias or filename to a ModelEntry from config, falling back to KNOWN_MODELS.
+
+    _fallback_list is an internal parameter for testing — when provided,
+    the function uses that list directly instead of calling load_config().
+    """
+    if _fallback_list is not None:
+        # Testing path: use the provided list directly
+        entry = _by_alias(target, _fallback_list) or _by_filename(target, _fallback_list)
+        if entry is None:
+            entry = _by_alias(target) or _by_filename(target)
+        return entry
+
+    cfg = load_config()
+    # First try config catalog
+    if cfg.models.has_catalog:
+        entry = cfg.models.by_alias(target) or cfg.models.by_filename(target)
+        if entry:
+            return entry
+    # Dual catalog fallback: search KNOWN_MODELS
     return _by_alias(target) or _by_filename(target)
 
 
@@ -201,6 +223,9 @@ def list_models() -> None:
     # Index of locally downloaded files for fast lookup
     local: dict[str, Path] = {f.name: f for f in models_dir.glob("*.gguf")}
 
+    # Use config catalog if available, otherwise fall back to KNOWN_MODELS
+    model_list = cfg.models.entries if cfg.models.has_catalog else KNOWN_MODELS
+
     table = Table(title=f"Models  (downloaded to {models_dir})", show_header=True)
     table.add_column("", width=2)  # active marker
     table.add_column("Alias", style="cyan")
@@ -208,7 +233,7 @@ def list_models() -> None:
     table.add_column("Description", style="white", max_width=60, no_wrap=False)
     table.add_column("Downloaded", justify="center")
 
-    for m in KNOWN_MODELS:
+    for m in model_list:
         path = local.get(m.filename)
         if path:
             dl_marker = "[green]✓[/green]"
@@ -216,11 +241,12 @@ def list_models() -> None:
         else:
             dl_marker = "[dim]–[/dim]"
             size = f"[dim]{m.size}[/dim]"
-        active_marker = "▶" if m.filename == active else ""
+        active_marker = "▶" if m.filename == active or m.alias == active else ""
         table.add_row(active_marker, m.alias, size, m.description, dl_marker)
 
     # Append any locally downloaded files not in the catalog
-    unknown = [f for name, f in sorted(local.items()) if name not in {m.filename for m in KNOWN_MODELS}]
+    catalog_filenames = {m.filename for m in model_list}
+    unknown = [f for name, f in sorted(local.items()) if name not in catalog_filenames]
     for f in unknown:
         active_marker = "▶" if f.name == active else ""
         table.add_row(active_marker, "[dim]custom[/dim]", _fmt_size(f), f.name, "[green]✓[/green]")
@@ -288,7 +314,10 @@ def download(
     console.print(f"[green]Saved[/green] → {local_path}")
 
     # Show the alias to use for switching, if known
-    resolved = _by_filename(dl_filename)
+    cfg = load_config()
+    resolved = _by_filename(dl_filename, cfg.models.entries if cfg.models.has_catalog else None)
+    if not resolved and cfg.models.has_catalog is False:
+        resolved = _by_filename(dl_filename, KNOWN_MODELS)
     switch_target = resolved.alias if resolved else dl_filename
     console.print(f"Switch to it with: [bold]uv run llm model switch {switch_target}[/bold]")
 
@@ -300,6 +329,10 @@ def switch(
         bool,
         typer.Option("--restart/--no-restart", help="Restart server after switching."),
     ] = True,
+    cost: Annotated[
+        bool,
+        typer.Option("--cost", help="Show cost info after switching."),
+    ] = False,
 ) -> None:
     """Set the active model in config.toml (accepts alias or filename)."""
 
@@ -331,6 +364,9 @@ def switch(
     label = f"{entry.alias} ({model_name})" if entry else model_name
     console.print(f"[green]Active model set to[/green] {label}")
 
+    if cost and entry:
+        console.print(f"  Cost: ${entry.cost.input:.4f} / ${entry.cost.output:.4f} per token")
+
     if restart:
         if not cfg.has_local_server:
             console.print("[dim]No local server to restart (client-only mode).[/dim]")
@@ -339,3 +375,166 @@ def switch(
 
         console.print("Restarting server...")
         srv.restart()
+
+
+# ── init-catalog command ────────────────────────────────────────────────────
+
+
+@app.command("init-catalog")
+def init_catalog() -> None:
+    """Copy built-in models into [[models.list]] in config.toml."""
+    config_path = find_config()
+    text = config_path.read_text()
+
+    # Build catalog block from KNOWN_MODELS
+    lines: list[str] = []
+    for m in KNOWN_MODELS:
+        lines.append("[[models.list]]")
+        lines.append(f'alias = "{m.alias}"')
+        lines.append(f'repo  = "{m.repo}"')
+        lines.append(f'filename = "{m.filename}"')
+        lines.append(f'size = "{m.size}"')
+        lines.append(f'description = "{m.description}"')
+        lines.append(f'max_output = {m.max_output}')
+        lines.append("cost.input = 0.0")
+        lines.append("cost.output = 0.0")
+        lines.append("")  # blank separator
+
+    catalog_block = "\n".join(lines)
+
+    # Find insertion point: after active = "..." and before # ── PROXY
+    marker = "# ── PROXY"
+    insert_pos = text.find(marker)
+    if insert_pos == -1:
+        # Fallback: append before [proxy]
+        proxy_marker = "[proxy]"
+        insert_pos = text.find(proxy_marker)
+    if insert_pos == -1:
+        # Final fallback: append to end of file
+        text = text.rstrip("\n") + "\n"
+        insert_pos = len(text)
+    else:
+        insert_pos = text.rfind("\n", 0, insert_pos) + 1  # move past newline
+
+    new_text = text[:insert_pos] + "\n" + catalog_block + text[insert_pos:]
+    config_path.write_text(new_text)
+
+    console.print(
+        f"[green]✓[/green] Catalog added to [bold]{config_path}[/bold] "
+        f"({len(KNOWN_MODELS)} models).\n"
+        "Edit entries as needed, then run: [bold]uv run llm model list[/bold]"
+    )
+
+
+# ── show command ────────────────────────────────────────────────────────────
+
+
+@app.command("show")
+def show(
+    target: Annotated[str, typer.Argument(help="Alias or filename to show details for.")],
+) -> None:
+    """Show detailed info for a model."""
+    entry = _resolve(target)
+    if not entry:
+        console.print(f"[red]Model not found:[/red] {target}")
+        console.print("Run [bold]uv run llm model list[/bold] to see available models.")
+        raise typer.Exit(1)
+
+    cfg = load_config()
+    models_dir = cfg.models_path
+    model_path = models_dir / entry.filename
+    downloaded = model_path.exists()
+    actual_size = _fmt_size(model_path) if downloaded else None
+
+    console.print(f"\n[bold cyan]{entry.alias}[/bold cyan]")
+    console.print(f"  Repository:  [cyan]{entry.repo}[/cyan]")
+    console.print(f"  Filename:    {entry.filename}")
+    console.print(f"  Size:        {entry.size}  (on disk: {actual_size or '–'})")
+    console.print(f"  Description: {entry.description}")
+    console.print(f"  Max output:  {entry.max_output} tokens")
+    console.print(f"  Cost:        {entry.cost.input}/ {entry.cost.output} $ per token")
+    console.print(f"  Downloaded:  {'[green]✓ yes[/green]' if downloaded else '[red]– no[/red]'}")
+    console.print()
+
+    if not downloaded:
+        console.print(f"Download: [bold]uv run llm model download {entry.alias}[/bold]")
+
+
+# ── cost command ────────────────────────────────────────────────────────────
+
+
+@app.command("catalog")
+def catalog() -> None:
+    """Print the model catalog from config as a table."""
+    cfg = load_config()
+
+    # Use config catalog if available, otherwise fall back to KNOWN_MODELS
+    model_list = cfg.models.entries if cfg.models.has_catalog else KNOWN_MODELS
+
+    table = Table(title=f"Model catalog ({len(model_list)} models)", show_header=True)
+    table.add_column("", width=2)
+    table.add_column("Alias", style="cyan")
+    table.add_column("Size", style="green", justify="right")
+    table.add_column("Max Output", justify="right")
+    table.add_column("Description", style="white", max_width=60)
+
+    for m in model_list:
+        active_marker = "▶" if m.alias == cfg.models.active else ""
+        table.add_row(
+            active_marker,
+            m.alias,
+            m.size or "–",
+            str(m.max_output),
+            m.description,
+        )
+
+    console.print(table)
+    console.print("\n[dim]▶ = active   Use [bold]llm model switch <alias>[/bold] to change[/dim]")
+
+
+@app.command("cost")
+def show_cost(
+    target: Annotated[str, typer.Argument(help="Alias or filename to show cost for."), None] = None,
+) -> None:
+    """Show cost information for one or all models."""
+    cfg = load_config()
+
+    # Use config catalog if available, otherwise fall back to KNOWN_MODELS
+    model_list = cfg.models.entries if cfg.models.has_catalog else KNOWN_MODELS
+
+    if target:
+        entry = _resolve(target)
+        if not entry:
+            console.print(f"[red]Model not found:[/red] {target}")
+            raise typer.Exit(1)
+        console.print(f"\n[bold]{entry.alias}[/bold]")
+        console.print(f"  Input:   ${entry.cost.input:.4f} / token")
+        console.print(f"  Output:  ${entry.cost.output:.4f} / token")
+        console.print(f"  Cache W: ${entry.cost.cache_write:.4f} / token")
+        console.print(f"  Cache R: ${entry.cost.cache_read:.4f} / token")
+        if entry.cost.is_zero():
+            console.print("  [dim](all costs are zero — model is free)[/dim]")
+    else:
+        # Show all models with non-zero costs
+        table = Table(title="Model Costs ($ per token)", show_header=True)
+        table.add_column("Alias", style="cyan")
+        table.add_column("Input", justify="right")
+        table.add_column("Output", justify="right")
+        table.add_column("Cache W", justify="right")
+        table.add_column("Cache R", justify="right")
+        any_nonzero = False
+        for m in model_list:
+            if m.cost.is_zero():
+                continue
+            any_nonzero = True
+            table.add_row(
+                m.alias,
+                f"${m.cost.input:.4f}",
+                f"${m.cost.output:.4f}",
+                f"${m.cost.cache_write:.4f}",
+                f"${m.cost.cache_read:.4f}",
+            )
+        if any_nonzero:
+            console.print(table)
+        else:
+            console.print("[dim]All models have zero cost (free local models).[/dim]")

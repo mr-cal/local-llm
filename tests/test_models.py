@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from llm.config import ModelEntry
 from llm.models import (
     KNOWN_MODELS,
     _by_alias,
@@ -91,26 +92,51 @@ class TestByFilename:
 
 
 class TestResolve:
-    def test_resolves_alias(self):
-        result = _resolve("qwen2.5-coder-14b-q4")
+    def test_resolves_alias_from_catalog(self):
+        catalog = [
+            ModelEntry(
+                alias="qwen2.5-coder-14b-q4",
+                repo="a/b",
+                filename="Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+            )
+        ]
+        result = _resolve("qwen2.5-coder-14b-q4", _fallback_list=catalog)
         assert result is not None
         assert result.alias == "qwen2.5-coder-14b-q4"
 
-    def test_resolves_filename(self):
-        result = _resolve("Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf")
+    def test_resolves_filename_from_catalog(self):
+        catalog = [
+            ModelEntry(
+                alias="qwen2.5-coder-14b-q4",
+                repo="a/b",
+                filename="Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+            )
+        ]
+        result = _resolve("Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf", _fallback_list=catalog)
         assert result is not None
         assert result.filename == "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
 
     def test_returns_none_for_unknown(self):
-        result = _resolve("unknown-thing")
+        result = _resolve("unknown-thing", _fallback_list=[])
         assert result is None
 
-    def test_alias_takes_precedence(self):
-        # If both alias and filename match (they shouldn't in practice),
-        # alias is checked first
-        result = _resolve("qwen2.5-coder-14b-q4")
+    def test_falls_back_to_known_models(self):
+        catalog = [ModelEntry(alias="other", repo="a/b", filename="other.gguf")]
+        result = _resolve("qwen2.5-coder-14b-q4", _fallback_list=catalog)
         assert result is not None
         assert result.alias == "qwen2.5-coder-14b-q4"
+
+    def test_config_catalog_takes_precedence(self):
+        catalog = [
+            ModelEntry(
+                alias="qwen2.5-coder-14b-q4",
+                repo="other/repo",
+                filename="other.gguf",
+            )
+        ]
+        result = _resolve("qwen2.5-coder-14b-q4", _fallback_list=catalog)
+        assert result is not None
+        assert result.repo == "other/repo"  # from catalog, not KNOWN_MODELS
 
 
 # ── _models_dir ───────────────────────────────────────────────────────────────
@@ -169,3 +195,131 @@ class TestCatalogTable:
         assert "Alias" in col_names
         assert "Size" in col_names
         assert "Description" in col_names
+
+
+# ── _by_alias / _by_filename with model_list parameter ────────────────────────
+
+
+class TestByAliasWithList:
+    def test_finds_in_custom_list(self):
+        catalog = [ModelEntry(alias="custom", repo="a/b", filename="custom.gguf")]
+        result = _by_alias("custom", catalog)
+        assert result is not None
+        assert result.alias == "custom"
+
+    def test_uses_known_models_when_list_empty(self):
+        result = _by_alias("qwen2.5-coder-14b-q4", [])
+        assert result is not None
+        assert result.alias == "qwen2.5-coder-14b-q4"
+
+
+class TestByFilenameWithList:
+    def test_finds_in_custom_list(self):
+        catalog = [ModelEntry(alias="custom", repo="a/b", filename="custom.gguf")]
+        result = _by_filename("custom.gguf", catalog)
+        assert result is not None
+        assert result.filename == "custom.gguf"
+
+
+# ── New commands: init-catalog, show, cost ────────────────────────────────────
+
+
+class TestInitCatalog:
+    def test_init_catalog_adds_entries(self, tmp_path, monkeypatch, fake_console):
+        """Test that init-catalog adds model entries to config.toml."""
+        config = tmp_path / "config.toml"
+        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
+        monkeypatch.chdir(tmp_path)
+
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        from llm.cli import app  # noqa: PLC0415
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["model", "init-catalog"])
+        assert result.exit_code == 0, result.output
+
+        # Verify entries were added
+        content = config.read_text()
+        assert "[[models.list]]" in content
+        assert 'alias = "qwen2.5-coder-14b-q4"' in content
+        assert 'alias = "qwen3-8b-q8"' in content
+
+
+class TestModelShow:
+    def test_show_existing_model(self, tmp_path, monkeypatch, fake_console):
+        """Test showing details for an existing model."""
+        config = tmp_path / "config.toml"
+        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
+        monkeypatch.chdir(tmp_path)
+
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        from llm.cli import app  # noqa: PLC0415
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["model", "show", "qwen2.5-coder-14b-q4"])
+        assert result.exit_code == 0, result.output
+        assert "qwen2.5-coder-14b-q4" in fake_console[0]
+        assert "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf" in fake_console[2]
+
+    def test_show_unknown_model(self, tmp_path, monkeypatch, fake_console):
+        """Test showing details for an unknown model."""
+        config = tmp_path / "config.toml"
+        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
+        monkeypatch.chdir(tmp_path)
+
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        from llm.cli import app  # noqa: PLC0415
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["model", "show", "nonexistent"])
+        assert result.exit_code != 0
+        assert "not found" in fake_console[0]
+
+
+class TestModelCost:
+    def test_show_cost_for_model(self, tmp_path, monkeypatch, fake_console):
+        """Test showing cost for a specific model."""
+        config = tmp_path / "config.toml"
+        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
+        monkeypatch.chdir(tmp_path)
+
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        from llm.cli import app  # noqa: PLC0415
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["model", "cost", "qwen2.5-coder-14b-q4"])
+        assert result.exit_code == 0, result.output
+        assert "qwen2.5-coder-14b-q4" in fake_console[0]
+        assert "(all costs are zero" in fake_console[5]
+
+    def test_show_cost_all(self, tmp_path, monkeypatch, fake_console):
+        """Test showing cost for all models (empty when all zero)."""
+        config = tmp_path / "config.toml"
+        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
+        monkeypatch.chdir(tmp_path)
+
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        from llm.cli import app  # noqa: PLC0415
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["model", "cost"])
+        assert result.exit_code == 0, result.output
+
+    def test_show_cost_unknown(self, tmp_path, monkeypatch, fake_console):
+        """Test showing cost for unknown model."""
+        config = tmp_path / "config.toml"
+        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
+        monkeypatch.chdir(tmp_path)
+
+        from typer.testing import CliRunner  # noqa: PLC0415
+
+        from llm.cli import app  # noqa: PLC0415
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["model", "cost", "nonexistent"])
+        assert result.exit_code != 0

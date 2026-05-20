@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from rich.console import Console
 from rich.syntax import Syntax
 
@@ -61,12 +61,177 @@ extra_args = []
 # Directory containing GGUF model files.
 dir = "~/models"
 
-# Active model filename. Run `uv run llm model list` to see options.
-active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+# Active model — use the alias from [[models.list]] below.
+# Run `uv run llm model list` to see options.
+active = "qwen2.5-coder-14b-q4"
 
 # HuggingFace token — only needed for gated/private models.
 # Generate at: https://huggingface.co/settings/tokens
 hf_token = ""
+
+# ── MODEL CATALOG ─────────────────────────────────────────────────────────────
+# Each [[models.list]] entry defines one downloadable model.
+# Edit, add, or remove entries as needed. The `active` alias above selects one.
+
+[[models.list]]
+alias = "qwen2.5-coder-7b-q8"
+repo  = "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF"
+filename = "Qwen2.5-Coder-7B-Instruct-Q8_0.gguf"
+size = "~8 GB"
+description = "Qwen 2.5 Coder 7B — fastest, good for quick tasks"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen2.5-coder-14b-q4"
+repo  = "bartowski/Qwen2.5-Coder-14B-Instruct-GGUF"
+filename = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+size = "~8.5 GB"
+description = "Qwen 2.5 Coder 14B — best speed/quality balance (default)"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen2.5-coder-32b-q4"
+repo  = "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF"
+filename = "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf"
+size = "~18 GB"
+description = "Qwen 2.5 Coder 32B — strong coding model"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen2.5-coder-32b-q8"
+repo  = "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF"
+filename = "Qwen2.5-Coder-32B-Instruct-Q8_0.gguf"
+size = "~34 GB"
+description = "Qwen 2.5 Coder 32B — high precision"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen2.5-72b-q4"
+repo  = "bartowski/Qwen2.5-72B-Instruct-GGUF"
+filename = "Qwen2.5-72B-Instruct-Q4_K_M.gguf"
+size = "~42 GB"
+description = "Qwen 2.5 72B — near-frontier quality (fits in 62 GB)"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "gemma-4-31b-q4"
+repo  = "bartowski/google_gemma-4-31B-it-GGUF"
+filename = "google_gemma-4-31B-it-Q4_K_M.gguf"
+size = "~20 GB"
+description = "Gemma 4 31B — newest Google model, multimodal"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "gemma-3-27b-q4"
+repo  = "bartowski/google_gemma-3-27b-it-GGUF"
+filename = "google_gemma-3-27b-it-Q4_K_M.gguf"
+size = "~17 GB"
+description = "Gemma 3 27B — strong all-rounder, multimodal"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "gemma-3-27b-q8"
+repo  = "bartowski/google_gemma-3-27b-it-GGUF"
+filename = "google_gemma-3-27b-it-Q8_0.gguf"
+size = "~29 GB"
+description = "Gemma 3 27B — high precision, multimodal"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "gemma-3-12b-q4"
+repo  = "bartowski/google_gemma-3-12b-it-GGUF"
+filename = "google_gemma-3-12b-it-Q4_K_M.gguf"
+size = "~7 GB"
+description = "Gemma 3 12B — fast, good quality, multimodal"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "gemma-3-12b-q8"
+repo  = "bartowski/google_gemma-3-12b-it-GGUF"
+filename = "google_gemma-3-12b-it-Q8_0.gguf"
+size = "~13 GB"
+description = "Gemma 3 12B — high precision, multimodal"
+max_output = 8192
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen3-8b-q8"
+repo  = "bartowski/Qwen_Qwen3-8B-GGUF"
+filename = "Qwen_Qwen3-8B-Q8_0.gguf"
+size = "~9 GB"
+description = "Qwen3 8B — fast, near-lossless quant"
+max_output = 32768
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen3-14b-q8"
+repo  = "bartowski/Qwen_Qwen3-14B-GGUF"
+filename = "Qwen_Qwen3-14B-Q8_0.gguf"
+size = "~16 GB"
+description = "Qwen3 14B — near-lossless, strong coding"
+max_output = 32768
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen3-32b-q4"
+repo  = "bartowski/Qwen_Qwen3-32B-GGUF"
+filename = "Qwen_Qwen3-32B-Q4_K_M.gguf"
+size = "~20 GB"
+description = "Qwen3 32B dense — top-tier coding quality"
+max_output = 32768
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen3-30b-moe-q4"
+repo  = "bartowski/Qwen_Qwen3-30B-A3B-GGUF"
+filename = "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf"
+size = "~19 GB"
+description = "Qwen3 30B MoE — fast TG, outperforms QwQ-32B"
+max_output = 32768
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen3.6-35b-moe-q4"
+repo  = "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF"
+filename = "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf"
+size = "~21 GB"
+description = "Qwen3.6 35B MoE — SWE-bench 73%, 262K ctx"
+max_output = 32768
+cost.input = 0.0
+cost.output = 0.0
+
+[[models.list]]
+alias = "qwen3.6-27b-q4"
+repo  = "bartowski/Qwen_Qwen3.6-27B-GGUF"
+filename = "Qwen_Qwen3.6-27B-Q4_K_M.gguf"
+size = "~18 GB"
+description = "Qwen3.6 27B dense — Apr 2026, 262K context, multimodal"
+max_output = 32768
+cost.input = 0.0
+cost.output = 0.0
 
 # ── PROXY ─────────────────────────────────────────────────────────────────────
 # nginx TLS proxy — allows remote clients to reach llama-server securely.
@@ -118,6 +283,7 @@ cert_path = ""
 # Per-token pricing used when generating pi's models.json.
 # Set to 0 for free local models.  For cloud APIs, use the provider's rates.
 # Values are in USD per token.
+# Note: per-model costs in [[models.list]] override this global fallback.
 
 [model_cost]
 input = 0.0          # cost per input token
@@ -156,8 +322,8 @@ class ServerSettings(BaseModel):
     extra_args: list[str] = Field(default_factory=list)
 
 
-class ModelCostSettings(BaseModel):
-    """Per-token cost for pi's models.json.
+class ModelCost(BaseModel):
+    """Per-token cost for a single model.
 
     Prices are in USD per token.  Defaults are zero because local models
     are free — override for cloud-hosted APIs or when you want cost tracking.
@@ -176,11 +342,79 @@ class ModelCostSettings(BaseModel):
             "cacheRead": self.cache_read,
         }
 
+    def is_zero(self) -> bool:
+        """True when all cost fields are zero (not configured)."""
+        return self.input == 0.0 and self.output == 0.0 and self.cache_write == 0.0 and self.cache_read == 0.0
+
+
+# Backward-compatible alias so existing code and tests using ModelCostSettings still work.
+ModelCostSettings = ModelCost
+
+
+class ModelEntry(BaseModel):
+    """One model in the [[models.list]] catalog."""
+
+    alias: str
+    repo: str
+    filename: str
+    size: str = ""
+    description: str = ""
+    max_output: int = 8192
+    cost: ModelCost = Field(default_factory=ModelCost)
+
+    @property
+    def id(self) -> str:
+        """Unique identifier — alias."""
+        return self.alias
+
 
 class ModelsSettings(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     dir: str = "~/models"
-    active: str = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+    active: str = "qwen2.5-coder-14b-q4"  # alias, not filename
     hf_token: str = ""
+    entries: list[ModelEntry] = Field(default_factory=list, alias="list")
+
+    @model_validator(mode="after")
+    def validate_active(self) -> ModelsSettings:
+        # If active is an alias, check it exists in the list (for non-custom models)
+        if self.entries and self.active:
+            by_alias = {m.alias for m in self.entries}
+            if self.active not in by_alias:
+                # Still allow custom/uncatalogued models (legacy compat)
+                pass
+        return self
+
+    @property
+    def models_path(self) -> Path:
+        return Path(self.dir).expanduser().resolve()
+
+    @property
+    def model_path(self) -> Path:
+        """Path to the active model file, resolving alias→filename when possible."""
+        # If active is already a filename (e.g. legacy config or custom model)
+        if self.active.endswith(".gguf"):
+            return self.models_path / self.active
+        # Try to resolve via catalog
+        entry = self.by_alias(self.active)
+        if entry:
+            return self.models_path / entry.filename
+        entry = self.by_filename(self.active)
+        if entry:
+            return self.models_path / entry.filename
+        # Fallback: treat active as a filename
+        return self.models_path / self.active
+
+    def by_alias(self, alias: str) -> ModelEntry | None:
+        return next((m for m in self.entries if m.alias == alias), None)
+
+    def by_filename(self, filename: str) -> ModelEntry | None:
+        return next((m for m in self.entries if m.filename == filename), None)
+
+    @property
+    def has_catalog(self) -> bool:
+        return len(self.entries) > 0
 
 
 class ProxySettings(BaseModel):
@@ -261,7 +495,7 @@ class Settings(BaseModel):
 
     @property
     def model_path(self) -> Path:
-        return self.models_path / self.models.active
+        return self.models.model_path
 
     @property
     def internal_url(self) -> str:
@@ -282,6 +516,18 @@ def find_config() -> Path:
         if (directory / "pyproject.toml").exists():
             break  # stop at project root even if config.toml is missing
     return Path.cwd() / CONFIG_FILENAME
+
+
+def _resolve_active(active: str, model_list: list[ModelEntry]) -> str:
+    """Resolve a filename or alias in the TOML 'active' field to an alias.
+
+    If the active value matches a catalog filename → return the alias.
+    Otherwise return the value as-is (custom/uncatalogued model).
+    """
+    if not model_list:
+        return active
+    entry = next((m for m in model_list if m.filename == active), None)
+    return entry.alias if entry else active
 
 
 def load_config() -> Settings:
@@ -351,7 +597,11 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
     active = cfg.models.active
-    entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
+    # First check config catalog, then fall back to KNOWN_MODELS
+    entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
+    if entry is None and cfg.models.has_catalog is False:
+        # Dual catalog fallback: search KNOWN_MODELS by filename
+        entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
     display_name = entry.alias if entry else active
     max_output = entry.max_output if entry else 8192
 
@@ -426,7 +676,11 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
     active = cfg.models.active
-    entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
+    # First check config catalog, then fall back to KNOWN_MODELS
+    entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
+    if entry is None and cfg.models.has_catalog is False:
+        # Dual catalog fallback: search KNOWN_MODELS by filename
+        entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
     display_name = entry.alias if entry else active
     max_output = entry.max_output if entry else 8192
 
@@ -453,7 +707,7 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                         "name": display_name,
                         "contextWindow": cfg.server.n_ctx,
                         "maxTokens": max_output,
-                        "cost": cfg.model_cost.to_cost_dict(),
+                        "cost": entry.cost.to_cost_dict() if entry else cfg.model_cost.to_cost_dict(),
                     }
                 ],
             }
@@ -527,6 +781,19 @@ def config_show() -> None:
 
     output = _to_toml_ish(masked)
     console.print(Syntax(output, "toml", theme="monokai"))
+
+    # Show model catalog if present
+    if cfg.models.has_catalog:
+        console.print(f"\n[bold]Model catalog ({len(cfg.models.entries)} models)[/bold]")
+        for m in cfg.models.entries:
+            active_marker = " ▶" if m.alias == cfg.models.active else "  "
+            cost_str = ""
+            if not m.cost.is_zero():
+                cost_str = f"  cost: {m.cost.input:.4g}/{m.cost.output:.4g}"
+            console.print(
+                f"  {active_marker} {m.alias}  {m.size:>8}  {m.description}{cost_str}"
+            )
+        console.print("\n[dim]▶ = active[/dim]")
 
     opencode_cfg = _build_opencode_config(cfg)
     console.print("\n[bold]opencode config[/bold] (~/.config/opencode/config.json):")
@@ -609,6 +876,20 @@ def config_apply() -> None:
         return
 
     # ── Server-side: render templates ─────────────────────────────────────────
+    # Resolve alias → filename for template replacements
+    from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
+    active = cfg.models.active
+    active_filename = active
+    entry = cfg.models.by_alias(active)
+    if entry:
+        active_filename = entry.filename
+    else:
+        # Dual catalog fallback
+        entry = next((m for m in KNOWN_MODELS if m.alias == active), None)
+        if entry:
+            active_filename = entry.filename
+
     replacements = {
         "%%LAN_IP%%": cfg.proxy.lan_ip,
         "%%LAN_SUBNET%%": cfg.proxy.lan_subnet,
@@ -617,7 +898,7 @@ def config_apply() -> None:
         "%%API_KEY%%": cfg.proxy.api_key,
         "%%LLAMA_SERVER_BIN%%": cfg.server.llama_server_bin,
         "%%MODELS_DIR%%": str(cfg.models_path),
-        "%%ACTIVE_MODEL%%": cfg.models.active,
+        "%%ACTIVE_MODEL%%": active_filename,
         "%%N_GPU_LAYERS%%": str(cfg.server.n_gpu_layers),
         "%%N_CTX%%": str(cfg.server.n_ctx),
         "%%N_THREADS%%": str(cfg.server.n_threads),

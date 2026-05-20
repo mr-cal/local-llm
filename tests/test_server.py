@@ -307,7 +307,7 @@ class TestStopCommand:
         with pytest.raises(typer.Exit):
             server.stop()
 
-    def test_stop_success(self, tmp_config_server, fake_console, mocker):
+    def test_stop_success(self, tmp_config_server, fake_console, mocker, monkeypatch, _make_proc):
         _, tmp_path = tmp_config_server
         pid_file = tmp_path / ".server.pid"
         pid_file.write_text("12345")
@@ -323,13 +323,17 @@ class TestStopCommand:
                     raise ProcessLookupError()
                 return None
 
+        def fake_run(cmd, **kw):
+            return _make_proc(0, "inactive")
+
         mocker.patch.object(server, "_read_pid", return_value=12345)
         mocker.patch("os.kill", fake_kill)
+        monkeypatch.setattr(subprocess, "run", fake_run)
         server.stop()
 
         assert not pid_file.exists()
 
-    def test_stop_removes_pid_file(self, tmp_config_server, fake_console, mocker):
+    def test_stop_removes_pid_file(self, tmp_config_server, fake_console, mocker, monkeypatch, _make_proc):
         _, tmp_path = tmp_config_server
         pid_file = tmp_path / ".server.pid"
         pid_file.write_text("12345")
@@ -339,8 +343,12 @@ class TestStopCommand:
                 raise ProcessLookupError()
             return None
 
+        def fake_run(cmd, **kw):
+            return _make_proc(0, "inactive")
+
         mocker.patch.object(server, "_read_pid", return_value=12345)
         mocker.patch("os.kill", fake_kill)
+        monkeypatch.setattr(subprocess, "run", fake_run)
         server.stop()
 
         assert not pid_file.exists()

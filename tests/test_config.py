@@ -14,7 +14,9 @@ import typer
 from llm.config import (
     ClientSettings,
     LxdSettings,
+    ModelCost,
     ModelCostSettings,
+    ModelEntry,
     ModelsSettings,
     MountEntry,
     ProxySettings,
@@ -58,12 +60,69 @@ class TestModelsSettings:
     def test_defaults(self):
         m = ModelsSettings()
         assert m.dir == "~/models"
-        assert m.active == "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+        assert m.active == "qwen2.5-coder-14b-q4"
         assert m.hf_token == ""
 
     def test_custom_hf_token(self):
         m = ModelsSettings(hf_token="hf_secret")
         assert m.hf_token == "hf_secret"
+
+    def test_has_catalog_false_by_default(self):
+        m = ModelsSettings()
+        assert m.has_catalog is False
+
+    def test_has_catalog_true_with_list(self):
+        models = [
+            ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
+        ]
+        m = ModelsSettings(entries=models)
+        assert m.has_catalog is True
+
+    def test_by_alias(self):
+        models = [
+            ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
+            ModelEntry(alias="other", repo="other/repo", filename="other.gguf"),
+        ]
+        m = ModelsSettings(entries=models)
+        assert m.by_alias("test").alias == "test"
+        assert m.by_alias("other").alias == "other"
+        assert m.by_alias("missing") is None
+
+    def test_by_filename(self):
+        models = [
+            ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
+        ]
+        m = ModelsSettings(entries=models)
+        assert m.by_filename("test.gguf").alias == "test"
+        assert m.by_filename("missing.gguf") is None
+
+    def test_model_path_resolves_alias(self, tmp_path):
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        models = [
+            ModelEntry(alias="test-model", repo="test/repo", filename="test-model.gguf"),
+        ]
+        s = Settings(models=ModelsSettings(dir=str(models_dir), active="test-model", entries=models))
+        assert s.model_path == models_dir / "test-model.gguf"
+
+    def test_model_path_uses_filename_when_no_match(self, tmp_path):
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        active_file = models_dir / "test.gguf"
+        active_file.touch()
+        # No catalog — active is treated as filename
+        s = Settings(models=ModelsSettings(dir=str(models_dir), active="test.gguf"))
+        assert s.model_path == active_file
+
+    def test_model_path_with_custom_model(self, tmp_path):
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        models = [
+            ModelEntry(alias="known", repo="known/repo", filename="known.gguf"),
+        ]
+        s = Settings(models=ModelsSettings(dir=str(models_dir), active="custom.gguf", entries=models))
+        # custom.gguf not in catalog, treated as filename
+        assert s.model_path.name == "custom.gguf"
 
 
 class TestModelCostSettings:
@@ -96,6 +155,18 @@ class TestModelCostSettings:
         d = c.to_cost_dict()
         assert d == {"input": 0.0, "output": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0}
 
+    def test_is_zero_defaults(self):
+        c = ModelCostSettings()
+        assert c.is_zero() is True
+
+    def test_is_zero_nonzero(self):
+        c = ModelCostSettings(output=0.5)
+        assert c.is_zero() is False
+
+    def test_is_zero_partial(self):
+        c = ModelCostSettings(input=0.0001, output=0.0)
+        assert c.is_zero() is False
+
 
 class TestProxySettings:
     def test_defaults(self):
@@ -123,6 +194,43 @@ class TestClientSettings:
         c = ClientSettings(server_url="https://10.0.0.5:8443/v1", api_key="remote-key")
         assert c.server_url == "https://10.0.0.5:8443/v1"
         assert c.api_key == "remote-key"
+
+
+class TestModelEntry:
+    def test_defaults(self):
+        m = ModelEntry(alias="test", repo="test/repo", filename="test.gguf")
+        assert m.alias == "test"
+        assert m.repo == "test/repo"
+        assert m.filename == "test.gguf"
+        assert m.size == ""
+        assert m.description == ""
+        assert m.max_output == 8192
+
+    def test_id_property(self):
+        m = ModelEntry(alias="my-model", repo="a/b", filename="c.gguf")
+        assert m.id == "my-model"
+
+    def test_cost_field(self):
+        m = ModelEntry(
+            alias="test", repo="test/repo", filename="test.gguf",
+            cost=ModelCost(input=0.5, output=1.0),
+        )
+        assert m.cost.input == 0.5
+        assert m.cost.output == 1.0
+
+    def test_full_example(self):
+        m = ModelEntry(
+            alias="qwen2.5-coder-14b-q4",
+            repo="bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
+            filename="Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+            size="~8.5 GB",
+            description="Qwen 2.5 Coder 14B",
+            max_output=8192,
+        )
+        assert m.alias == "qwen2.5-coder-14b-q4"
+        assert m.size == "~8.5 GB"
+        assert m.max_output == 8192
+        assert m.cost.is_zero() is True
 
 
 class TestMountEntry:
@@ -272,6 +380,7 @@ class TestLoadConfig:
         monkeypatch.chdir(tmp_config.parent)
         cfg = load_config()
         assert cfg.server.port == 8080
+        # active stores whatever is in config.toml (filename or alias)
         assert cfg.models.active == "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
         assert cfg.proxy.lan_ip == "192.168.1.100"
         assert cfg.client.server_url == ""
@@ -518,7 +627,7 @@ class TestBuildPiConfig:
         cfg = Settings(
             server=ServerSettings(port=8080, n_ctx=8192),
             models=ModelsSettings(active="test.gguf"),
-            model_cost=ModelCostSettings(
+            model_cost=ModelCost(
                 input=0.0001, output=0.0002, cache_write=0.00015, cache_read=0.00005
             ),
         )
