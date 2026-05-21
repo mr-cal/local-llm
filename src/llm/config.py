@@ -26,6 +26,7 @@ _CONFIG_TEMPLATE = (
 
 
 class ServerSettings(BaseModel):
+    enabled: bool = True
     llama_server_bin: str = "llama-server"
     port: int = 8080
     n_gpu_layers: int = 20
@@ -61,6 +62,12 @@ class ModelCost(BaseModel):
 
 # Backward-compatible alias so existing code and tests using ModelCostSettings still work.
 ModelCostSettings = ModelCost
+
+
+class AuthSettings(BaseModel):
+    """Bearer token used by remote clients to authenticate with this server."""
+
+    api_key: str = ""  # Generate: python -c "import secrets; print(secrets.token_hex(32))"
 
 
 class ModelEntry(BaseModel):
@@ -130,10 +137,10 @@ class ModelsSettings(BaseModel):
 
 
 class ProxySettings(BaseModel):
+    enabled: bool = True
     port: int = 8443
     lan_ip: str = "192.168.1.100"
     lan_subnet: str = "192.168.1.0/24"
-    api_key: str = "change-me-generate-a-strong-random-key"
     cert_path: str = "/etc/ssl/local-llm/cert.pem"
 
 
@@ -144,11 +151,11 @@ class ClientSettings(BaseModel):
     llama-server at http://127.0.0.1:<port> (no TLS, no auth needed).
 
     client-only machine: set server_url to the remote proxy URL, and
-    api_key / cert_path as needed.
+    cert_path as needed (auth is read from [auth]).
     """
 
+    enabled: bool = True
     server_url: str = ""
-    api_key: str = ""
     cert_path: str = ""  # local path to remote server's TLS cert (PEM)
 
 
@@ -176,6 +183,7 @@ class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     models: ModelsSettings = Field(default_factory=ModelsSettings)
     model_cost: ModelCostSettings = Field(default_factory=ModelCostSettings, alias="model_cost")
+    auth: AuthSettings = Field(default_factory=AuthSettings)
     proxy: ProxySettings = Field(default_factory=ProxySettings)
     client: ClientSettings = Field(default_factory=ClientSettings)
     lxd: LxdSettings = Field(default_factory=LxdSettings)
@@ -199,7 +207,7 @@ class Settings(BaseModel):
     @property
     def client_api_key(self) -> str:
         """API key for client tools. Empty when connecting to the local server."""
-        return self.client.api_key
+        return self.auth.api_key
 
     @property
     def models_path(self) -> Path:
@@ -474,7 +482,7 @@ def config_show() -> None:
     # Build a display-safe version by masking secrets
 
     masked = cfg.model_dump()
-    masked["proxy"]["api_key"] = "***"
+    masked["auth"]["api_key"] = "***"
     masked["models"]["hf_token"] = "***" if masked["models"]["hf_token"] else ""
 
     def _to_toml_ish(d: dict, indent: int = 0) -> str:  # type: ignore[type-arg]
@@ -608,7 +616,7 @@ def config_apply() -> None:
         "%%LAN_SUBNET%%": cfg.proxy.lan_subnet,
         "%%PROXY_PORT%%": str(cfg.proxy.port),
         "%%SERVER_PORT%%": str(cfg.server.port),
-        "%%API_KEY%%": cfg.proxy.api_key,
+        "%%API_KEY%%": cfg.auth.api_key,
         "%%LLAMA_SERVER_BIN%%": cfg.server.llama_server_bin,
         "%%MODELS_DIR%%": str(cfg.models_path),
         "%%ACTIVE_MODEL%%": active_filename,

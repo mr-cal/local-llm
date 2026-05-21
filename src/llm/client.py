@@ -43,14 +43,14 @@ def setup(
     if config_path.exists():
         cfg = load_config()
         resolved_base_url = base_url or f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}/v1"
-        resolved_key = api_key or cfg.proxy.api_key
+        resolved_key = api_key or cfg.auth.api_key
         resolved_model = cfg.models.active
-        if resolved_key == "change-me-generate-a-strong-random-key":
+        if resolved_key == "":
             console.print(
-                "[yellow]Warning:[/yellow] api_key is still the default placeholder.\n"
+                "[yellow]Warning:[/yellow] api_key is not set.\n"
                 "Generate a real key:\n"
                 '  python -c "import secrets; print(secrets.token_hex(32))"\n'
-                "Then update [proxy] api_key in config.toml.\n"
+                "Then update [auth] api_key in config.toml.\n"
             )
         cert_file = Path(cfg.proxy.cert_path)
         if cert_file.exists():

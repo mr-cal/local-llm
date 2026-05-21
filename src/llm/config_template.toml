@@ -1,10 +1,10 @@
 # Local LLM Configuration
 # Edit this file, then run:  uv run llm config apply
 #
-# Machine roles — set the sections that apply to this machine:
-#   server+client  — runs llama-server AND opencode/pi locally (most common)
-#   server-only    — runs llama-server + nginx for remote clients; no local tools
-#   client-only    — runs opencode/pi and connects to a remote server
+# Machine roles — set enabled per section:
+#   server+client  — both enabled (most common)
+#   server-only    — server enabled, client disabled
+#   client-only    — client enabled, server disabled
 #
 # Sensitive values (api_key, hf_token) live only here — never committed.
 
@@ -12,6 +12,7 @@
 # Skip [server] and [models] entirely on a client-only machine.
 
 [server]
+enabled = true
 # Path to the llama-server binary.
 # After building llama.cpp: ./llama.cpp/build/bin/llama-server
 # Or after copying to PATH:  ~/.local/bin/llama-server
@@ -215,6 +216,7 @@ cost.output = 0.0
 # Skip [proxy] on a client-only machine.
 
 [proxy]
+enabled = true
 # External HTTPS port nginx listens on (remote clients connect here).
 port = 8443
 
@@ -224,10 +226,6 @@ lan_ip = "192.168.1.100"
 
 # LAN subnet allowed through nginx (CIDR). Requests from outside are rejected.
 lan_subnet = "192.168.1.0/24"
-
-# Bearer token remote clients must include in the Authorization header.
-# Generate: python -c "import secrets; print(secrets.token_hex(32))"
-api_key = "change-me-generate-a-strong-random-key"
 
 # Path to the self-signed TLS certificate (public cert only, not the key).
 # Generate with: uv run llm config gencert
@@ -240,21 +238,25 @@ cert_path = "/etc/ssl/local-llm/cert.pem"
 #   the local llama-server at http://127.0.0.1:<port> (no TLS, no auth).
 #
 # client-only machine: set server_url to the remote server's proxy URL,
-#   and set api_key / cert_path to authenticate and trust the TLS cert.
+#   and set cert_path as needed (auth is read from [auth]).
 
 [client]
+enabled = true
 # Leave empty on a server+client machine (uses local server directly).
 # Set to remote proxy URL on a client-only machine:
 #   server_url = "https://192.168.1.x:8443/v1"
 server_url = ""
 
-# API key for remote server (from that server's [proxy] api_key).
-api_key = ""
-
 # Path to the remote server's TLS cert PEM, for Node.js tools (Pi, opencode).
 # Copy from the server: scp server:/etc/ssl/local-llm/cert.pem ~/.config/local-llm/cert.pem
 # Then set NODE_EXTRA_CA_CERTS to this path in your shell profile.
 cert_path = ""
+
+# ── AUTH ──────────────────────────────────────────────────────────────────────
+[auth]
+# Bearer token used by remote clients to authenticate with this server.
+# Generate: python -c "import secrets; print(secrets.token_hex(32))"
+api_key = ""
 
 # ── MODEL COST ────────────────────────────────────────────────────────────────
 # Per-token pricing used when generating pi's models.json.

@@ -12,6 +12,7 @@ import pytest
 import typer
 
 from llm.config import (
+    AuthSettings,
     ClientSettings,
     LxdSettings,
     ModelCost,
@@ -43,6 +44,7 @@ from llm.config import (
 class TestServerSettings:
     def test_defaults(self):
         s = ServerSettings()
+        assert s.enabled is True
         assert s.llama_server_bin == "llama-server"
         assert s.port == 8080
         assert s.n_gpu_layers == 20
@@ -51,7 +53,8 @@ class TestServerSettings:
         assert s.extra_args == []
 
     def test_custom_values(self):
-        s = ServerSettings(port=9000, n_threads=8, extra_args=["--jinja"])
+        s = ServerSettings(enabled=False, port=9000, n_threads=8, extra_args=["--jinja"])
+        assert s.enabled is False
         assert s.port == 9000
         assert s.n_threads == 8
         assert s.extra_args == ["--jinja"]
@@ -172,14 +175,15 @@ class TestModelCostSettings:
 class TestProxySettings:
     def test_defaults(self):
         p = ProxySettings()
+        assert p.enabled is True
         assert p.port == 8443
         assert p.lan_ip == "192.168.1.100"
         assert p.lan_subnet == "192.168.1.0/24"
-        assert p.api_key == "change-me-generate-a-strong-random-key"
         assert p.cert_path == "/etc/ssl/local-llm/cert.pem"
 
     def test_custom_values(self):
-        p = ProxySettings(port=9443, lan_ip="10.0.0.1")
+        p = ProxySettings(enabled=False, port=9443, lan_ip="10.0.0.1")
+        assert p.enabled is False
         assert p.port == 9443
         assert p.lan_ip == "10.0.0.1"
 
@@ -187,14 +191,13 @@ class TestProxySettings:
 class TestClientSettings:
     def test_defaults(self):
         c = ClientSettings()
+        assert c.enabled is True
         assert c.server_url == ""
-        assert c.api_key == ""
         assert c.cert_path == ""
 
     def test_remote_config(self):
-        c = ClientSettings(server_url="https://10.0.0.5:8443/v1", api_key="remote-key")
+        c = ClientSettings(server_url="https://10.0.0.5:8443/v1")
         assert c.server_url == "https://10.0.0.5:8443/v1"
-        assert c.api_key == "remote-key"
 
 
 class TestModelEntry:
@@ -232,6 +235,16 @@ class TestModelEntry:
         assert m.size == "~8.5 GB"
         assert m.max_output == 8192
         assert m.cost.is_zero() is True
+
+
+class TestAuthSettings:
+    def test_defaults(self):
+        a = AuthSettings()
+        assert a.api_key == ""
+
+    def test_custom_key(self):
+        a = AuthSettings(api_key="my-secret-key")
+        assert a.api_key == "my-secret-key"
 
 
 class TestMountEntry:
@@ -303,7 +316,7 @@ class TestSettings:
         assert s.client_api_key == ""
 
     def test_client_api_key_remote(self):
-        s = Settings(client=ClientSettings(api_key="remote-secret"))
+        s = Settings(auth=AuthSettings(api_key="remote-secret"))
         assert s.client_api_key == "remote-secret"
 
     def test_model_cost_defaults(self):
@@ -396,10 +409,10 @@ class TestLoadConfig:
         config.write_text(
             '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
             'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[model_cost]\n'
+            'active = "model.gguf"\nhf_token = ""\n\n[auth]\napi_key = "key"\n\n[proxy]\n'
+            'port = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'cert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
+            'server_url = ""\ncert_path = ""\n\n[model_cost]\n'
             "input = 0.0001\noutput = 0.0002\ncache_write = 0.00015\ncache_read = 0.00005\n"
             "\n[lxd]\ncraft_dirs = []\n"
         )
@@ -475,6 +488,7 @@ class TestConfigInit:
         assert "[models]" in content
         assert "[proxy]" in content
         assert "[client]" in content
+        assert "[auth]" in content
         assert "[lxd]" in content
 
     def test_exits_when_exists(self, tmp_path, monkeypatch):
@@ -494,7 +508,7 @@ class TestConfigInit:
         monkeypatch.chdir(tmp_path)
         config_init()
         content = (tmp_path / "config.toml").read_text()
-        for section in ["[server]", "[models]", "[proxy]", "[client]", "[model_cost]", "[lxd]"]:
+        for section in ["[server]", "[models]", "[proxy]", "[client]", "[auth]", "[model_cost]", "[lxd]"]:
             assert section in content
 
     def test_template_model_cost_has_examples(self, tmp_path, monkeypatch):
@@ -596,10 +610,10 @@ class TestBuildOpencodeConfig:
         config.write_text(
             '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
             'n_ctx = 8192\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "big-model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-            'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'api_key = "test-key"\ncert_path = "/etc/ssl/local-llm/cert.pem"\n\n[client]\n'
-            'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
+            'active = "big-model.gguf"\nhf_token = ""\n\n[auth]\napi_key = "test-key"\n'
+            '\n[proxy]\nport = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
+            'cert_path = "/etc/ssl/local-llm/cert.pem"\n\n[client]\n'
+            'server_url = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
         )
         monkeypatch.chdir(tmp_path)
         cfg = load_config()
@@ -640,7 +654,7 @@ class TestBuildPiConfig:
         provider = result["providers"]["local-llm"]
         assert provider["baseUrl"] == cfg.client_url
         assert provider["api"] == "openai-completions"
-        assert provider["apiKey"] == "local"  # empty client key falls back to "local"
+        assert provider["apiKey"] == "key"  # auth.api_key from [auth] section
 
     def test_includes_model_entry(self, tmp_config):
         cfg = load_config_from_path(tmp_config)
@@ -861,7 +875,7 @@ class TestConfigApply:
 
         data = json.loads(fake_pi_config_path.read_text())
         assert data["providers"]["local-llm"]["baseUrl"] == "http://127.0.0.1:8080/v1"
-        assert data["providers"]["local-llm"]["apiKey"] == "local"
+        assert data["providers"]["local-llm"]["apiKey"] == "key"  # from [auth] api_key
         assert "anthropic" in data["providers"]
 
 

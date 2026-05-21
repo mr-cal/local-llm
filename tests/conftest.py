@@ -6,6 +6,56 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import tomli_w
+
+
+def _write_config(config: Path, data: dict) -> Path:
+    """Write a dict as TOML to a config file."""
+    config.write_text(tomli_w.dumps(data))
+    return config
+
+
+def _base_server_config(extra_models: dict | None = None) -> dict:
+    """Return the standard server+client config dict."""
+    return {
+        "server": {
+            "llama_server_bin": "llama-server",
+            "port": 8080,
+            "n_gpu_layers": 20,
+            "n_ctx": 4096,
+            "n_threads": 12,
+            "extra_args": [],
+        },
+        "models": {
+            "dir": "~/models",
+            "active": "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+            "hf_token": "",
+            "list": extra_models if extra_models else [],
+        },
+        "auth": {"api_key": "key"},
+        "proxy": {
+            "enabled": True,
+            "port": 8443,
+            "lan_ip": "192.168.1.100",
+            "lan_subnet": "192.168.1.0/24",
+            "cert_path": "/etc/ssl/local-llm/cert.pem",
+        },
+        "client": {
+            "enabled": True,
+            "server_url": "",
+            "cert_path": "",
+        },
+        "model_cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cache_write": 0.0,
+            "cache_read": 0.0,
+        },
+        "lxd": {
+            "craft_dirs": [],
+            "mounts": [],
+        },
+    }
 
 
 @pytest.fixture
@@ -22,18 +72,12 @@ def tmp_config_cwd(tmp_config: Path, monkeypatch) -> Path:
 def tmp_config_with_lxd(tmp_path: Path, monkeypatch) -> Path:
     """Write a config.toml with an lxd section (mounts) and chdir to parent."""
     config = tmp_path / "config.toml"
-    config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-        'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
-        'port = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "test-key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = ["~/dev/craft"]\n'
-        "\n[[lxd.mounts]]\n"
-        'host = "~/.agents"\n'
-        "\n[[lxd.mounts]]\n"
-        'host = "~/dev"\n'
-    )
+    data = _base_server_config()
+    data["lxd"]["mounts"] = [
+        {"host": "~/.agents"},
+        {"host": "~/dev"},
+    ]
+    _write_config(config, data)
     monkeypatch.chdir(tmp_path)
     return config
 
@@ -45,14 +89,10 @@ def tmp_config_full(tmp_path: Path, monkeypatch) -> Path:
     Suitable for tests that exercise config-init, config-gencert, config-apply.
     """
     config = tmp_path / "config.toml"
-    config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-        'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "test-key"\ncert_path = "cert.pem"\n\n[client]\n'
-        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-    )
+    data = _base_server_config()
+    data["models"]["active"] = "model.gguf"
+    data["proxy"]["cert_path"] = "cert.pem"
+    _write_config(config, data)
     monkeypatch.chdir(tmp_path)
     return config
 
@@ -66,16 +106,10 @@ def tmp_config_with_models_dir(tmp_path: Path, monkeypatch) -> Path:
     """
     config = tmp_path / "config.toml"
     models_dir = tmp_path / "models"
-    config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\n'
-        "n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n"
-        'extra_args = []\n\n[models]\ndir = "' + str(models_dir) + '"\nactive = "test.gguf"\nhf_token = ""\n'
-        "\n[proxy]\nport = 8443\n"
-        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n'
-        '\n[client]\nserver_url = ""\napi_key = ""\ncert_path = ""\n'
-        "\n[lxd]\ncraft_dirs = []\n"
-    )
+    data = _base_server_config()
+    data["models"]["dir"] = str(models_dir)
+    data["models"]["active"] = "test.gguf"
+    _write_config(config, data)
     monkeypatch.chdir(tmp_path)
     return config
 
@@ -91,16 +125,10 @@ def tmp_config_server(tmp_path: Path, monkeypatch):
     """
     config = tmp_path / "config.toml"
     models_dir = tmp_path / "models"
-    config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\n'
-        "n_gpu_layers = 20\nn_ctx = 4096\nn_threads = 12\n"
-        'extra_args = []\n\n[models]\ndir = "' + str(models_dir) + '"\nactive = "model.gguf"\nhf_token = ""\n'
-        "\n[proxy]\nport = 8443\n"
-        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n'
-        '\n[client]\nserver_url = ""\napi_key = ""\ncert_path = ""\n'
-        "\n[lxd]\ncraft_dirs = []\n"
-    )
+    data = _base_server_config()
+    data["models"]["dir"] = str(models_dir)
+    data["models"]["active"] = "model.gguf"
+    _write_config(config, data)
     (tmp_path / "models").mkdir()
     (tmp_path / "models" / "model.gguf").touch()
     monkeypatch.chdir(tmp_path)
@@ -115,14 +143,10 @@ def tmp_config_gencert(tmp_path: Path, monkeypatch) -> Path:
     which is required for config-gencert tests (certs are written to config dir).
     """
     config = tmp_path / "config.toml"
-    config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-        'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "test-key"\ncert_path = "cert.pem"\n\n[client]\n'
-        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-    )
+    data = _base_server_config()
+    data["models"]["active"] = "model.gguf"
+    data["proxy"]["cert_path"] = "cert.pem"
+    _write_config(config, data)
     monkeypatch.chdir(tmp_path)
     return config
 
@@ -148,14 +172,8 @@ def tmp_config_bench(tmp_path: Path) -> Path:
     Suitable for tests that exercise _apply_config or _run_llama_bench_raw.
     """
     config = tmp_path / "config.toml"
-    config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-        'active = "model.gguf"\nhf_token = ""\n\n[proxy]\nport = 8443\n'
-        'lan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\ncraft_dirs = []\n'
-    )
+    data = _base_server_config()
+    _write_config(config, data)
     return config
 
 
@@ -225,15 +243,10 @@ def tmp_config(tmp_path: Path) -> Path:
     The caller can read/modify the file before using it.
     """
     config = tmp_path / "config.toml"
-    config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-        'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
-        'port = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "test-key-1234"\ncert_path = "/etc/ssl/local-llm/cert.pem"\n\n[client]\n'
-        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\n'
-        "craft_dirs = []\n"
-    )
+    data = _base_server_config()
+    data["models"]["active"] = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+    data["proxy"]["cert_path"] = "/etc/ssl/local-llm/cert.pem"
+    _write_config(config, data)
     return config
 
 
@@ -245,15 +258,10 @@ def tmp_client_config(tmp_path: Path) -> Path:
     The caller can read/modify the file before using it.
     """
     config = tmp_path / "config.toml"
-    config.write_text(
-        '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-        'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-        'active = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"\nhf_token = ""\n\n[proxy]\n'
-        'port = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-        'api_key = "test-key"\ncert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-        'server_url = ""\napi_key = ""\ncert_path = ""\n\n[lxd]\n'
-        "craft_dirs = []\n"
-    )
+    data = _base_server_config()
+    data["models"]["active"] = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+    data["proxy"]["cert_path"] = "/etc/ssl/cert.pem"
+    _write_config(config, data)
     return config
 
 
@@ -290,14 +298,26 @@ def fake_no_config(monkeypatch, tmp_path: Path):
 def tmp_config_client_only(tmp_path: Path) -> Path:
     """Write a client-only config.toml (no [server] section)."""
     config = tmp_path / "config.toml"
-    config.write_text(
-        '[proxy]\nport = 8443\nlan_ip = "10.0.0.5"\n'
-        'lan_subnet = "10.0.0.0/24"\napi_key = "remote-key"\n'
-        'cert_path = "/etc/ssl/local-llm/cert.pem"\n\n[client]\n'
-        'server_url = "https://10.0.0.5:8443/v1"\napi_key = "remote-key"\n'
-        'cert_path = "/home/user/.config/local-llm/cert.pem"\n\n'
-        "[lxd]\ncraft_dirs = []\n"
-    )
+    data: dict = {
+        "proxy": {
+            "enabled": True,
+            "port": 8443,
+            "lan_ip": "10.0.0.5",
+            "lan_subnet": "10.0.0.0/24",
+            "cert_path": "/etc/ssl/local-llm/cert.pem",
+        },
+        "auth": {"api_key": "remote-key"},
+        "client": {
+            "enabled": True,
+            "server_url": "https://10.0.0.5:8443/v1",
+            "cert_path": "/home/user/.config/local-llm/cert.pem",
+        },
+        "lxd": {
+            "craft_dirs": [],
+            "mounts": [],
+        },
+    }
+    _write_config(config, data)
     return config
 
 

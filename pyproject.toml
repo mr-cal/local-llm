@@ -28,6 +28,7 @@ dev = [
     "pytest>=8.0",
     "pytest-mock>=3.14",
     "ruff>=0.9",
+    "tomli-w>=1.0",
     "ty>=0.0.1a6",
 ]
 
