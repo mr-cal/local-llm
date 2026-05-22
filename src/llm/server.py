@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import time
@@ -79,18 +80,40 @@ def _log_file() -> Path:
     return _LOG_FILE
 
 
-def _read_pid() -> int | None:
-    """Return running server PID, or None if not running."""
+def _read_pid(port: int | None = None) -> int | None:
+    """Return running server PID, or None if not running.
+
+    Tries two strategies:
+    1. Read the PID file (fast path)
+    2. Fall back to finding the process listening on *port* via ss
+    """
+    # Strategy 1: PID file
     pf = _pid_file()
-    if not pf.exists():
-        return None
-    try:
-        pid = int(pf.read_text().strip())
-        os.kill(pid, 0)  # signal 0 = existence check, raises if not running
-        return pid
-    except (ValueError, ProcessLookupError, PermissionError):
-        pf.unlink(missing_ok=True)
-        return None
+    if pf.exists():
+        try:
+            pid = int(pf.read_text().strip())
+            os.kill(pid, 0)  # signal 0 = existence check
+            return pid
+        except (ValueError, ProcessLookupError, PermissionError):
+            pf.unlink(missing_ok=True)
+
+    # Strategy 2: probe the port (fallback when PID file is missing)
+    if port is not None:
+        result = subprocess.run(
+            ["ss", "-tlnp", f"sport = :{port}"],
+            capture_output=True, text=True,
+        )
+        for line in result.stdout.splitlines()[1:]:  # skip header
+            if "llama-server" in line:
+                m = re.search(r"pid=(\d+)", line)
+                if m:
+                    try:
+                        pid = int(m.group(1))
+                        os.kill(pid, 0)  # verify it's still alive
+                        return pid
+                    except (ValueError, ProcessLookupError, PermissionError):
+                        pass
+    return None
 
 
 @app.command("start")
@@ -106,7 +129,7 @@ def start(
         )
         raise typer.Exit(1)
 
-    existing = _read_pid()
+    existing = _read_pid(cfg.server.port)
     if existing:
         console.print(f"[yellow]Server already running[/yellow] (PID {existing})")
         raise typer.Exit(1)
@@ -184,7 +207,8 @@ def start(
 @app.command("stop")
 def stop() -> None:
     """Stop the running llama-server and nginx."""
-    pid = _read_pid()
+    cfg = load_config()
+    pid = _read_pid(cfg.server.port)
     if pid is None:
         console.print("[yellow]Server is not running[/yellow]")
         raise typer.Exit(1)
@@ -211,7 +235,8 @@ def stop() -> None:
 @app.command("restart")
 def restart() -> None:
     """Restart llama-server (stop then start)."""
-    pid = _read_pid()
+    cfg = load_config()
+    pid = _read_pid(cfg.server.port)
     if pid:
         stop()
     start()
@@ -231,9 +256,8 @@ def status() -> None:
             console.print("[green]● nginx[/green]         active")
         return
 
-    pid = _read_pid()
+    pid = _read_pid(cfg.server.port)
     if pid:
-        cfg = load_config()
         from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
         # Resolve: check config catalog first, then KNOWN_MODELS
