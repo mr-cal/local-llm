@@ -392,6 +392,31 @@ _OPENCODE_CONFIG_PATH = Path("~/.config/opencode/config.json")
 _PI_CONFIG_PATH = Path("~/.pi/agent/models.json")
 
 
+def _get_lxd_bridge_info() -> tuple[str, str]:
+    """Return ``(host_ip, subnet)`` for the lxdbr0 bridge.
+
+    Example return: ``("10.113.167.1", "10.113.167.0/24")``.
+    Returns ``("", "")`` when lxdbr0 is not found or ``ip(8)`` fails.
+    """
+    import ipaddress  # noqa: PLC0415
+
+    result = subprocess.run(
+        ["ip", "-4", "addr", "show", "lxdbr0"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return "", ""
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("inet "):
+            ip_cidr = line.split()[1]
+            host_ip = ip_cidr.split("/")[0]
+            network = str(ipaddress.ip_interface(ip_cidr).network)
+            return host_ip, network
+    return "", ""
+
+
 def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     """Build the pi-harness models.json config dict from current settings."""
     from llm.models import KNOWN_MODELS  # noqa: PLC0415
@@ -436,11 +461,12 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     }
 
 
-def _build_pi_config_for_container(cfg: Settings, server_ip: str) -> dict:  # type: ignore[type-arg]
+def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # type: ignore[type-arg]
     """Build the pi-harness models.json config dict for use INSIDE an LXD container.
 
-    The container cannot reach the host's llama-server at 127.0.0.1, so it connects
-    via the nginx TLS proxy at the host's LAN IP instead.
+    The container cannot reach the host's llama-server at 127.0.0.1, so it
+    connects via the nginx TLS proxy using *server_host* (typically the
+    ``local-llm`` hostname, which is already in the cert's SubjectAltName).
     """
     from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
@@ -452,8 +478,10 @@ def _build_pi_config_for_container(cfg: Settings, server_ip: str) -> dict:  # ty
     max_output = entry.max_output if entry else 8192
     api_key = cfg.client_api_key or "local"
 
-    # Container connects via the nginx TLS proxy (https://<lan_ip>:8443/v1)
-    base_url = f"https://{server_ip}:{cfg.proxy.port}/v1"
+    # Container connects via the nginx TLS proxy using the provided host.
+    # Using the 'local-llm' hostname (present in the cert's SAN) avoids
+    # TLS verification failures that would occur with a raw IP address.
+    base_url = f"https://{server_host}:{cfg.proxy.port}/v1"
 
     return {
         "providers": {
@@ -669,6 +697,20 @@ def config_apply() -> None:
         "%%N_THREADS%%": str(cfg.server.n_threads),
         "%%USER%%": os.environ.get("USER", os.environ.get("LOGNAME", "nobody")),
     }
+
+    # Auto-detect lxdbr0 bridge to allow LXD containers to reach the proxy.
+    lxd_bridge_ip, lxd_bridge_subnet = _get_lxd_bridge_info()
+    if lxd_bridge_ip and lxd_bridge_subnet:
+        console.print(
+            f"  [dim]LXD bridge detected: {lxd_bridge_ip} ({lxd_bridge_subnet})[/dim]"
+        )
+        replacements["%%LXD_LISTEN_LINE%%"] = (
+            f"    listen {lxd_bridge_ip}:{cfg.proxy.port} ssl;\n"
+        )
+        replacements["%%LXD_ALLOW_LINE%%"] = f"    allow {lxd_bridge_subnet};\n"
+    else:
+        replacements["%%LXD_LISTEN_LINE%%"] = ""
+        replacements["%%LXD_ALLOW_LINE%%"] = ""
 
     templates = [
         (project_root / "nginx" / "llm-proxy.conf.template", project_root / "nginx" / "llm-proxy.conf"),
