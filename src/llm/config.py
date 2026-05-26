@@ -704,12 +704,8 @@ def config_apply() -> None:
         console.print(
             f"  [dim]LXD bridge detected: {lxd_bridge_ip} ({lxd_bridge_subnet})[/dim]"
         )
-        replacements["%%LXD_LISTEN_LINE%%"] = (
-            f"    listen {lxd_bridge_ip}:{cfg.proxy.port} ssl;\n"
-        )
         replacements["%%LXD_ALLOW_LINE%%"] = f"    allow {lxd_bridge_subnet};\n"
     else:
-        replacements["%%LXD_LISTEN_LINE%%"] = ""
         replacements["%%LXD_ALLOW_LINE%%"] = ""
 
     templates = [
@@ -767,6 +763,11 @@ def config_apply() -> None:
                     "  [dim]llm-server is running — restart to pick up changes:[/dim]\n"
                     "    [bold]uv run llm server restart[/bold]"
                 )
+
+    console.print(
+        "\n[dim]Tip: if you regenerated the TLS cert, run "
+        "[bold]uv run llm lxd refresh[/bold] to push the new cert to all managed containers.[/dim]"
+    )
 
 
 @app.command("gencert")

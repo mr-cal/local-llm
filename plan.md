@@ -1,5 +1,38 @@
 # Plan: llama.cpp Submodule + Config-Driven Build System
 
+## Completed LXD improvements (May 2026)
+
+These changes are already in `main` and do not need to be re-implemented:
+
+- **Separate host/container pi configs** — removed the `~/.pi` bind-mount so host and
+  container each have independent pi config; `setup_pi_in_container` now writes
+  `~/.pi/agent/models.json` directly inside the container using the `local-llm` hostname.
+- **`local-llm` hostname + /etc/hosts** — added the lxdbr0 bridge IP to `/etc/hosts`
+  inside the container as `local-llm`, so pi connects via hostname (which is in the
+  cert's SAN) rather than a raw IP.
+- **nginx listens on all interfaces** — changed `listen <lan_ip>:<port>` to
+  `listen <port>` so the bind never fails on a specific IP and LXD containers can reach
+  the proxy through the bridge.
+- **Auto-allow LXD subnet in nginx** — `config apply` detects `lxdbr0` and injects
+  `allow <bridge_subnet>` into the nginx config automatically.
+- **Fish shell env fix** — shell profile now uses `set -x VAR value` (fish syntax) for
+  `NODE_EXTRA_CA_CERTS` instead of `export VAR=value`.
+- **Cert resolved from config** — `setup_pi_in_container` reads cert from
+  `cfg.proxy.cert_path`; the `--cert-url` / openssl approach is removed.
+- **`apt autoremove && clean`** — added to `install_packages` to trim image size.
+- **`llm lxd refresh`** — new command that updates apt, pi (npm), copilot (gh
+  extensions), and re-applies pi config in all managed containers.  Containers are
+  auto-tagged with `user.local-llm-managed=true` at create time; running the command
+  without arguments refreshes every tagged running container.
+- **`%%LXD_LISTEN_LINE%%` dead code removed** — placeholder was set in `config.py` but
+  was never present in the nginx template; removed.
+- **Restored "Next steps" hint** — `llm lxd create` now prints the
+  `llm lxd setup-crafts` hint after a successful run.
+- **`config apply` refresh hint** — prints a reminder to run `llm lxd refresh` after
+  cert regeneration.
+
+---
+
 ## Overview
 
 Move from the manual "clone + cmake + cp" workflow to a fully automated, config-driven build system backed by a git submodule. The `uv run llm` CLI becomes the single entry point for building, updating, and installing llama.cpp.

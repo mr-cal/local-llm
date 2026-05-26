@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from llm.config import _get_lxd_bridge_info
-
 
 # ── _get_lxd_bridge_info (shared impl used by lxd.py and config.py) ──────────
 
@@ -265,6 +261,7 @@ class TestSetupPiInContainer:
     def test_models_json_uses_local_llm_hostname(self, monkeypatch, tmp_path):
         """models.json written into the container should use the 'local-llm' hostname URL."""
         import json
+
         import tomli_w
 
         config = tmp_path / "config.toml"
@@ -306,3 +303,95 @@ class TestSetupPiInContainer:
         base_url = parsed["providers"]["local-llm"]["baseUrl"]
         assert "local-llm" in base_url, f"Expected 'local-llm' hostname in baseUrl, got: {base_url}"
         assert base_url.startswith("https://"), "Expected HTTPS scheme"
+
+
+# ── _tag_as_managed / _list_managed_containers ────────────────────────────────
+
+
+class TestManagedTag:
+    """Tests for container tagging and managed-container discovery."""
+
+    def _make_completed(self, returncode=0, stdout=""):
+        p = MagicMock()
+        p.returncode = returncode
+        p.stdout = stdout
+        return p
+
+    def test_tag_as_managed_issues_lxc_config_set(self, monkeypatch):
+        """_tag_as_managed should run 'lxc config set <container> user.local-llm-managed=true'."""
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, "")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import _tag_as_managed
+
+        _tag_as_managed("craft-llm-1")
+
+        config_set_calls = [c for c in calls if "config" in c and "set" in c]
+        assert config_set_calls, "Expected an 'lxc config set' call"
+        full = " ".join(config_set_calls[0])
+        assert "user.local-llm-managed=true" in full
+
+    def test_list_managed_containers_returns_tagged_running(self, monkeypatch):
+        """Only Running containers with the managed tag should be returned."""
+        import json as _json
+
+        instances = [
+            {
+                "name": "craft-llm-1",
+                "status": "Running",
+                "config": {"user.local-llm-managed": "true"},
+            },
+            {
+                "name": "craft-llm-2",
+                "status": "Stopped",
+                "config": {"user.local-llm-managed": "true"},
+            },
+            {
+                "name": "craft-llm-3",
+                "status": "Running",
+                "config": {},  # not managed
+            },
+            {
+                "name": "other-container",
+                "status": "Running",
+                "config": {"user.local-llm-managed": "true"},
+            },
+        ]
+
+        def _run(cmd, **kwargs):
+            p = MagicMock()
+            p.returncode = 0
+            p.stdout = _json.dumps(instances)
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import _list_managed_containers
+
+        result = _list_managed_containers()
+        # craft-llm-1 is Running + tagged; craft-llm-2 is Stopped; craft-llm-3 not tagged
+        # other-container is Running + tagged but also returned (no prefix filter)
+        assert "craft-llm-1" in result
+        assert "craft-llm-2" not in result, "Stopped containers should be excluded"
+        assert "craft-llm-3" not in result, "Untagged containers should be excluded"
+
+    def test_list_managed_containers_empty_when_lxc_fails(self, monkeypatch):
+        """If lxc list fails, return an empty list (don't crash)."""
+
+        def _run(cmd, **kwargs):
+            p = MagicMock()
+            p.returncode = 1
+            p.stdout = ""
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import _list_managed_containers
+
+        result = _list_managed_containers()
+        assert result == []

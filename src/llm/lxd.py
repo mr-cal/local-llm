@@ -15,7 +15,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from llm.config import try_load_lxd, _build_pi_config_for_container, load_config, _get_lxd_bridge_info
+from llm.config import _build_pi_config_for_container, _get_lxd_bridge_info, load_config, try_load_lxd
 
 CONTAINER_PREFIX = "craft-llm"
 HOST_UID = os.getuid()
@@ -161,7 +161,29 @@ def container_is_vm(container):
     return any(c["name"] == container and c.get("type") == "virtual-machine" for c in instances)
 
 
-# -- Setup steps --------------------------------------------------------------
+# The custom LXD config key used to mark containers managed by this tool.
+# Containers tagged with this key are discovered by `llm lxd refresh` when
+# no explicit container number is given.
+_MANAGED_TAG = "user.local-llm-managed"
+
+
+def _tag_as_managed(container: str) -> None:
+    """Set the managed tag on *container* so it is discovered by `llm lxd refresh`."""
+    run(["lxc", "config", "set", container, f"{_MANAGED_TAG}=true"])
+
+
+def _list_managed_containers() -> list[str]:
+    """Return names of all running LXD instances tagged as managed by this tool."""
+    r = run_capture(["lxc", "list", "--format=json"])
+    if r.returncode != 0:
+        return []
+    instances = json.loads(r.stdout)
+    return [
+        inst["name"]
+        for inst in instances
+        if inst.get("config", {}).get(_MANAGED_TAG) == "true"
+        and inst.get("status") == "Running"
+    ]
 
 
 VM_ROOT_DISK_SIZE = "50GB"
@@ -782,7 +804,6 @@ def setup_pi_in_container(
     # ── Step 2: Generate models.json with the 'local-llm' proxy URL ──────────
     console.print("  Generating models.json with proxy URL...")
     pi_cfg = _build_pi_config_for_container(cfg, "local-llm")
-    pi_json = json.dumps(pi_cfg, indent=2) + "\n"
 
     # Ensure the pi config directory exists (no longer created by a bind-mount).
     pi_config_dir = str(Path(_PI_CONTAINER_CONFIG).parent)
@@ -1248,7 +1269,15 @@ def create(
         gid=effective_gid,
     )
 
+    # Tag the container so it is discovered by `llm lxd refresh` without args.
+    _tag_as_managed(container)
+
     run_tests(container, uid=effective_uid, gid=effective_gid)
+
+    console.print(
+        f"\nNext: run [bold]llm lxd setup-crafts {number}[/bold] "
+        "to run 'make setup' in all craft project directories."
+    )
 
 
 @app.command("setup-crafts")
@@ -1297,9 +1326,59 @@ def setup_crafts(
     run_craft_setup_tests(container)
 
 
-@app.command("refresh-pi")
-def refresh_pi(
-    number: Annotated[int, typer.Argument(help="Container number suffix — targets craft-llm-<number>.")],
+def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> None:
+    """Run all refresh steps for a single managed container.
+
+    Steps (in order):
+    1. apt update + upgrade + autoremove
+    2. npm update for pi (``@earendil-works/pi-coding-agent``)
+    3. gh extension upgrade --all (updates copilot and any other gh extensions)
+    4. Re-apply pi config (bridge /etc/hosts, models.json, cert, shell env vars)
+    """
+    console.print(f"\n[bold cyan]── Refreshing {container} ──[/bold cyan]")
+
+    # 1. apt
+    console.print("\n  [bold]apt:[/bold] update + upgrade + autoremove...")
+    run(["lxc", "exec", container, "--", "apt-get", "update", "-q"])
+    run(["lxc", "exec", container, "--", "apt-get", "upgrade", "-y"])
+    run(["lxc", "exec", container, "--", "apt-get", "autoremove", "-y"])
+    run(["lxc", "exec", container, "--", "apt-get", "clean"])
+
+    # 2. pi (npm global)
+    console.print("\n  [bold]pi:[/bold] updating @earendil-works/pi-coding-agent...")
+    run(
+        ["lxc", "exec", container, "--", "npm", "update", "-g", "@earendil-works/pi-coding-agent"],
+    )
+
+    # 3. copilot / gh extensions
+    console.print("\n  [bold]copilot:[/bold] upgrading gh extensions...")
+    run(
+        _cexec(container, uid, gid, "gh", "extension", "upgrade", "--all"),
+    )
+
+    # 4. pi config (bridge IP, cert, models.json, shell env vars)
+    bridge_ip = _get_lxd_bridge_ip()
+    if not bridge_ip:
+        console.print(
+            "    [yellow]Warning:[/yellow] Could not detect lxdbr0 bridge IP. "
+            "/etc/hosts entry for 'local-llm' will not be updated."
+        )
+    setup_pi_in_container(container, bridge_ip=bridge_ip, cert_pem=cert_pem, uid=uid, gid=gid)
+
+    console.print(f"\n  [green]✓[/green] {container} refresh complete")
+
+
+@app.command("refresh")
+def refresh(
+    number: Annotated[
+        int | None,
+        typer.Argument(
+            help=(
+                "Container number suffix — targets craft-llm-<number>. "
+                f"Omit to refresh all containers tagged with {_MANAGED_TAG}=true."
+            )
+        ),
+    ] = None,
     cert_path: Annotated[
         str | None,
         typer.Option(
@@ -1312,30 +1391,31 @@ def refresh_pi(
     ] = None,
     lxd_vm: Annotated[
         bool,
-        typer.Option("--lxd-vm", help="Force VM mode (uses HOST_UID/GID). Auto-detected if omitted."),
+        typer.Option("--lxd-vm", help="Force VM mode for an explicitly named container."),
     ] = False,
 ) -> None:
-    """Re-apply the Pi harness config inside an existing container.
+    """Update packages and re-apply config in managed LXD container(s).
 
-    Use this after:
-    - Regenerating the TLS cert (``llm config gencert``)
-    - Changing the proxy port or API key in config.toml
-    - The lxdbr0 bridge IP changes (e.g. after a reboot or LXD reconfiguration)
+    When called without a container number, discovers every running container
+    tagged with ``user.local-llm-managed=true`` (set automatically by
+    ``llm lxd create``) and refreshes all of them.
+
+    Each refresh runs four steps:
+
+    1. **apt** — ``apt-get update && upgrade && autoremove``
+    2. **pi** — ``npm update -g @earendil-works/pi-coding-agent``
+    3. **copilot** — ``gh extension upgrade --all``
+    4. **pi config** — re-applies bridge /etc/hosts, models.json, TLS cert, and
+       shell environment variables (useful after cert regeneration or IP change)
 
     Examples:
 
-      llm lxd refresh-pi 1               # re-apply pi config in craft-llm-1
+      llm lxd refresh                    # refresh all managed containers
 
-      llm lxd refresh-pi 1 --cert-path /path/to/cert.pem
+      llm lxd refresh 1                  # refresh only craft-llm-1
+
+      llm lxd refresh 1 --cert-path /path/to/cert.pem
     """
-    container = f"{CONTAINER_PREFIX}-{number}"
-
-    if not container_exists(container):
-        console.print(
-            f"[red]ERROR:[/red] '{container}' does not exist. Create it first with 'llm lxd create'."
-        )
-        raise typer.Exit(1)
-
     cert_pem: str | None = None
     if cert_path:
         cert_p = Path(cert_path).expanduser()
@@ -1348,21 +1428,39 @@ def refresh_pi(
             )
             raise typer.Exit(1)
 
-    is_vm = lxd_vm or container_is_vm(container)
-    effective_uid = HOST_UID if is_vm else CONTAINER_UID
-    effective_gid = HOST_GID if is_vm else CONTAINER_GID
+    if number is not None:
+        # Single container by number.
+        container = f"{CONTAINER_PREFIX}-{number}"
+        if not container_exists(container):
+            console.print(
+                f"[red]ERROR:[/red] '{container}' does not exist. "
+                "Create it first with 'llm lxd create'."
+            )
+            raise typer.Exit(1)
+        is_vm = lxd_vm or container_is_vm(container)
+        uid = HOST_UID if is_vm else CONTAINER_UID
+        gid = HOST_GID if is_vm else CONTAINER_GID
+        _refresh_one(container, cert_pem=cert_pem, uid=uid, gid=gid)
+    else:
+        # Discover all managed containers.
+        managed = _list_managed_containers()
+        if not managed:
+            console.print(
+                f"[yellow]No running containers tagged with {_MANAGED_TAG}=true found.[/yellow]\n"
+                "  Containers created with 'llm lxd create' are tagged automatically.\n"
+                "  To tag an existing container manually:\n"
+                f"    lxc config set <container> {_MANAGED_TAG}=true"
+            )
+            raise typer.Exit(0)
 
-    bridge_ip = _get_lxd_bridge_ip()
-    if not bridge_ip:
         console.print(
-            "[yellow]Warning:[/yellow] Could not detect lxdbr0 bridge IP. "
-            "Pi in the container may not be able to reach the LLM server."
+            f"Found [bold]{len(managed)}[/bold] managed container(s): "
+            + ", ".join(managed)
         )
+        for container in managed:
+            is_vm = container_is_vm(container)
+            uid = HOST_UID if is_vm else CONTAINER_UID
+            gid = HOST_GID if is_vm else CONTAINER_GID
+            _refresh_one(container, cert_pem=cert_pem, uid=uid, gid=gid)
 
-    setup_pi_in_container(
-        container,
-        bridge_ip=bridge_ip,
-        cert_pem=cert_pem,
-        uid=effective_uid,
-        gid=effective_gid,
-    )
+        console.print(f"\n[green]✓[/green] All {len(managed)} container(s) refreshed.")
