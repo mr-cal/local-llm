@@ -15,7 +15,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from llm.config import try_load_lxd, _build_pi_config_for_container, load_config
+from llm.config import try_load_lxd, _build_pi_config_for_container, load_config, _get_lxd_bridge_info
 
 CONTAINER_PREFIX = "craft-llm"
 HOST_UID = os.getuid()
@@ -479,6 +479,10 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
         ["lxc", "exec", container, "--", "chsh", "-s", "/usr/bin/fish", CONTAINER_USER],
     )
 
+    console.print("  Cleaning up unused packages...")
+    run(["lxc", "exec", container, "--", "apt-get", "autoremove", "-y"])
+    run(["lxc", "exec", container, "--", "apt-get", "clean"])
+
 
 def run_make_setup(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
     """Run ``make setup`` in each craft project directory inside the container.
@@ -713,41 +717,10 @@ def _get_lxd_bridge_ip() -> str:
     """Return the host IP on the lxdbr0 bridge (e.g. '10.113.167.1').
 
     Returns an empty string if lxdbr0 is not found or ip(8) fails.
+    Delegates to :func:`llm.config._get_lxd_bridge_info` to avoid duplication.
     """
-    result = subprocess.run(
-        ["ip", "-4", "addr", "show", "lxdbr0"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return ""
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line.startswith("inet "):
-            return line.split()[1].split("/")[0]
-    return ""
-
-
-def _get_lxd_bridge_subnet() -> str:
-    """Return the lxdbr0 bridge network in CIDR notation (e.g. '10.113.167.0/24').
-
-    Returns an empty string if lxdbr0 is not found.
-    """
-    import ipaddress  # noqa: PLC0415
-
-    result = subprocess.run(
-        ["ip", "-4", "addr", "show", "lxdbr0"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return ""
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line.startswith("inet "):
-            ip_cidr = line.split()[1]
-            return str(ipaddress.ip_interface(ip_cidr).network)
-    return ""
+    ip, _ = _get_lxd_bridge_info()
+    return ip
 
 
 def setup_pi_in_container(
@@ -1322,3 +1295,74 @@ def setup_crafts(
     effective_gid = HOST_GID if is_vm else CONTAINER_GID
     run_make_setup(container, uid=effective_uid, gid=effective_gid)
     run_craft_setup_tests(container)
+
+
+@app.command("refresh-pi")
+def refresh_pi(
+    number: Annotated[int, typer.Argument(help="Container number suffix — targets craft-llm-<number>.")],
+    cert_path: Annotated[
+        str | None,
+        typer.Option(
+            "--cert-path",
+            help=(
+                "Path to the server's TLS cert PEM file. "
+                "Omit to auto-detect from config.toml [proxy] cert_path."
+            ),
+        ),
+    ] = None,
+    lxd_vm: Annotated[
+        bool,
+        typer.Option("--lxd-vm", help="Force VM mode (uses HOST_UID/GID). Auto-detected if omitted."),
+    ] = False,
+) -> None:
+    """Re-apply the Pi harness config inside an existing container.
+
+    Use this after:
+    - Regenerating the TLS cert (``llm config gencert``)
+    - Changing the proxy port or API key in config.toml
+    - The lxdbr0 bridge IP changes (e.g. after a reboot or LXD reconfiguration)
+
+    Examples:
+
+      llm lxd refresh-pi 1               # re-apply pi config in craft-llm-1
+
+      llm lxd refresh-pi 1 --cert-path /path/to/cert.pem
+    """
+    container = f"{CONTAINER_PREFIX}-{number}"
+
+    if not container_exists(container):
+        console.print(
+            f"[red]ERROR:[/red] '{container}' does not exist. Create it first with 'llm lxd create'."
+        )
+        raise typer.Exit(1)
+
+    cert_pem: str | None = None
+    if cert_path:
+        cert_p = Path(cert_path).expanduser()
+        if cert_p.exists():
+            cert_pem = cert_p.read_text()
+        else:
+            console.print(
+                f"[red]ERROR:[/red] cert file not found at {cert_p}. "
+                "Check the path and try again."
+            )
+            raise typer.Exit(1)
+
+    is_vm = lxd_vm or container_is_vm(container)
+    effective_uid = HOST_UID if is_vm else CONTAINER_UID
+    effective_gid = HOST_GID if is_vm else CONTAINER_GID
+
+    bridge_ip = _get_lxd_bridge_ip()
+    if not bridge_ip:
+        console.print(
+            "[yellow]Warning:[/yellow] Could not detect lxdbr0 bridge IP. "
+            "Pi in the container may not be able to reach the LLM server."
+        )
+
+    setup_pi_in_container(
+        container,
+        bridge_ip=bridge_ip,
+        cert_pem=cert_pem,
+        uid=effective_uid,
+        gid=effective_gid,
+    )

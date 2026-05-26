@@ -783,6 +783,26 @@ class TestBuildPiConfigForContainer:
         assert model_entry["contextWindow"] == 32768
         assert model_entry["maxTokens"] == 8192
 
+    def test_uses_local_llm_hostname(self):
+        """Container config should accept a hostname (e.g. 'local-llm') not just IPs."""
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=8192),
+            proxy=ProxySettings(lan_ip="192.168.1.100", port=8443),
+            models=ModelsSettings(active="test-model"),
+        )
+        result = _build_pi_config_for_container(cfg, "local-llm")
+        assert result["providers"]["local-llm"]["baseUrl"] == "https://local-llm:8443/v1"
+
+    def test_local_llm_hostname_uses_https(self):
+        """Hostname-based container URL should use HTTPS scheme."""
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            proxy=ProxySettings(lan_ip="192.168.1.100", port=8443),
+            models=ModelsSettings(active="test-model"),
+        )
+        result = _build_pi_config_for_container(cfg, "local-llm")
+        assert result["providers"]["local-llm"]["baseUrl"].startswith("https://local-llm:")
+
 
 # ── _validate_opencode_config ─────────────────────────────────────────────────
 
