@@ -15,7 +15,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from llm.config import try_load_lxd
+from llm.config import try_load_lxd, _build_pi_config_for_container, load_config
 
 CONTAINER_PREFIX = "craft-llm"
 HOST_UID = os.getuid()
@@ -692,6 +692,159 @@ def _t_venv_interpreter_valid() -> None:
     assert not failures, "\n".join(failures)
 
 
+# -- Pi harness setup --------------------------------------------------------
+
+
+# Path inside the container where pi reads its model configuration.
+_PI_CONTAINER_CONFIG = f"{CONTAINER_HOME}/.pi/agent/models.json"
+_NODE_CA_CERTS_DIR = f"{CONTAINER_HOME}/.config/local-llm"
+_NODE_CA_CERTS_FILE = f"{_NODE_CA_CERTS_DIR}/cert.pem"
+
+
+def _run_capture(container: str, *cmd: str) -> subprocess.CompletedProcess[str]:
+    """Run a command inside the container and return the result."""
+    return subprocess.run(
+        ["lxc", "exec", container, "--", *cmd],
+        capture_output=True,
+        text=True,
+    )
+
+
+def setup_pi_in_container(
+    container: str,
+    server_ip: str,
+    cert_pem: str | None = None,
+    cert_url: str | None = None,
+    uid: int = CONTAINER_UID,
+    gid: int = CONTAINER_GID,
+) -> None:
+    """Set up the Pi harness inside the container so it can reach the LLM server.
+
+    Three things are configured inside the container:
+
+    1. **models.json** — generated with the proxy URL (https://<server_ip>:8443/v1)
+       instead of 127.0.0.1, so pi can reach the host's llama-server via nginx.
+
+    2. **TLS certificate** — copied from the host (or fetched from the proxy)
+       and stored at ~/.config/local-llm/cert.pem for Node.js to trust.
+
+    3. **NODE_EXTRA_CA_CERTS** — exported in both ~/.bashrc and ~/.config/fish/
+       conf.d so pi (which runs via Node.js) always trusts the self-signed cert.
+
+    Args:
+        container: Name of the LXD container/VM.
+        server_ip: The server's LAN IP address.
+        cert_pem: Pre-fetched PEM cert string. If provided, used directly.
+        cert_url: URL to fetch the cert from (e.g. https://192.168.1.209:8443).
+                  The cert is extracted from the TLS handshake inside the container
+                  via openssl. Only used when *cert_pem* is not set.
+        uid: UID to run container commands as.
+        gid: GID to run container commands as.
+    """
+    console.print(f"\n[bold]Setting up Pi harness in {container}...[/bold]")
+
+    # ── Step 1: Generate models.json inside the container ─────────────────────
+    console.print("  Generating models.json with proxy URL...")
+    cfg = load_config()
+    pi_cfg = _build_pi_config_for_container(cfg, server_ip)
+    pi_json = json.dumps(pi_cfg, indent=2) + "\n"
+
+    # Read existing config from the container, merge in our provider, write back.
+    r = _run_capture(container, "cat", _PI_CONTAINER_CONFIG)
+    existing: dict = {}
+    if r.returncode == 0 and r.stdout.strip():
+        try:
+            existing = json.loads(r.stdout)
+            if not isinstance(existing, dict):
+                console.print(f"    [yellow]WARNING:[/yellow] existing config is not a JSON object")
+                existing = {}
+        except json.JSONDecodeError:
+            existing = {}
+    existing.setdefault("providers", {}).update(pi_cfg.get("providers", {}))
+    merged_json = json.dumps(existing, indent=2) + "\n"
+
+    subprocess.run(
+        _cexec(container, uid, gid, "bash", "-c", f"cat > {_PI_CONTAINER_CONFIG}"),
+        input=merged_json.encode(),
+        check=True,
+    )
+    console.print(f"    Written to {Path(_PI_CONTAINER_CONFIG).relative_to(CONTAINER_HOME)}")
+
+    # ── Step 2: Install TLS certificate ──────────────────────────────────────
+    console.print("  Installing TLS certificate...")
+
+    if cert_pem:
+        # User-provided cert (from --cert-path or config.toml)
+        cert_dir_cmd = f"mkdir -p {_NODE_CA_CERTS_DIR}"
+        subprocess.run(
+            _cexec(container, uid, gid, "bash", "-c", cert_dir_cmd),
+            check=True,
+        )
+        subprocess.run(
+            _cexec(container, uid, gid, "bash", "-c", f"cat > {_NODE_CA_CERTS_FILE}"),
+            input=cert_pem.encode(),
+            check=True,
+        )
+        console.print(f"    Written from local file to {Path(_NODE_CA_CERTS_FILE).relative_to(CONTAINER_HOME)}")
+
+    elif cert_url:
+        # Fetch cert from the server's TLS endpoint inside the container
+        console.print(f"    Fetching cert from {cert_url}...")
+        openssl_cmd = (
+            f"echo | openssl s_client -connect {server_ip}:{cfg.proxy.port} "
+            f"-servername {server_ip} 2>/dev/null | "
+            f"openssl x509 -outform PEM"
+        )
+        r = _run_capture(container, "bash", "-c", openssl_cmd)
+        if r.returncode == 0 and r.stdout.strip():
+            cert_dir_cmd = f"mkdir -p {_NODE_CA_CERTS_DIR}"
+            subprocess.run(
+                _cexec(container, uid, gid, "bash", "-c", cert_dir_cmd),
+                check=True,
+            )
+            subprocess.run(
+                _cexec(container, uid, gid, "bash", "-c", f"cat > {_NODE_CA_CERTS_FILE}"),
+                input=r.stdout.encode(),
+                check=True,
+            )
+            console.print(f"    Fetched from {cert_url} → {Path(_NODE_CA_CERTS_FILE).relative_to(CONTAINER_HOME)}")
+        else:
+            console.print(
+                f"    [yellow]Warning:[/yellow] could not fetch cert from {cert_url} "
+                "(openssl s_client failed inside container). "
+                "Run 'llm client setup' for manual instructions."
+            )
+
+    else:
+        console.print(
+            "    [yellow]No cert available — skipping TLS setup. "
+            "Re-run with --cert-path or --cert-url if needed.[/yellow]"
+        )
+
+    # ── Step 3: Set NODE_EXTRA_CA_CERTS in shell profiles ────────────────────
+    console.print("  Configuring NODE_EXTRA_CA_CERTS in shell profiles...")
+    export_line = f'export NODE_EXTRA_CA_CERTS="{_NODE_CA_CERTS_FILE}"'
+
+    # Add to ~/.bashrc if not already present
+    bashrc_cmd = (
+        f"grep -qxF '{export_line}' ~/.bashrc || echo '{export_line}' >> ~/.bashrc"
+    )
+    subprocess.run(_cexec(container, uid, gid, "bash", "-c", bashrc_cmd), check=True)
+
+    # Add to fish conf.d if not already present
+    fish_conf_dir = f"{CONTAINER_HOME}/.config/fish/conf.d"
+    fish_conf = f"{fish_conf_dir}/node-ca-certs.fish"
+    fish_cmd = (
+        f"mkdir -p {fish_conf_dir} && "
+        f"grep -qxF '{export_line}' {fish_conf} 2>/dev/null || "
+        f"echo '{export_line}' > {fish_conf}"
+    )
+    subprocess.run(_cexec(container, uid, gid, "bash", "-c", fish_cmd), check=True)
+
+    console.print("    Added to ~/.bashrc and ~/.config/fish/conf.d/node-ca-certs.fish")
+    console.print("  [green]✓[/green] Pi harness configured — it can now reach the LLM server")
+
+
 # -- Verification tests -------------------------------------------------------
 
 
@@ -990,6 +1143,33 @@ def create(
         bool,
         typer.Option("--lxd-vm", help="Create a full LXD VM instead of a container."),
     ] = False,
+    server_ip: Annotated[
+        str | None,
+        typer.Option("--server-ip", help="Override the server's LAN IP (auto-detected from config.toml)."),
+    ] = None,
+    cert_path: Annotated[
+        str | None,
+        typer.Option(
+            "--cert-path",
+            help=(
+                "Path to the server's TLS cert PEM file on the local machine. "
+                "Use this on a client-only machine to provide the cert from the "
+                "actual server. Omit to auto-detect from config.toml [proxy] cert_path."
+            ),
+        ),
+    ] = None,
+    cert_url: Annotated[
+        str | None,
+        typer.Option(
+            "--cert-url",
+            help=(
+                "URL to fetch the server's TLS cert from (e.g. "
+                "https://192.168.1.209:8443). The cert is extracted from the TLS "
+                "handshake. Useful when you know the server's IP but don't have "
+                "the cert file. Requires openssl inside the container."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Create and configure an LXD container (or VM) for local LLM development.
 
@@ -1000,9 +1180,46 @@ def create(
       llm lxd create 2 --recreate        # delete and recreate craft-llm-2
 
       llm lxd create 1 --lxd-vm          # create craft-llm-1 as a full VM
+
+      # Client-only machine — provide the server's cert explicitly:
+      llm lxd create 1 --cert-path /path/to/server-cert.pem --server-ip 192.168.1.209
     """
     container = f"{CONTAINER_PREFIX}-{number}"
     kind = "VM" if lxd_vm else "container"
+
+    # Load config to get the server IP and base cert path
+    cfg = load_config()
+    resolved_server_ip = server_ip or cfg.proxy.lan_ip
+
+    # Resolve the TLS cert — priority: --cert-path > --cert-url > config.toml
+    cert_pem: str | None = None
+    if cert_path:
+        # User explicitly provided a cert file path
+        cert_p = Path(cert_path).expanduser()
+        if cert_p.exists():
+            cert_pem = cert_p.read_text()
+        else:
+            console.print(
+                f"[red]ERROR:[/red] cert file not found at {cert_p}. "
+                "Check the path and try again."
+            )
+            raise typer.Exit(1)
+    elif cert_url:
+        # Fetch cert from the server's TLS endpoint — will be done inside
+        # the container via openssl s_client
+        console.print(f"  Fetching cert from {cert_url}...")
+    else:
+        # Fall back to config.toml [proxy] cert_path (server-machine path)
+        cfg_cert_path = Path(cfg.proxy.cert_path)
+        if cfg_cert_path.exists():
+            cert_pem = cfg_cert_path.read_text()
+        else:
+            console.print(
+                f"[yellow]Warning:[/yellow] cert not found at {cfg_cert_path}. "
+                "Pi will still be configured but may need manual cert setup."
+                "\n  Run 'uv run llm config gencert' on the server, or use "
+                "--cert-path /path/to/cert.pem --server-ip <ip> on this machine."
+            )
 
     if container_exists(container):
         if not recreate:
@@ -1036,6 +1253,17 @@ def create(
 
     effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
     effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
+
+    # Set up the Pi harness so it can reach the server from inside the container
+    setup_pi_in_container(
+        container,
+        server_ip=resolved_server_ip,
+        cert_pem=cert_pem,
+        cert_url=cert_url,
+        uid=effective_uid,
+        gid=effective_gid,
+    )
+
     run_tests(container, uid=effective_uid, gid=effective_gid)
 
     console.print(

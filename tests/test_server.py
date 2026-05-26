@@ -259,7 +259,12 @@ class TestStartCommand:
         def fake_popen(cmd, **kw):
             raise FileNotFoundError("no such file")
 
+        def fake_run(cmd, **kw):
+            # Return empty result so _read_pid finds no existing server
+            return MagicMock(returncode=0, stdout="")
+
         mocker.patch("subprocess.Popen", fake_popen)
+        mocker.patch("subprocess.run", fake_run)
         with pytest.raises(typer.Exit):
             server.start(wait=0)
 

@@ -25,6 +25,7 @@ from llm.config import (
     Settings,
     _build_opencode_config,
     _build_pi_config,
+    _build_pi_config_for_container,
     _sudo,
     _systemctl_is_active,
     _validate_opencode_config,
@@ -708,6 +709,79 @@ class TestBuildPiConfig:
         result = _build_pi_config(cfg)
         model_entry = result["providers"]["local-llm"]["models"][0]
         assert model_entry["cost"] == {"input": 0.0, "output": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0}
+
+
+# ── _build_pi_config_for_container ────────────────────────────────────────────
+
+
+class TestBuildPiConfigForContainer:
+    def test_uses_proxy_url_not_local(self):
+        """Container config should use the proxy URL, not 127.0.0.1."""
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=8192),
+            proxy=ProxySettings(lan_ip="192.168.1.100", port=8443),
+            models=ModelsSettings(active="test-model"),
+        )
+        result = _build_pi_config_for_container(cfg, "192.168.1.100")
+        assert result["providers"]["local-llm"]["baseUrl"] == "https://192.168.1.100:8443/v1"
+
+    def test_uses_https_scheme(self):
+        """Container config should use HTTPS (via nginx proxy)."""
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            proxy=ProxySettings(lan_ip="10.0.0.1", port=443),
+            models=ModelsSettings(active="test-model"),
+        )
+        result = _build_pi_config_for_container(cfg, "10.0.0.1")
+        assert result["providers"]["local-llm"]["baseUrl"].startswith("https://")
+
+    def test_includes_api_key(self):
+        """Container config should include the auth API key."""
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            auth=AuthSettings(api_key="my-secret-key"),
+            proxy=ProxySettings(lan_ip="192.168.1.1"),
+            models=ModelsSettings(active="test-model"),
+        )
+        result = _build_pi_config_for_container(cfg, "192.168.1.1")
+        assert result["providers"]["local-llm"]["apiKey"] == "my-secret-key"
+
+    def test_fallback_api_key(self):
+        """Container config should fallback to 'local' when no api_key is set."""
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            auth=AuthSettings(api_key=""),
+            proxy=ProxySettings(lan_ip="192.168.1.1"),
+            models=ModelsSettings(active="test-model"),
+        )
+        result = _build_pi_config_for_container(cfg, "192.168.1.1")
+        assert result["providers"]["local-llm"]["apiKey"] == "local"
+
+    def test_includes_compatibility_settings(self):
+        """Container config should include the same compat settings as the host config."""
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            proxy=ProxySettings(lan_ip="192.168.1.1"),
+            models=ModelsSettings(active="test-model"),
+        )
+        result = _build_pi_config_for_container(cfg, "192.168.1.1")
+        compat = result["providers"]["local-llm"]["compat"]
+        assert compat["supportsDeveloperRole"] is False
+        assert compat["supportsReasoningEffort"] is False
+        assert compat["maxTokensField"] == "max_tokens"
+
+    def test_includes_model_entry(self):
+        """Container config should include a model entry with context window and max tokens."""
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=32768),
+            proxy=ProxySettings(lan_ip="192.168.1.1"),
+            models=ModelsSettings(active="test-model"),
+        )
+        result = _build_pi_config_for_container(cfg, "192.168.1.1")
+        model_entry = result["providers"]["local-llm"]["models"][0]
+        assert model_entry["id"] == "local"
+        assert model_entry["contextWindow"] == 32768
+        assert model_entry["maxTokens"] == 8192
 
 
 # ── _validate_opencode_config ─────────────────────────────────────────────────
