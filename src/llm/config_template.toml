@@ -30,8 +30,8 @@ port = 8080
 # 0 = CPU only. Try 20–40 and tune up/down for speed.
 n_gpu_layers = 20
 
-# Context window in tokens. 65536+ recommended for agentic coding tasks.
-n_ctx = 65536
+# Context window in tokens. 131072+ recommended for agentic coding tasks.
+n_ctx = 131072
 
 # CPU inference threads. Recommended: physical core count (not hyperthreads).
 n_threads = 12
@@ -63,8 +63,10 @@ filename = "Qwen2.5-Coder-7B-Instruct-Q8_0.gguf"
 size = "~8 GB"
 description = "Qwen 2.5 Coder 7B — fastest, good for quick tasks"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 1.00
+cost.output = 5.00
+cost.cache_write = 1.25
+cost.cache_read = 0.10
 
 [[models.list]]
 alias = "qwen2.5-coder-14b-q4"
@@ -73,8 +75,10 @@ filename = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
 size = "~8.5 GB"
 description = "Qwen 2.5 Coder 14B — best speed/quality balance (default)"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 [[models.list]]
 alias = "qwen2.5-coder-32b-q4"
@@ -83,8 +87,10 @@ filename = "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf"
 size = "~18 GB"
 description = "Qwen 2.5 Coder 32B — strong coding model"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 [[models.list]]
 alias = "qwen2.5-coder-32b-q8"
@@ -93,8 +99,10 @@ filename = "Qwen2.5-Coder-32B-Instruct-Q8_0.gguf"
 size = "~34 GB"
 description = "Qwen 2.5 Coder 32B — high precision"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 [[models.list]]
 alias = "qwen2.5-72b-q4"
@@ -103,8 +111,10 @@ filename = "Qwen2.5-72B-Instruct-Q4_K_M.gguf"
 size = "~42 GB"
 description = "Qwen 2.5 72B — near-frontier quality (fits in 62 GB)"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 5.00
+cost.output = 25.00
+cost.cache_write = 6.25
+cost.cache_read = 0.50
 
 [[models.list]]
 alias = "gemma-4-31b-q4"
@@ -113,8 +123,10 @@ filename = "google_gemma-4-31B-it-Q4_K_M.gguf"
 size = "~20 GB"
 description = "Gemma 4 31B — newest Google model, multimodal"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 [[models.list]]
 alias = "gemma-3-27b-q4"
@@ -123,8 +135,10 @@ filename = "google_gemma-3-27b-it-Q4_K_M.gguf"
 size = "~17 GB"
 description = "Gemma 3 27B — strong all-rounder, multimodal"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 [[models.list]]
 alias = "gemma-3-27b-q8"
@@ -133,8 +147,10 @@ filename = "google_gemma-3-27b-it-Q8_0.gguf"
 size = "~29 GB"
 description = "Gemma 3 27B — high precision, multimodal"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 5.00
+cost.output = 25.00
+cost.cache_write = 6.25
+cost.cache_read = 0.50
 
 [[models.list]]
 alias = "gemma-3-12b-q4"
@@ -143,8 +159,10 @@ filename = "google_gemma-3-12b-it-Q4_K_M.gguf"
 size = "~7 GB"
 description = "Gemma 3 12B — fast, good quality, multimodal"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 1.00
+cost.output = 5.00
+cost.cache_write = 1.25
+cost.cache_read = 0.10
 
 [[models.list]]
 alias = "gemma-3-12b-q8"
@@ -153,8 +171,10 @@ filename = "google_gemma-3-12b-it-Q8_0.gguf"
 size = "~13 GB"
 description = "Gemma 3 12B — high precision, multimodal"
 max_output = 8192
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 1.00
+cost.output = 5.00
+cost.cache_write = 1.25
+cost.cache_read = 0.10
 
 [[models.list]]
 alias = "qwen3-8b-q8"
@@ -163,8 +183,10 @@ filename = "Qwen_Qwen3-8B-Q8_0.gguf"
 size = "~9 GB"
 description = "Qwen3 8B — fast, near-lossless quant"
 max_output = 32768
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 1.00
+cost.output = 5.00
+cost.cache_write = 1.25
+cost.cache_read = 0.10
 
 [[models.list]]
 alias = "qwen3-14b-q8"
@@ -173,8 +195,10 @@ filename = "Qwen_Qwen3-14B-Q8_0.gguf"
 size = "~16 GB"
 description = "Qwen3 14B — near-lossless, strong coding"
 max_output = 32768
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 [[models.list]]
 alias = "qwen3-32b-q4"
@@ -183,8 +207,10 @@ filename = "Qwen_Qwen3-32B-Q4_K_M.gguf"
 size = "~20 GB"
 description = "Qwen3 32B dense — top-tier coding quality"
 max_output = 32768
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 [[models.list]]
 alias = "qwen3-30b-moe-q4"
@@ -193,8 +219,10 @@ filename = "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf"
 size = "~19 GB"
 description = "Qwen3 30B MoE — fast TG, outperforms QwQ-32B"
 max_output = 32768
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 [[models.list]]
 alias = "qwen3.6-35b-moe-q4"
@@ -203,8 +231,10 @@ filename = "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf"
 size = "~21 GB"
 description = "Qwen3.6 35B MoE — SWE-bench 73%, 262K ctx"
 max_output = 32768
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 5.00
+cost.output = 25.00
+cost.cache_write = 6.25
+cost.cache_read = 0.50
 
 [[models.list]]
 alias = "qwen3.6-27b-q4"
@@ -213,8 +243,10 @@ filename = "Qwen_Qwen3.6-27B-Q4_K_M.gguf"
 size = "~18 GB"
 description = "Qwen3.6 27B dense — Apr 2026, 262K context, multimodal"
 max_output = 32768
-cost.input = 0.0
-cost.output = 0.0
+cost.input = 3.00
+cost.output = 15.00
+cost.cache_write = 3.75
+cost.cache_read = 0.30
 
 # ── PROXY ─────────────────────────────────────────────────────────────────────
 # nginx TLS proxy — allows remote clients to reach llama-server securely.
@@ -259,21 +291,23 @@ cert_path = ""
 
 # ── AUTH ──────────────────────────────────────────────────────────────────────
 [auth]
-# Bearer token used by remote clients to authenticate with this server.
+# Bearer token for authentication:
+#   - On a server+client machine: this token is used by remote clients to
+#     authenticate when connecting to this server via the nginx proxy.
+#     Leave empty if remote clients are not used (or if using a different
+#     auth mechanism).
+#   - On a client-only machine: this token is sent to the remote server
+#     so it knows this client is authorized.
+#     Set it to match the api_key configured on the remote server.
 # Generate: python -c "import secrets; print(secrets.token_hex(32))"
 api_key = ""
 
 # ── MODEL COST ────────────────────────────────────────────────────────────────
-# Per-token pricing used when generating pi's models.json.
+# Per-token pricing is driven by the active model's cost settings in
+# [[models.list]] below.  Set cost.input / cost.output / cost.cache_write /
+# cost.cache_read on the active model entry to control pricing.
 # Set to 0 for free local models.  For cloud APIs, use the provider's rates.
 # Values are in USD per token.
-# Note: per-model costs in [[models.list]] override this global fallback.
-
-[model_cost]
-input = 0.0          # cost per input token
-output = 0.0         # cost per output token
-cache_write = 0.0    # cost per cached token written (5M tokens in API docs)
-cache_read = 0.0     # cost per cached token read (1M tokens in API docs)
 
 # ── BUILD ─────────────────────────────────────────────────────────────────────
 # llama.cpp build system — compile from source with one or more profiles.
