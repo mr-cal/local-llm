@@ -460,7 +460,10 @@ class TestModuleConstants:
         assert benchmark.HISTORY_FILE.name == "benchmark-history.csv"
 
     def test_history_headers(self):
-        expected = ["timestamp", "model", "backend", "pp_tps", "tg_tps", "ctx", "n_tokens", "n_gpu_layers"]
+        expected = [
+            "timestamp", "model", "backend", "pp_tps", "tg_tps",
+            "ctx", "n_tokens", "n_gpu_layers", "profile", "flags_hash",
+        ]
         assert expected == benchmark.HISTORY_HEADERS
 
     def test_default_prompt(self):

@@ -119,13 +119,21 @@ def _read_pid(port: int | None = None) -> int | None:
 @app.command("start")
 def start(
     wait: Annotated[int, typer.Option("--wait", help="Seconds to wait for server to be ready.")] = 5,
+    profile: Annotated[
+        str | None,
+        typer.Option(
+            "--profile", "-p",
+            help="Build profile to use (overrides config.toml [server] profile).",
+        ),
+    ] = None,
 ) -> None:
     """Start llama-server using settings from config.toml."""
     cfg = load_config()
 
     if not cfg.has_local_server:
         console.print(
-            "[yellow]No local server configured.[/yellow]  Set [server] llama_server_bin in config.toml."
+            "[yellow]No local server configured.[/yellow]  "
+            "Set [server] llama_server_bin or configure [[build.profiles]] in config.toml."
         )
         raise typer.Exit(1)
 
@@ -139,8 +147,21 @@ def start(
         console.print("Run [bold]uv run llm model list[/bold] to see available models.")
         raise typer.Exit(1)
 
+    # Resolve binary: --profile flag > config override > auto-resolve
+    if profile:
+        p = cfg.build.get_profile(profile)
+        if p is None:
+            console.print(
+                f"[red]Unknown profile:[/red] '{profile}'\n"
+                f"Available: {', '.join(cfg.build.profile_names())}"
+            )
+            raise typer.Exit(1)
+        bin_path = str(p.installed_server_bin(cfg.build.install_path))
+    else:
+        bin_path = cfg.resolve_llama_server_bin()
+
     cmd: list[str] = [
-        cfg.server.llama_server_bin,
+        bin_path,
         "--model",
         str(cfg.model_path),
         "--port",
@@ -165,13 +186,12 @@ def start(
         )
     except FileNotFoundError:
         log_fh.close()
-        bin_path = cfg.server.llama_server_bin
         console.print(f"[red]Binary not found:[/red] {bin_path}")
         console.print(
             "\nBuild llama.cpp and install the binary:\n"
-            "  [bold]cmake --build llama.cpp/build -j$(nproc)[/bold]\n"
-            "  [bold]cp llama.cpp/build/bin/llama-server ~/.local/bin/[/bold]\n"
-            "\nThen update [bold]llama_server_bin[/bold] in config.toml if needed:\n"
+            "  [bold]uv run llm build init[/bold]   # initialize submodule\n"
+            "  [bold]uv run llm build run[/bold]    # build active profile\n"
+            "\nOr set [bold]llama_server_bin[/bold] explicitly in config.toml:\n"
             '  llama_server_bin = "~/.local/bin/llama-server"'
         )
         raise typer.Exit(1) from None
@@ -272,6 +292,11 @@ def status() -> None:
         console.print(f"  Layers : {cfg.server.n_gpu_layers}")
         if cfg.server.extra_args:
             console.print(f"  Extra  : {' '.join(cfg.server.extra_args)}")
+        # Show active build profile if configured
+        active_profile = cfg.build.active_profile
+        if active_profile:
+            profile_name = cfg.server.profile or active_profile.name
+            console.print(f"  Profile: {profile_name}")
         log = _log_file().resolve()
         console.print(f"  Logs   : {log}  [dim](uv run llm server logs -f)[/dim]")
     else:

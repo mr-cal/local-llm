@@ -1,4 +1,4 @@
-.PHONY: install lint format test
+.PHONY: install lint format test build
 
 install:
 	uv sync
@@ -11,3 +11,6 @@ format:
 
 test:
 	uv run pytest tests/ -q
+
+build:
+	uv run llm build run

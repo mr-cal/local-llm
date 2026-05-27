@@ -14,9 +14,14 @@
 [server]
 enabled = true
 # Path to the llama-server binary.
-# After building llama.cpp: ./llama.cpp/build/bin/llama-server
-# Or after copying to PATH:  ~/.local/bin/llama-server
-llama_server_bin = "llama-server"
+# Leave empty if you configure [[build.profiles]] below — the binary will be
+# resolved automatically from the active build profile.
+llama_server_bin = ""
+
+# Active build profile (from [[build.profiles]] below).
+# If set, the built binary for this profile is used instead of llama_server_bin.
+# Run `uv run llm build run` to build binaries.
+profile = ""
 
 # Internal HTTP port — llama-server listens here; nginx proxies to it.
 port = 8080
@@ -270,8 +275,39 @@ output = 0.0         # cost per output token
 cache_write = 0.0    # cost per cached token written (5M tokens in API docs)
 cache_read = 0.0     # cost per cached token read (1M tokens in API docs)
 
+# ── BUILD ─────────────────────────────────────────────────────────────────────
+# llama.cpp build system — compile from source with one or more profiles.
+# Run `uv run llm build init` to initialize the submodule, then
+# `uv run llm build run` to compile.
+
+[build]
+# Where built binaries are installed (per-profile subdirectory created here).
+install_dir = "~/.local/lib/local-llm"
+
+# Number of parallel make jobs. "auto" uses all CPU cores.
+jobs = "auto"
+
+# Build type: true = Release (default, optimized), false = Debug.
+release = true
+
+# Pinned llama.cpp commit. "HEAD" means latest (may change on `llm build update`).
+# Pin to a specific commit for reproducibility, e.g.: commit = "abc1234"
+commit = "HEAD"
+
+# Define one or more build profiles. Each compiles llama.cpp with different flags.
+# `uv run llm build info` shows which profiles are built and installed.
+
+[[build.profiles]]
+name = "vulkan-default"
+backend = "vulkan"
+# extra_flags = []   # add additional cmake -D flags here
+
+[[build.profiles]]
+name = "vulkan-flash"
+backend = "vulkan"
+extra_flags = ["-DGGML_FLASH_ATTN=ON"]
+
 [lxd]
-# Craft project directories to run `make setup` in via `llm lxd setup-crafts`.
 craft_dirs = [
     # "~/dev/craft/snapcraft/snapcraft-a",
 ]

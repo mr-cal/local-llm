@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import re
 import subprocess
@@ -22,7 +23,11 @@ app = typer.Typer(help="Benchmark inference speed.", no_args_is_help=True)
 console = Console()
 
 HISTORY_FILE = Path("logs/benchmark-history.csv")
-HISTORY_HEADERS = ["timestamp", "model", "backend", "pp_tps", "tg_tps", "ctx", "n_tokens", "n_gpu_layers"]
+# New columns: profile, flags_hash (added after existing columns for backward compat)
+HISTORY_HEADERS = [
+    "timestamp", "model", "backend", "pp_tps", "tg_tps", "ctx", "n_tokens",
+    "n_gpu_layers", "profile", "flags_hash",
+]
 
 _DEFAULT_PROMPT = (
     "Write a Python function that takes a list of integers and returns a new list "
@@ -146,6 +151,12 @@ def _apply_config(n_gpu_layers: int, flash_attn: bool, ctk: str) -> None:
         console.print(f"  extra_args   : {new_extra!r} [dim](unchanged)[/dim]")
 
 
+def _flags_hash(flags: list[str]) -> str:
+    """Return a short SHA of the sorted cmake flag list for tracking profile changes."""
+    payload = " ".join(sorted(flags)).encode()
+    return hashlib.sha256(payload).hexdigest()[:7]
+
+
 def _ensure_history_file() -> None:
     HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not HISTORY_FILE.exists():
@@ -155,9 +166,11 @@ def _ensure_history_file() -> None:
 
 def _append_result(row: dict[str, str | int | float]) -> None:
     _ensure_history_file()
+    # Fill missing columns with empty string for backward compat with old CSV files
+    full_row = {h: row.get(h, "") for h in HISTORY_HEADERS}
     with HISTORY_FILE.open("a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=HISTORY_HEADERS)
-        writer.writerow(row)
+        writer.writerow(full_row)
 
 
 @app.command("run")
@@ -165,16 +178,88 @@ def run(
     prompt: Annotated[str, typer.Option("--prompt", "-p", help="Prompt text to send.")] = _DEFAULT_PROMPT,
     n_tokens: Annotated[int, typer.Option("--n-tokens", "-n", help="Max tokens to generate.")] = 200,
     raw: Annotated[bool, typer.Option("--raw", help="Also run llama-bench binary (raw throughput).")] = False,
+    profile: Annotated[
+        list[str] | None,
+        typer.Option("--profile", help="Build profile(s) to benchmark (can specify multiple times)."),
+    ] = None,
+    all_profiles: Annotated[
+        bool,
+        typer.Option("--profiles", help="Sweep all configured build profiles."),
+    ] = False,
 ) -> None:
-    """Run an end-to-end API benchmark and record results."""
+    """Run an end-to-end API benchmark and record results.
+
+    With --profile or --profiles, iterates over profiles: starts llama-server with
+    each profile's binary, benchmarks, then records results with the profile column.
+
+    Examples:
+
+      uv run llm benchmark run
+
+      uv run llm benchmark run --profile vulkan-flash
+
+      uv run llm benchmark run --profiles   # sweep all profiles
+    """
     cfg = load_config()
+
+    # Determine profile sweep list
+    profiles_to_bench: list | None = None
+    if all_profiles:
+        if not cfg.build.profiles:
+            console.print("[yellow]No build profiles configured.[/yellow]")
+            raise typer.Exit(1)
+        profiles_to_bench = cfg.build.profiles
+    elif profile:
+        resolved = []
+        for pname in profile:
+            p = cfg.build.get_profile(pname)
+            if p is None:
+                console.print(f"[red]Unknown profile:[/red] '{pname}'")
+                raise typer.Exit(1)
+            resolved.append(p)
+        profiles_to_bench = resolved
+
+    if profiles_to_bench:
+        # Multi-profile sweep
+        results = []
+        for p in profiles_to_bench:
+            console.print(f"\n[bold cyan]── Profile: {p.name} ──[/bold cyan]")
+            flags_hash = _flags_hash(p.get_full_flags())
+            result = _run_single_benchmark(cfg, prompt, n_tokens, profile_name=p.name, flags_hash=flags_hash)
+            results.append((p.name, result))
+
+        # Comparison table
+        _print_profile_comparison(results)
+    else:
+        # Single run (existing behavior)
+        active_profile = cfg.build.active_profile
+        profile_name = active_profile.name if active_profile else ""
+        flags_hash = _flags_hash(active_profile.get_full_flags()) if active_profile else ""
+        _run_single_benchmark(
+            cfg, prompt, n_tokens, profile_name=profile_name, flags_hash=flags_hash, raw=raw
+        )
+
+
+def _run_single_benchmark(
+    cfg: object,
+    prompt: str,
+    n_tokens: int,
+    profile_name: str = "",
+    flags_hash: str = "",
+    raw: bool = False,
+) -> dict:
+    """Run one API benchmark and return result dict. Also appends to history CSV."""
+    from llm.config import Settings  # noqa: PLC0415
+
+    assert isinstance(cfg, Settings)
 
     console.print(f"Model      : [bold]{cfg.models.active}[/bold]")
     console.print(f"Endpoint   : {cfg.internal_url}")
     console.print(f"Max tokens : {n_tokens}")
+    if profile_name:
+        console.print(f"Profile    : {profile_name}")
     console.print()
 
-    # ── API benchmark ──────────────────────────────────────────────────────
     payload = {
         "model": cfg.models.active,
         "messages": [{"role": "user", "content": prompt}],
@@ -206,16 +291,13 @@ def run(
     prompt_tokens: int = usage.get("prompt_tokens", 0)
     completion_tokens: int = usage.get("completion_tokens", 0)
 
-    # llama.cpp reports timings in the response when available
     timings = data.get("timings", {})
     pp_tps_raw: float = timings.get("prompt_per_second", 0.0)
     tg_tps_raw: float = timings.get("predicted_per_second", 0.0)
 
-    # Fallback: estimate tg_tps from wall-clock if timings not available
     tg_tps = tg_tps_raw if tg_tps_raw > 0 else (completion_tokens / elapsed if elapsed > 0 else 0)
     pp_tps = pp_tps_raw
 
-    # ── Display results ────────────────────────────────────────────────────
     console.print("[green]done[/green]")
     console.print()
 
@@ -232,30 +314,109 @@ def run(
 
     console.print(t)
 
-    # Show generated text
     reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
     if reply:
         console.print("\n[dim]── Generated output ──[/dim]")
         console.print(reply[:500] + ("..." if len(reply) > 500 else ""))
 
-    # ── Record to CSV ──────────────────────────────────────────────────────
-    _append_result(
-        {
-            "timestamp": datetime.now().isoformat(timespec="seconds"),
-            "model": cfg.models.active,
-            "backend": "llama-server",
-            "pp_tps": f"{pp_tps:.1f}",
-            "tg_tps": f"{tg_tps:.1f}",
-            "ctx": cfg.server.n_ctx,
-            "n_tokens": completion_tokens,
-            "n_gpu_layers": cfg.server.n_gpu_layers,
-        }
-    )
+    row = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "model": cfg.models.active,
+        "backend": "llama-server",
+        "pp_tps": f"{pp_tps:.1f}",
+        "tg_tps": f"{tg_tps:.1f}",
+        "ctx": cfg.server.n_ctx,
+        "n_tokens": completion_tokens,
+        "n_gpu_layers": cfg.server.n_gpu_layers,
+        "profile": profile_name,
+        "flags_hash": flags_hash,
+    }
+    _append_result(row)
     console.print(f"\n[dim]Result saved to {HISTORY_FILE}[/dim]")
 
-    # ── Raw llama-bench (optional) ──────────────────────────────────────────
     if raw:
         _run_llama_bench_raw(cfg)
+
+    return row
+
+
+def _print_profile_comparison(results: list[tuple[str, dict]]) -> None:
+    """Print a comparison table of multi-profile benchmark results."""
+    if not results:
+        return
+    t = Table(title="Profile Comparison", show_header=True)
+    t.add_column("Profile", style="cyan")
+    t.add_column("PP tok/s", justify="right")
+    t.add_column("TG tok/s", justify="right", style="bold")
+    t.add_column("Δ TG vs baseline", justify="right")
+
+    baseline_tg = float(results[0][1].get("tg_tps", 0))
+    for profile_name, row in results:
+        tg = float(row.get("tg_tps", 0))
+        pp = float(row.get("pp_tps", 0))
+        if profile_name == results[0][0]:
+            delta = "baseline"
+        elif baseline_tg > 0:
+            pct = (tg - baseline_tg) / baseline_tg * 100
+            sign = "+" if pct >= 0 else ""
+            color = "green" if pct >= 0 else "red"
+            delta = f"[{color}]{sign}{pct:.1f}%[/{color}]"
+        else:
+            delta = "n/a"
+        t.add_row(profile_name, f"{pp:.1f}", f"{tg:.1f}", delta)
+    console.print(t)
+
+
+@app.command("compare")
+def compare(
+    last: Annotated[int, typer.Option("--last", "-n", help="Show last N entries per model.")] = 10,
+) -> None:
+    """Show benchmark history grouped by profile for comparison.
+
+    Reads the benchmark history CSV and prints a comparison table, useful for
+    seeing how different build profiles perform over time.
+    """
+    if not HISTORY_FILE.exists():
+        console.print(
+            "[yellow]No benchmark history found.[/yellow] "
+            "Run [bold]uv run llm benchmark run[/bold] first."
+        )
+        raise typer.Exit(1)
+
+    with HISTORY_FILE.open(newline="") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    if not rows:
+        console.print("[yellow]History file is empty.[/yellow]")
+        raise typer.Exit(1)
+
+    # Group by profile (or "default" if missing)
+    by_profile: dict[str, list[dict]] = {}
+    for row in rows[-last * 10:]:  # avoid reading entire file into memory for comparison
+        p = row.get("profile", "") or "default"
+        by_profile.setdefault(p, []).append(row)
+
+    t = Table(title=f"Benchmark History (last {last} per profile)", show_header=True)
+    t.add_column("Profile", style="cyan")
+    t.add_column("Timestamp")
+    t.add_column("Model")
+    t.add_column("PP tok/s", justify="right")
+    t.add_column("TG tok/s", justify="right", style="bold")
+    t.add_column("GPU Layers", justify="right")
+
+    for profile_name, profile_rows in sorted(by_profile.items()):
+        for row in profile_rows[-last:]:
+            t.add_row(
+                profile_name,
+                row.get("timestamp", ""),
+                row.get("model", ""),
+                row.get("pp_tps", ""),
+                row.get("tg_tps", ""),
+                row.get("n_gpu_layers", ""),
+            )
+
+    console.print(t)
 
 
 def _run_llama_bench_raw(cfg: object) -> None:

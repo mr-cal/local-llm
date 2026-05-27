@@ -25,9 +25,107 @@ _CONFIG_TEMPLATE = (
 )
 
 
+BACKEND_FLAGS: dict[str, str] = {
+    "vulkan": "-DGGML_VULKAN=ON",
+    "metal": "-DGGML_METAL=ON",
+    "cuda": "-DGGML_CUDA=ON",
+    "blis": "-DGGML_BLIS=ON",
+    "hipblas": "-DGGML_HIPBLAS=ON",
+    "coreml": "-DGGML_COREML=ON",
+    "kluster": "-DGGML_KLUSTER=ON",
+}
+
+
+class BuildProfile(BaseModel):
+    """A single build profile — a named set of cmake flags."""
+
+    name: str
+    backend: str | None = None  # convenience shorthand, e.g. "vulkan" → -DGGML_VULKAN=ON
+    extra_flags: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_backend(self) -> BuildProfile:
+        if self.backend and self.backend not in BACKEND_FLAGS:
+            raise ValueError(
+                f"Unknown backend '{self.backend}'. "
+                f"Valid options: {', '.join(sorted(BACKEND_FLAGS))}"
+            )
+        return self
+
+    def get_full_flags(self) -> list[str]:
+        """Return the complete list of cmake flags for this profile."""
+        flags = []
+        if self.backend:
+            flags.append(BACKEND_FLAGS[self.backend])
+        flags.extend(self.extra_flags)
+        return flags
+
+    @property
+    def build_dir_name(self) -> str:
+        """Name of the out-of-tree cmake build directory (inside llama.cpp/)."""
+        return f"build-{self.name}"
+
+    def installed_server_bin(self, install_dir: Path) -> Path:
+        """Resolved path to llama-server installed for this profile."""
+        return install_dir / self.name / "llama-server"
+
+    def installed_bench_bin(self, install_dir: Path) -> Path:
+        """Resolved path to llama-bench installed for this profile."""
+        return install_dir / self.name / "llama-bench"
+
+
+class BuildConfig(BaseModel):
+    """Configuration for the llama.cpp build system."""
+
+    enabled: bool = True
+    repo: str = "https://github.com/ggerganov/llama.cpp"
+    commit: str = "HEAD"
+    install_dir: str = "~/.local/bin"
+    jobs: str = "auto"  # "auto" = nproc; number for specific count
+    release: bool = True
+    profiles: list[BuildProfile] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_profile_names(self) -> BuildConfig:
+        names = [p.name for p in self.profiles]
+        if len(names) != len(set(names)):
+            dupes = [n for n in names if names.count(n) > 1]
+            raise ValueError(f"Duplicate profile names: {dupes}")
+        return self
+
+    @property
+    def install_path(self) -> Path:
+        return Path(self.install_dir).expanduser().resolve()
+
+    @property
+    def active_profile(self) -> BuildProfile | None:
+        """Return the first profile, or None if no profiles are configured."""
+        return self.profiles[0] if self.profiles else None
+
+    def get_profile(self, name: str | None = None) -> BuildProfile | None:
+        """Return profile by name, or active_profile if name is None."""
+        if name is None:
+            return self.active_profile
+        return next((p for p in self.profiles if p.name == name), None)
+
+    def profile_names(self) -> list[str]:
+        return [p.name for p in self.profiles]
+
+    def jobs_count(self) -> int:
+        """Return the number of parallel build jobs."""
+        if self.jobs == "auto":
+            import os  # noqa: PLC0415
+
+            return os.cpu_count() or 1
+        return int(self.jobs)
+
+
 class ServerSettings(BaseModel):
     enabled: bool = True
     llama_server_bin: str = "llama-server"
+    # Name of the build profile whose binary to use when llama_server_bin is empty.
+    # If both are empty, falls back to 'llama-server' on PATH.
+    profile: str = ""
     port: int = 8080
     n_gpu_layers: int = 20
     n_ctx: int = 4096
@@ -187,11 +285,35 @@ class Settings(BaseModel):
     proxy: ProxySettings = Field(default_factory=ProxySettings)
     client: ClientSettings = Field(default_factory=ClientSettings)
     lxd: LxdSettings = Field(default_factory=LxdSettings)
+    build: BuildConfig = Field(default_factory=BuildConfig)
 
     @property
     def has_local_server(self) -> bool:
         """True if this machine is configured to run llama-server."""
-        return bool(self.server.llama_server_bin)
+        return bool(self.server.llama_server_bin or self.server.profile or self.build.profiles)
+
+    def resolve_llama_server_bin(self) -> str:
+        """Resolve the llama-server binary path using the configured priority:
+
+        1. Explicit ``[server] llama_server_bin`` (non-empty string)
+        2. Profile-resolved: ``<build.install_dir>/<profile>/llama-server``
+        3. ``llama-server`` on PATH (shutil.which fallback)
+        """
+        import shutil  # noqa: PLC0415
+
+        if self.server.llama_server_bin:
+            return self.server.llama_server_bin
+
+        # Try profile-based resolution
+        profile_name = self.server.profile or (
+            self.build.active_profile.name if self.build.active_profile else None
+        )
+        if profile_name and self.build.profiles:
+            profile = self.build.get_profile(profile_name)
+            if profile:
+                return str(profile.installed_server_bin(self.build.install_path))
+
+        return shutil.which("llama-server") or "llama-server"
 
     @property
     def client_url(self) -> str:

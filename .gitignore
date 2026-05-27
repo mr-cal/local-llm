@@ -25,3 +25,8 @@ dist/
 .idea/
 *.swp
 *.swo
+
+# llama.cpp build artifacts
+llama.cpp/build/
+llama.cpp/build-*/
+llama.cpp/ggml/src/ggml*.so
