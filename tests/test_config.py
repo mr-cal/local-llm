@@ -16,7 +16,6 @@ from llm.config import (
     ClientSettings,
     LxdSettings,
     ModelCost,
-    ModelCostSettings,
     ModelEntry,
     ModelsSettings,
     MountEntry,
@@ -130,23 +129,23 @@ class TestModelsSettings:
         assert s.model_path.name == "custom.gguf"
 
 
-class TestModelCostSettings:
+class TestModelCost:
     def test_defaults(self):
-        c = ModelCostSettings()
+        c = ModelCost()
         assert c.input == 0.0
         assert c.output == 0.0
         assert c.cache_write == 0.0
         assert c.cache_read == 0.0
 
     def test_custom_values(self):
-        c = ModelCostSettings(input=0.5, output=1.5, cache_write=0.375, cache_read=0.05)
+        c = ModelCost(input=0.5, output=1.5, cache_write=0.375, cache_read=0.05)
         assert c.input == 0.5
         assert c.output == 1.5
         assert c.cache_write == 0.375
         assert c.cache_read == 0.05
 
     def test_to_cost_dict_format(self):
-        c = ModelCostSettings(input=0.0001, output=0.0002, cache_write=0.0001, cache_read=0.0)
+        c = ModelCost(input=0.0001, output=0.0002, cache_write=0.0001, cache_read=0.0)
         d = c.to_cost_dict()
         assert d == {"input": 0.0001, "output": 0.0002, "cacheWrite": 0.0001, "cacheRead": 0.0}
         # Verify camelCase keys for cache fields (pi convention)
@@ -156,20 +155,20 @@ class TestModelCostSettings:
         assert "cache_read" not in d
 
     def test_to_cost_dict_all_zeros(self):
-        c = ModelCostSettings()
+        c = ModelCost()
         d = c.to_cost_dict()
         assert d == {"input": 0.0, "output": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0}
 
     def test_is_zero_defaults(self):
-        c = ModelCostSettings()
+        c = ModelCost()
         assert c.is_zero() is True
 
     def test_is_zero_nonzero(self):
-        c = ModelCostSettings(output=0.5)
+        c = ModelCost(output=0.5)
         assert c.is_zero() is False
 
     def test_is_zero_partial(self):
-        c = ModelCostSettings(input=0.0001, output=0.0)
+        c = ModelCost(input=0.0001, output=0.0)
         assert c.is_zero() is False
 
 
@@ -320,20 +319,6 @@ class TestSettings:
         s = Settings(auth=AuthSettings(api_key="remote-secret"))
         assert s.client_api_key == "remote-secret"
 
-    def test_model_cost_defaults(self):
-        s = Settings()
-        assert s.model_cost.input == 0.0
-        assert s.model_cost.output == 0.0
-        assert s.model_cost.cache_write == 0.0
-        assert s.model_cost.cache_read == 0.0
-
-    def test_model_cost_custom(self):
-        s = Settings(model_cost=ModelCostSettings(input=0.5, output=1.5, cache_write=0.375, cache_read=0.05))
-        assert s.model_cost.input == 0.5
-        assert s.model_cost.output == 1.5
-        assert s.model_cost.cache_write == 0.375
-        assert s.model_cost.cache_read == 0.05
-
     def test_models_path_resolves_expands(self, tmp_path):
         models_dir = tmp_path / "models"
         models_dir.mkdir()
@@ -404,25 +389,6 @@ class TestLoadConfig:
         monkeypatch.chdir(tmp_path)
         with pytest.raises(typer.Exit):
             load_config()
-
-    def test_loads_model_cost_section(self, tmp_path, monkeypatch):
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[server]\nllama_server_bin = "llama-server"\nport = 8080\nn_gpu_layers = 20\n'
-            'n_ctx = 4096\nn_threads = 12\nextra_args = []\n\n[models]\ndir = "~/models"\n'
-            'active = "model.gguf"\nhf_token = ""\n\n[auth]\napi_key = "key"\n\n[proxy]\n'
-            'port = 8443\nlan_ip = "192.168.1.100"\nlan_subnet = "192.168.1.0/24"\n'
-            'cert_path = "/etc/ssl/cert.pem"\n\n[client]\n'
-            'server_url = ""\ncert_path = ""\n\n[model_cost]\n'
-            "input = 0.0001\noutput = 0.0002\ncache_write = 0.00015\ncache_read = 0.00005\n"
-            "\n[lxd]\ncraft_dirs = []\n"
-        )
-        monkeypatch.chdir(tmp_path)
-        cfg = load_config()
-        assert cfg.model_cost.input == 0.0001
-        assert cfg.model_cost.output == 0.0002
-        assert cfg.model_cost.cache_write == 0.00015
-        assert cfg.model_cost.cache_read == 0.00005
 
 
 class TestTryLoadLxd:
@@ -509,17 +475,8 @@ class TestConfigInit:
         monkeypatch.chdir(tmp_path)
         config_init()
         content = (tmp_path / "config.toml").read_text()
-        for section in ["[server]", "[models]", "[proxy]", "[client]", "[auth]", "[model_cost]", "[lxd]"]:
+        for section in ["[server]", "[models]", "[proxy]", "[client]", "[auth]", "[lxd]"]:
             assert section in content
-
-    def test_template_model_cost_has_examples(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)
-        config_init()
-        content = (tmp_path / "config.toml").read_text()
-        assert "input = 0.0" in content
-        assert "output = 0.0" in content
-        assert "cache_write = 0.0" in content
-        assert "cache_read = 0.0" in content
 
 
 # ── config_init CLI ────────────────────────────────────────────────────────────
@@ -687,22 +644,6 @@ class TestBuildPiConfig:
         assert model_entry["cost"]["output"] == 0.0
         assert model_entry["cost"]["cacheWrite"] == 0.0
         assert model_entry["cost"]["cacheRead"] == 0.0
-
-    def test_cost_uses_config_values(self):
-        cfg = Settings(
-            server=ServerSettings(port=8080, n_ctx=8192),
-            models=ModelsSettings(active="test.gguf"),
-            model_cost=ModelCost(
-                input=0.0001, output=0.0002, cache_write=0.00015, cache_read=0.00005
-            ),
-        )
-        result = _build_pi_config(cfg)
-        model_entry = result["providers"]["local-llm"]["models"][0]
-        cost = model_entry["cost"]
-        assert cost["input"] == 0.0001
-        assert cost["output"] == 0.0002
-        assert cost["cacheWrite"] == 0.00015
-        assert cost["cacheRead"] == 0.00005
 
     def test_cost_all_zero_when_not_configured(self):
         cfg = Settings()

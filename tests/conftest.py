@@ -45,12 +45,6 @@ def _base_server_config(extra_models: dict | None = None) -> dict:
             "server_url": "",
             "cert_path": "",
         },
-        "model_cost": {
-            "input": 0.0,
-            "output": 0.0,
-            "cache_write": 0.0,
-            "cache_read": 0.0,
-        },
         "lxd": {
             "craft_dirs": [],
             "mounts": [],

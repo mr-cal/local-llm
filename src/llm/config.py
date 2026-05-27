@@ -158,10 +158,6 @@ class ModelCost(BaseModel):
         return self.input == 0.0 and self.output == 0.0 and self.cache_write == 0.0 and self.cache_read == 0.0
 
 
-# Backward-compatible alias so existing code and tests using ModelCostSettings still work.
-ModelCostSettings = ModelCost
-
-
 class AuthSettings(BaseModel):
     """Bearer token used by remote clients to authenticate with this server."""
 
@@ -280,7 +276,6 @@ class LxdSettings(BaseModel):
 class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     models: ModelsSettings = Field(default_factory=ModelsSettings)
-    model_cost: ModelCostSettings = Field(default_factory=ModelCostSettings, alias="model_cost")
     auth: AuthSettings = Field(default_factory=AuthSettings)
     proxy: ProxySettings = Field(default_factory=ProxySettings)
     client: ClientSettings = Field(default_factory=ClientSettings)
@@ -575,7 +570,7 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                         "name": display_name,
                         "contextWindow": cfg.server.n_ctx,
                         "maxTokens": max_output,
-                        "cost": entry.cost.to_cost_dict() if entry else cfg.model_cost.to_cost_dict(),
+                        "cost": entry.cost.to_cost_dict() if entry else {"input": 0.0, "output": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0},
                     }
                 ],
             }
@@ -622,7 +617,7 @@ def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # 
                         "name": display_name,
                         "contextWindow": cfg.server.n_ctx,
                         "maxTokens": max_output,
-                        "cost": entry.cost.to_cost_dict() if entry else cfg.model_cost.to_cost_dict(),
+                        "cost": entry.cost.to_cost_dict() if entry else {"input": 0.0, "output": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0},
                     }
                 ],
             }
