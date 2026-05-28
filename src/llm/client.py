@@ -9,6 +9,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from llm.config import CONFIG_FILENAME, find_config, load_config
 
@@ -342,7 +343,7 @@ def refresh(
     try:
         refresh_containers(container, cert_pem=cert_pem, lxd_vm=lxd_vm)
     except RuntimeError as e:
-        console.print(f"[red]ERROR:[/red] {e}")
+        console.print(f"[red]ERROR:[/red] {escape(str(e))}")
         raise typer.Exit(1) from None
 
 
@@ -368,5 +369,5 @@ def crafts(
     try:
         do_setup_crafts(container, craft_dirs, lxd_vm=lxd_vm)
     except RuntimeError as e:
-        console.print(f"[red]ERROR:[/red] {e}")
+        console.print(f"[red]ERROR:[/red] {escape(str(e))}")
         raise typer.Exit(1) from None

@@ -184,7 +184,7 @@ def build_run(
     else:
         active = bc.active_profile
         if active is None:
-            console.print("[yellow]No active profile.[/yellow]  Add [[build.profiles]] to config.toml.")
+            console.print("[yellow]No active profile.[/yellow] Add [[build.profiles]] to config.toml.")
             raise typer.Exit(1)
         profiles_to_build = [active]
 

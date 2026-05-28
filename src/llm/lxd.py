@@ -73,7 +73,7 @@ def load_lxd_settings() -> tuple[list[tuple[str, str, str]], list[str]]:
         if lxd.mounts
         else _DEFAULT_MOUNTS
     )
-    return mounts, lxd.craft_dirs
+    return mounts, [str(Path(d).expanduser()) for d in lxd.craft_dirs]
 
 
 # -- Helpers ------------------------------------------------------------------

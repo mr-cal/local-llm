@@ -458,7 +458,7 @@ def status() -> None:
         if entry is None and cfg.models.has_catalog is False:
             entry = next((m for m in KNOWN_MODELS if m.filename == cfg.models.active), None)
         display = entry.alias if entry else cfg.models.active
-        console.print(f"[green]● llama-server[/green]  PID {pid}  port {cfg.server.port}")
+        console.print(f"[green]● llama-server[/green] PID {pid} port {cfg.server.port}")
         console.print(f"  Model  : {display}  [dim]({cfg.models.active})[/dim]")
         console.print(f"  Layers : {cfg.server.n_gpu_layers}")
         if cfg.server.extra_args:
@@ -471,7 +471,7 @@ def status() -> None:
         log = _log_file().resolve()
         console.print(f"  Logs   : {log}  [dim](uv run llm server logs -f)[/dim]")
     else:
-        console.print("[red]● llama-server[/red]  stopped")
+        console.print("[red]● llama-server[/red] stopped")
         console.print("  Run [bold]uv run llm server start[/bold] to start.")
 
     if _nginx_is_active():
