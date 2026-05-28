@@ -1332,7 +1332,7 @@ def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> No
     Steps (in order):
     1. apt update + upgrade + autoremove
     2. npm update for pi (``@earendil-works/pi-coding-agent``)
-    3. gh extension upgrade --all (updates copilot and any other gh extensions)
+    3. gh copilot update (self-update the Copilot CLI binary)
     4. Re-apply pi config (bridge /etc/hosts, models.json, cert, shell env vars)
     """
     console.print(f"\n[bold cyan]── Refreshing {container} ──[/bold cyan]")
@@ -1350,10 +1350,10 @@ def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> No
         ["lxc", "exec", container, "--", "npm", "update", "-g", "@earendil-works/pi-coding-agent"],
     )
 
-    # 3. copilot / gh extensions
-    console.print("\n  [bold]copilot:[/bold] upgrading gh extensions...")
+    # 3. copilot (self-update via built-in binary at ~/.local/share/gh/copilot/)
+    console.print("\n  [bold]copilot:[/bold] updating gh copilot...")
     run(
-        _cexec(container, uid, gid, "gh", "extension", "upgrade", "--all"),
+        _cexec(container, uid, gid, "gh", "copilot", "update"),
     )
 
     # 4. pi config (bridge IP, cert, models.json, shell env vars)
@@ -1404,7 +1404,7 @@ def refresh(
 
     1. **apt** — ``apt-get update && upgrade && autoremove``
     2. **pi** — ``npm update -g @earendil-works/pi-coding-agent``
-    3. **copilot** — ``gh extension upgrade --all``
+    3. **copilot** — ``gh copilot update``
     4. **pi config** — re-applies bridge /etc/hosts, models.json, TLS cert, and
        shell environment variables (useful after cert regeneration or IP change)
 

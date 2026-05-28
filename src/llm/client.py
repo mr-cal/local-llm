@@ -48,16 +48,17 @@ def setup(
         if resolved_key == "":
             console.print(
                 "[yellow]Warning:[/yellow] api_key is not set.\n"
-                "Generate a real key:\n"
+                "[bold](on the server)[/bold] Generate a real key:\n"
                 '  python -c "import secrets; print(secrets.token_hex(32))"\n'
-                "Then update [auth] api_key in config.toml.\n"
+                "Then update [auth] api_key in config.toml and re-run this command.\n"
             )
         cert_file = Path(cfg.proxy.cert_path)
         if cert_file.exists():
             cert_pem = cert_file.read_text().strip()
         else:
             console.print(
-                f"[yellow]Cert not found at {cert_file}[/yellow] — generate it first:\n"
+                f"[yellow]Cert not found at {cert_file}[/yellow] — generate it first "
+                "[bold](on the server)[/bold]:\n"
                 "  [bold]uv run llm config gencert[/bold]\n"
                 "(Sets the required SubjectAltName — plain CN= certs are rejected by Node.js)\n"
             )
@@ -103,7 +104,7 @@ def setup(
     console.print()
 
     # ── Step 2: env vars ─────────────────────────────────────────────────────
-    console.print("[bold]Step 2 — Environment variables[/bold]  (add to ~/.bashrc)\n")
+    console.print("[bold]Step 2 — Environment variables[/bold]  (in the LXD container — add to ~/.bashrc)\n")
     export_block = (
         f'export OPENAI_BASE_URL="{resolved_base_url}"\n'
         f'export OPENAI_API_KEY="{resolved_key}"\n'
@@ -113,7 +114,10 @@ def setup(
     console.print()
 
     # ── Step 3: opencode config ───────────────────────────────────────────────
-    console.print("[bold]Step 3 — opencode config[/bold]  (~/.config/opencode/opencode.json)\n")
+    console.print(
+        "[bold]Step 3 — opencode config[/bold]"
+        "  (in the LXD container — ~/.config/opencode/opencode.json)\n"
+    )
     opencode_block = (
         "{\n"
         '  "$schema": "https://opencode.ai/config.json",\n'
@@ -139,7 +143,7 @@ def setup(
     console.print()
 
     # ── Step 4: verify ────────────────────────────────────────────────────────
-    console.print("[bold]Step 4 — Verify connectivity[/bold]\n")
+    console.print("[bold]Step 4 — Verify connectivity[/bold]  (in the LXD container)\n")
     curl_cmd = (
         f"curl -s --cacert ~/.config/opencode/local-llm.pem \\\n"
         f"  {health_url}/health \\\n"
