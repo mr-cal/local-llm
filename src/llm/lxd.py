@@ -600,6 +600,19 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
         check=True,
     )
 
+    # Minimal fish prompt — just the current directory, no user@host, no git info.
+    prompt_fish = (
+        "# Minimal prompt: current directory + arrow (no user@host, no git hash)\n"
+        "function fish_prompt\n"
+        '    echo -n (set_color blue)(prompt_pwd)(set_color normal) " ❯ "\n'
+        "end\n"
+    )
+    subprocess.run(
+        _cexec(container, uid, gid, "bash", "-c", f"cat > {fish_conf_dir}/prompt.fish"),
+        input=prompt_fish.encode(),
+        check=True,
+    )
+
     console.print(f"  Writing LSP config to {CONTAINER_HOME}/.copilot/lsp-config.json in container...")
     run(_cexec(container, uid, gid, "mkdir", "-p", f"{CONTAINER_HOME}/.copilot"))
 
