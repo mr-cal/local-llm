@@ -9,11 +9,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import tomli_w
 import typer
 
 from llm.config import (
     AuthSettings,
     ClientSettings,
+    GitHubSettings,
     LxdSettings,
     ModelCost,
     ModelEntry,
@@ -247,6 +249,28 @@ class TestAuthSettings:
         assert a.api_key == "my-secret-key"
 
 
+class TestGitHubSettings:
+    def test_defaults(self):
+        g = GitHubSettings()
+        assert g.token == ""
+
+    def test_custom_token(self):
+        g = GitHubSettings(token="ghp_secrettoken123")
+        assert g.token == "ghp_secrettoken123"
+
+    def test_is_authenticated_empty(self):
+        g = GitHubSettings()
+        assert g.is_authenticated() is False
+
+    def test_is_authenticated_with_token(self):
+        g = GitHubSettings(token="ghp_secrettoken123")
+        assert g.is_authenticated() is True
+
+    def test_is_authenticated_whitespace_only(self):
+        g = GitHubSettings(token="   ")
+        assert g.is_authenticated() is False
+
+
 class TestMountEntry:
     def test_derives_name_from_host_path(self):
         m = MountEntry(host="/home/user/dev")
@@ -318,6 +342,22 @@ class TestSettings:
     def test_client_api_key_remote(self):
         s = Settings(auth=AuthSettings(api_key="remote-secret"))
         assert s.client_api_key == "remote-secret"
+
+    def test_github_token_default(self):
+        s = Settings()
+        assert s.github.token == ""
+
+    def test_github_token_custom(self):
+        s = Settings(github=GitHubSettings(token="ghp_test123"))
+        assert s.github.token == "ghp_test123"
+
+    def test_github_token_is_authenticated(self):
+        s = Settings(github=GitHubSettings(token="ghp_test123"))
+        assert s.github.is_authenticated() is True
+
+    def test_github_token_empty_is_not_authenticated(self):
+        s = Settings()
+        assert s.github.is_authenticated() is False
 
     def test_models_path_resolves_expands(self, tmp_path):
         models_dir = tmp_path / "models"
@@ -475,7 +515,7 @@ class TestConfigInit:
         monkeypatch.chdir(tmp_path)
         config_init()
         content = (tmp_path / "config.toml").read_text()
-        for section in ["[server]", "[models]", "[proxy]", "[client]", "[auth]", "[lxd]"]:
+        for section in ["[server]", "[models]", "[proxy]", "[client]", "[auth]", "[lxd]", "[github]"]:
             assert section in content
 
 
@@ -776,6 +816,27 @@ class TestConfigShow:
         # config_show calls load_config() and _validate_opencode_config
         # It should run without errors
         mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
+        config_show()
+
+    def test_masks_github_token(self, tmp_path, fake_console, mocker, monkeypatch):
+        """config_show should mask the github token like it masks other secrets."""
+        config = tmp_path / "config.toml"
+        data = {
+            "server": {"enabled": True, "llama_server_bin": "llama-server", "port": 8080,
+                       "n_gpu_layers": 20, "n_ctx": 4096, "n_threads": 12, "extra_args": []},
+            "models": {"dir": "~/models", "active": "test", "hf_token": "",
+                       "list": []},
+            "auth": {"api_key": "secret"},
+            "proxy": {"enabled": True, "port": 8443, "lan_ip": "192.168.1.100",
+                      "lan_subnet": "192.168.1.0/24", "cert_path": "/etc/ssl/local-llm/cert.pem"},
+            "client": {"enabled": True, "server_url": "", "cert_path": ""},
+            "lxd": {"craft_dirs": [], "mounts": []},
+            "github": {"token": "ghp_secrettoken"},
+        }
+        config.write_text(tomli_w.dumps(data))
+        monkeypatch.chdir(tmp_path)
+        mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
+        # config_show should not raise — it should mask the github token
         config_show()
 
 

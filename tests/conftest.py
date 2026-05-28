@@ -49,6 +49,9 @@ def _base_server_config(extra_models: dict | None = None) -> dict:
             "craft_dirs": [],
             "mounts": [],
         },
+        "github": {
+            "token": "",
+        },
     }
 
 
@@ -309,6 +312,9 @@ def tmp_config_client_only(tmp_path: Path) -> Path:
         "lxd": {
             "craft_dirs": [],
             "mounts": [],
+        },
+        "github": {
+            "token": "",
         },
     }
     _write_config(config, data)

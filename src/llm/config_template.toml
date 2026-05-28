@@ -302,6 +302,13 @@ cert_path = ""
 # Generate: python -c "import secrets; print(secrets.token_hex(32))"
 api_key = ""
 
+# ── GITHUB ────────────────────────────────────────────────────────────────
+[github]
+# GitHub personal access token for authenticating the gh CLI tool.
+# Generate at: https://github.com/settings/tokens
+# Required for gh CLI operations that need auth (e.g. private repos).
+token = ""
+
 # ── MODEL COST ────────────────────────────────────────────────────────────────
 # Per-token pricing is driven by the active model's cost settings in
 # [[models.list]] below.  Set cost.input / cost.output / cost.cache_write /

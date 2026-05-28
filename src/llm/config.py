@@ -238,6 +238,16 @@ class ProxySettings(BaseModel):
     cert_path: str = "/etc/ssl/local-llm/cert.pem"
 
 
+class GitHubSettings(BaseModel):
+    """GitHub CLI (gh) authentication token."""
+
+    token: str = ""  # GitHub personal access token for gh CLI auth
+
+    def is_authenticated(self) -> bool:
+        """True when a non-empty token is configured."""
+        return bool(self.token.strip())
+
+
 class ClientSettings(BaseModel):
     """How client tools (opencode, Pi) on this machine connect to the LLM.
 
@@ -281,6 +291,7 @@ class Settings(BaseModel):
     client: ClientSettings = Field(default_factory=ClientSettings)
     lxd: LxdSettings = Field(default_factory=LxdSettings)
     build: BuildConfig = Field(default_factory=BuildConfig)
+    github: GitHubSettings = Field(default_factory=GitHubSettings)
 
     @property
     def has_local_server(self) -> bool:
@@ -570,7 +581,16 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                         "name": display_name,
                         "contextWindow": cfg.server.n_ctx,
                         "maxTokens": max_output,
-                        "cost": entry.cost.to_cost_dict() if entry else {"input": 0.0, "output": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0},
+                        "cost": (
+                            entry.cost.to_cost_dict()
+                            if entry
+                            else {
+                                "input": 0.0,
+                                "output": 0.0,
+                                "cacheWrite": 0.0,
+                                "cacheRead": 0.0,
+                            }
+                        ),
                     }
                 ],
             }
@@ -617,7 +637,16 @@ def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # 
                         "name": display_name,
                         "contextWindow": cfg.server.n_ctx,
                         "maxTokens": max_output,
-                        "cost": entry.cost.to_cost_dict() if entry else {"input": 0.0, "output": 0.0, "cacheWrite": 0.0, "cacheRead": 0.0},
+                        "cost": (
+                            entry.cost.to_cost_dict()
+                            if entry
+                            else {
+                                "input": 0.0,
+                                "output": 0.0,
+                                "cacheWrite": 0.0,
+                                "cacheRead": 0.0,
+                            }
+                        ),
                     }
                 ],
             }
@@ -673,6 +702,7 @@ def config_show() -> None:
     masked = cfg.model_dump()
     masked["auth"]["api_key"] = "***"
     masked["models"]["hf_token"] = "***" if masked["models"]["hf_token"] else ""
+    masked["github"]["token"] = "***" if masked["github"]["token"] else ""
 
     def _to_toml_ish(d: dict, indent: int = 0) -> str:  # type: ignore[type-arg]
         lines_out: list[str] = []
