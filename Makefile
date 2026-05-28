@@ -5,6 +5,7 @@ install:
 
 lint:
 	uv run ruff check src tests
+	uv run ty check src tests
 
 format:
 	uv run ruff format src tests
