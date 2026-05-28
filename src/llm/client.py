@@ -127,6 +127,17 @@ def _setup_container_client(
     )
     console.print(f"  [green]✓[/green] Wrote opencode config to {opencode_path}")
 
+    # Authenticate gh CLI inside the container
+    gh_token = cfg.github.token if cfg.github.is_authenticated() else ""
+    from llm.lxd import setup_gh_auth_in_container  # noqa: PLC0415
+
+    setup_gh_auth_in_container(
+        container_name,
+        gh_token,
+        effective_uid=effective_uid,
+        effective_gid=effective_gid,
+    )
+
     # Tag with version
     subprocess.run(
         ["lxc", "config", "set", container_name, f"user.local-llm-version={LOCAL_LLM_VERSION}"],

@@ -504,6 +504,11 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
         ]
     )
 
+    console.print("  Installing gh-copilot extension...")
+    run(
+        ["lxc", "exec", container, "--", "gh", "extension", "install", "github/gh-copilot"],
+    )
+
     console.print("  Installing pi (@earendil-works/pi-coding-agent)...")
     run(
         ["lxc", "exec", container, "--", "npm", "install", "-g", "@earendil-works/pi-coding-agent"],
@@ -788,6 +793,40 @@ def _get_lxd_bridge_ip() -> str:
     return ip
 
 
+def setup_gh_auth_in_container(
+    container: str,
+    gh_token: str,
+    *,
+    effective_uid: int = CONTAINER_UID,
+    effective_gid: int = CONTAINER_GID,
+) -> None:
+    """Authenticate the GitHub CLI (gh) inside the container using a PAT.
+
+    Runs ``gh auth login --with-token`` inside the container so that tools
+    like ``gh copilot`` can access GitHub APIs without interactive login.
+
+    Args:
+        container: Name of the LXD container.
+        gh_token: GitHub personal access token (PAT).
+        effective_uid: UID to run commands as inside the container.
+        effective_gid: GID to run commands as inside the container.
+    """
+    if not gh_token:
+        console.print("  [yellow]⚠[/yellow] No GitHub token configured — skipping gh auth.")
+        return
+
+    console.print(f"  [bold]Authenticating gh CLI in {container}...[/bold]")
+
+    # Use gh auth login --with-token to authenticate non-interactively.
+    # This writes the token to ~/.config/gh/hosts.yml which gh uses for auth.
+    subprocess.run(
+        _cexec(container, effective_uid, effective_gid, "gh", "auth", "login", "--with-token"),
+        input=gh_token.encode(),
+        check=True,
+    )
+    console.print(f"  [green]✓[/green] gh authenticated — can access GitHub APIs")
+
+
 def setup_pi_in_container(
     container: str,
     bridge_ip: str,
@@ -964,6 +1003,13 @@ def run_tests(
     def t_gh_installed():
         subprocess.run(
             ["lxc", "exec", container, "--", "gh", "--version"],
+            capture_output=True,
+            check=True,
+        )
+
+    def t_gh_copilot_extension():
+        subprocess.run(
+            ["lxc", "exec", container, "--", "gh", "extension", "list"],
             capture_output=True,
             check=True,
         )
@@ -1152,6 +1198,7 @@ def run_tests(
         ("Container running", t_running),
         ("build-essential installed", t_build_essential),
         ("gh installed", t_gh_installed),
+        ("gh-copilot extension installed", t_gh_copilot_extension),
         ("passwordless sudo works", t_passwordless_sudo),
         ("uv installed", t_uv_installed),
         ("fish installed", t_fish_installed),
@@ -1182,9 +1229,9 @@ def run_tests(
             f"  UID/GID mapping: transparent (host {HOST_UID}:{HOST_GID} <-> container {CONTAINER_USER})"
         )
         console.print(f"  Container user: {CONTAINER_USER}")
-        console.print("  Packages: build-essential, gh, astral-uv, pi")
+        console.print("  Packages: build-essential, gh, gh-copilot, astral-uv, pi")
         console.print("  sudo: passwordless for container user")
-        console.print("  Next: run 'gh auth login', 'gh copilot', and '/allow-all'")
+        console.print("  Next: run 'gh auth login', 'gh copilot setup', and '/allow-all'")
         console.print(" PAT token perms: all repos, actions, issues, merge queues, metadata, pull requests")
         console.print("            user: copilot, gists")
         console.print(f"  pylsp: installed in container (~/.local/bin), config at {LSP_CONFIG_PATH}")
