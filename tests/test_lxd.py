@@ -93,8 +93,8 @@ class TestSetupPiInContainer:
         p.stdout = stdout
         return p
 
-    def test_adds_hosts_entry_when_bridge_ip_present(self, monkeypatch, tmp_path):
-        """When bridge_ip is provided a hosts entry command should be issued."""
+    def test_adds_hosts_entry_using_proxy_lan_ip(self, monkeypatch, tmp_path):
+        """The /etc/hosts entry should use proxy.lan_ip (the server's LAN IP), not bridge_ip."""
         import tomli_w
 
         # Write a minimal config so load_config() works.
@@ -129,12 +129,15 @@ class TestSetupPiInContainer:
 
         setup_pi_in_container("craft-llm-1", bridge_ip="10.113.167.1")
 
-        # At least one call should touch /etc/hosts
+        # The /etc/hosts command must use proxy.lan_ip, not bridge_ip.
         hosts_calls = [c for c in calls if any("/etc/hosts" in str(a) for a in c)]
         assert hosts_calls, "Expected an /etc/hosts manipulation command"
+        hosts_cmd_str = " ".join(str(a) for a in hosts_calls[0])
+        assert "192.168.1.1" in hosts_cmd_str, "Expected proxy.lan_ip in /etc/hosts entry"
+        assert "10.113.167.1" not in hosts_cmd_str, "Expected bridge_ip NOT in /etc/hosts entry"
 
-    def test_skips_hosts_entry_when_no_bridge_ip(self, monkeypatch, tmp_path, capsys):
-        """When bridge_ip is empty, the /etc/hosts step should be skipped."""
+    def test_adds_hosts_entry_even_when_no_bridge_ip(self, monkeypatch, tmp_path):
+        """The /etc/hosts entry is always written using proxy.lan_ip regardless of bridge_ip."""
         import tomli_w
 
         config = tmp_path / "config.toml"
@@ -168,9 +171,11 @@ class TestSetupPiInContainer:
 
         setup_pi_in_container("craft-llm-1", bridge_ip="")
 
-        # No /etc/hosts command should have been issued
+        # Should still write the /etc/hosts entry using proxy.lan_ip
         hosts_calls = [c for c in calls if any("/etc/hosts" in str(a) for a in c)]
-        assert not hosts_calls, "Expected no /etc/hosts command when bridge_ip is empty"
+        assert hosts_calls, "Expected /etc/hosts command even when bridge_ip is empty"
+        hosts_cmd_str = " ".join(str(a) for a in hosts_calls[0])
+        assert "192.168.1.1" in hosts_cmd_str, "Expected proxy.lan_ip in /etc/hosts entry"
 
     def test_writes_cert_when_cert_pem_provided(self, monkeypatch, tmp_path):
         """Cert content should be piped into the container when cert_pem is set."""

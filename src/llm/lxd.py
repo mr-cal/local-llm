@@ -447,6 +447,7 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
             "install",
             "-y",
             "build-essential",
+            "jq",
             "kitty-terminfo",
             "fish",
         ]
@@ -486,6 +487,9 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
 
     console.print("  Installing astral-uv...")
     run(["lxc", "exec", container, "--", "snap", "install", "astral-uv", "--classic"])
+
+    console.print("  Installing helix...")
+    run(["lxc", "exec", container, "--", "snap", "install", "helix", "--classic"])
 
     console.print("  Installing nodejs (for pi)...")
     run(
@@ -610,6 +614,23 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
     subprocess.run(
         _cexec(container, uid, gid, "bash", "-c", f"cat > {fish_conf_dir}/prompt.fish"),
         input=prompt_fish.encode(),
+        check=True,
+    )
+
+    # pi "full context" helper: bump contextWindow and maxTokens in models.json
+    # so pi uses the server's full context window for long agentic tasks.
+    pif_fish = (
+        "function pif\n"
+        "    set tmp (mktemp)\n"
+        "    jq '.providers[\"local-llm\"].models[0].contextWindow = 131072"
+        " | .providers[\"local-llm\"].models[0].maxTokens = 16384'"
+        " ~/.pi/agent/models.json > $tmp\n"
+        "    and mv $tmp ~/.pi/agent/models.json\n"
+        "end\n"
+    )
+    subprocess.run(
+        _cexec(container, uid, gid, "bash", "-c", f"cat > {fish_conf_dir}/pif.fish"),
+        input=pif_fish.encode(),
         check=True,
     )
 
@@ -779,11 +800,14 @@ def setup_pi_in_container(
     Four things are configured inside the container:
 
     1. **models.json** — generated with URL ``https://local-llm:<port>/v1``
-       so pi connects to the host's nginx proxy using the ``local-llm``
-       hostname (which is already in the cert's SubjectAltName).
+       so pi connects to the nginx proxy using the ``local-llm`` hostname
+       (which is already in the cert's SubjectAltName).
 
-    2. **/etc/hosts entry** — maps ``local-llm`` → *bridge_ip* so the
-       container can resolve the hostname to the lxdbr0 bridge gateway.
+    2. **/etc/hosts entry** — maps ``local-llm`` → ``proxy.lan_ip`` (the
+       server's LAN IP) so traffic routes correctly whether the container is
+       on the same machine as the server or on a remote client machine.
+       LXD's MASQUERADE rules ensure nginx's subnet allowlist passes in both
+       cases.
 
     3. **TLS certificate** — copied from the host and stored at
        ``~/.config/local-llm/cert.pem`` for Node.js to trust.
@@ -793,8 +817,7 @@ def setup_pi_in_container(
 
     Args:
         container: Name of the LXD container/VM.
-        bridge_ip: Host IP on the lxdbr0 bridge (e.g. ``10.113.167.1``).
-                   Added to the container's /etc/hosts as ``local-llm``.
+        bridge_ip: Unused; kept for backward compatibility.
         cert_pem: PEM cert string for the nginx TLS proxy. When provided it
                   is written to ``_NODE_CA_CERTS_FILE``.  If *None* the cert
                   is read from ``cfg.proxy.cert_path`` on the host.
@@ -806,22 +829,19 @@ def setup_pi_in_container(
     cfg = load_config()
 
     # ── Step 1: Add /etc/hosts entry so 'local-llm' resolves inside container ─
-    if bridge_ip:
-        console.print(f"  Adding /etc/hosts entry: {bridge_ip} local-llm...")
-        hosts_cmd = (
-            f"grep -qxF '{bridge_ip} local-llm' /etc/hosts || "
-            f"echo '{bridge_ip} local-llm' >> /etc/hosts"
-        )
-        subprocess.run(
-            ["lxc", "exec", container, "--", "bash", "-c", hosts_cmd],
-            check=True,
-        )
-    else:
-        console.print(
-            "    [yellow]Warning:[/yellow] lxdbr0 bridge IP not detected. "
-            "Cannot add /etc/hosts entry for 'local-llm'. "
-            "Pi may not be able to reach the server from inside the container."
-        )
+    # Use the server's LAN IP (proxy.lan_ip) rather than the lxdbr0 bridge IP.
+    # nginx listens on lan_ip:port, and LXD's MASQUERADE NAT ensures nginx's
+    # subnet allowlist passes regardless of whether the server is local or remote.
+    server_ip = cfg.proxy.lan_ip
+    console.print(f"  Adding /etc/hosts entry: {server_ip} local-llm...")
+    hosts_cmd = (
+        f"grep -qxF '{server_ip} local-llm' /etc/hosts || "
+        f"echo '{server_ip} local-llm' >> /etc/hosts"
+    )
+    subprocess.run(
+        ["lxc", "exec", container, "--", "bash", "-c", hosts_cmd],
+        check=True,
+    )
 
     # ── Step 2: Generate models.json with the 'local-llm' proxy URL ──────────
     console.print("  Generating models.json with proxy URL...")
@@ -1220,16 +1240,25 @@ def create_and_setup(
 
     console.print(f"Creating {kind}: {container_name}")
 
+    # Prepend a helix config bind-mount if the directory exists on the host.
+    helix_host = os.path.join(HOST_HOME, ".config", "helix")
+    helix_container = f"{CONTAINER_HOME}/.config/helix"
+    all_mounts = list(mounts)
+    if os.path.isdir(helix_host):
+        all_mounts = [("helix-config", helix_host, helix_container), *all_mounts]
+    else:
+        console.print(f"  [dim]~/.config/helix not found on host — skipping helix config mount[/dim]")
+
     if lxd_vm:
         create_container(container_name, vm=True)
-        add_mounts(container_name, mounts, step="2/5", uid=HOST_UID, gid=HOST_GID)
+        add_mounts(container_name, all_mounts, step="2/5", uid=HOST_UID, gid=HOST_GID)
         install_packages(container_name, step="3/5", uid=HOST_UID)
         install_pylsp(container_name, step="4/5", uid=HOST_UID, gid=HOST_GID)
         setup_nested_lxd(container_name, step="5/5", uid=HOST_UID)
     else:
         create_container(container_name, vm=False)
         configure_idmap(container_name, step="2/5")
-        add_mounts(container_name, mounts, step="3/5")
+        add_mounts(container_name, all_mounts, step="3/5")
         install_packages(container_name, step="4/5")
         install_pylsp(container_name, step="5/5")
 
@@ -1253,7 +1282,7 @@ def create_and_setup(
 
     _tag_as_managed(container_name)
 
-    run_tests(container_name, mounts=mounts, uid=effective_uid, gid=effective_gid)
+    run_tests(container_name, mounts=all_mounts, uid=effective_uid, gid=effective_gid)
 
 
 def do_setup_crafts(

@@ -19,9 +19,7 @@ CONFIG_FILENAME = "config.toml"
 
 # Template written by `llm config init` — loaded from config_template.toml.
 # Every option is a commented example so the file is self-documenting.
-_CONFIG_TEMPLATE = (
-    resources.files("llm").joinpath("config_template.toml").read_text(encoding="utf-8")
-)
+_CONFIG_TEMPLATE = resources.files("llm").joinpath("config_template.toml").read_text(encoding="utf-8")
 
 
 BACKEND_FLAGS: dict[str, str] = {
@@ -46,8 +44,7 @@ class BuildProfile(BaseModel):
     def validate_backend(self) -> BuildProfile:
         if self.backend and self.backend not in BACKEND_FLAGS:
             raise ValueError(
-                f"Unknown backend '{self.backend}'. "
-                f"Valid options: {', '.join(sorted(BACKEND_FLAGS))}"
+                f"Unknown backend '{self.backend}'. Valid options: {', '.join(sorted(BACKEND_FLAGS))}"
             )
         return self
 
@@ -464,7 +461,7 @@ def config_init() -> None:
         console.print(f"\n  [yellow]Cert not found at {cert_expanded}[/yellow]")
         fetch = _prompt_init("  Fetch from server via scp? (y/n)", "y")
         if fetch.lower() in ("y", "yes"):
-            server_host = _prompt_init("  Server SSH host (e.g. user@192.168.1.209)")
+            server_host = _prompt_init("  Server SSH host (e.g. user@192.168.1.64)")
             remote_cert = _prompt_init("  Remote cert path", "/etc/ssl/local-llm/cert.pem")
             cert_expanded.parent.mkdir(parents=True, exist_ok=True)
             result = subprocess.run(
@@ -933,9 +930,7 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
     # Auto-detect lxdbr0 bridge to allow LXD containers to reach the proxy.
     lxd_bridge_ip, lxd_bridge_subnet = _get_lxd_bridge_info()
     if lxd_bridge_ip and lxd_bridge_subnet:
-        console.print(
-            f"  [dim]LXD bridge detected: {lxd_bridge_ip} ({lxd_bridge_subnet})[/dim]"
-        )
+        console.print(f"  [dim]LXD bridge detected: {lxd_bridge_ip} ({lxd_bridge_subnet})[/dim]")
         replacements["%%LXD_ALLOW_LINE%%"] = f"    allow {lxd_bridge_subnet};\n"
     else:
         replacements["%%LXD_ALLOW_LINE%%"] = ""
@@ -1014,11 +1009,23 @@ def generate_tls_cert(cfg: Settings, force: bool = False) -> bool:
     console.print(f"Generating cert for IP [bold]{lan_ip}[/bold] → {cert_path}")
 
     cmd = [
-        "sudo", "openssl", "req", "-x509", "-newkey", "rsa:4096",
-        "-keyout", str(key_path), "-out", str(cert_path),
-        "-days", "3650", "-nodes",
-        "-subj", "/CN=local-llm",
-        "-addext", f"subjectAltName=IP:{lan_ip},DNS:local-llm",
+        "sudo",
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:4096",
+        "-keyout",
+        str(key_path),
+        "-out",
+        str(cert_path),
+        "-days",
+        "3650",
+        "-nodes",
+        "-subj",
+        "/CN=local-llm",
+        "-addext",
+        f"subjectAltName=IP:{lan_ip},DNS:local-llm",
     ]
 
     mkdir_result = subprocess.run(["sudo", "mkdir", "-p", str(cert_path.parent)], check=False)
@@ -1051,7 +1058,8 @@ def detect_lan_ip() -> str:
     """
     result = subprocess.run(
         ["ip", "-4", "addr", "show"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         return ""
@@ -1183,9 +1191,7 @@ def config_show() -> None:
             cost_str = ""
             if not m.cost.is_zero():
                 cost_str = f"  cost: {m.cost.input:.4g}/{m.cost.output:.4g}"
-            console.print(
-                f"  {active_marker} {m.alias}  {m.size:>8}  {m.description}{cost_str}"
-            )
+            console.print(f"  {active_marker} {m.alias}  {m.size:>8}  {m.description}{cost_str}")
         console.print("\n[dim]▶ = active[/dim]")
 
     opencode_cfg = _build_opencode_config(cfg)
