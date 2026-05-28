@@ -31,7 +31,8 @@ def _setup_host_client() -> None:
     if not config_path.exists():
         console.print(
             f"[red]ERROR:[/red] {CONFIG_FILENAME} not found.\n"
-            "  Run [bold]uv run llm server setup[/bold] on the server first."
+            "  On a client-only machine, run [bold]uv run llm config init[/bold] first.\n"
+            "  On the server machine, run [bold]uv run llm server setup[/bold] first."
         )
         raise typer.Exit(1)
 
@@ -41,9 +42,9 @@ def _setup_host_client() -> None:
     # Client configs (opencode, pi)
     apply_client_configs(cfg)
 
-    # Shell env vars
-    cert_path = cfg.proxy.cert_path
-    base_url = f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}/v1"
+    # Shell env vars — prefer explicit client settings, fall back to proxy settings.
+    base_url = cfg.client.server_url or f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}/v1"
+    cert_path = cfg.client.cert_path or cfg.proxy.cert_path
     api_key = cfg.auth.api_key
     actions = configure_shell_env_host(base_url, api_key, cert_path)
     for action in actions:

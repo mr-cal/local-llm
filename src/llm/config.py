@@ -406,6 +406,101 @@ def try_load_lxd() -> LxdSettings | None:
 app = typer.Typer(help="Manage configuration and render templates.", no_args_is_help=True)
 
 
+def _prompt_init(prompt: str, default: str = "") -> str:
+    """Prompt the user for input during config init, showing a default."""
+    suffix = f" [{default}]" if default else ""
+    result = input(f"{prompt}{suffix}: ").strip()
+    return result or default
+
+
+@app.command("init")
+def config_init() -> None:
+    """Create a minimal client-only config.toml interactively.
+
+    Use this on a machine that connects to a remote server but does not
+    run llama-server itself.  For a server machine, use instead:
+
+        uv run llm server setup
+    """
+    import re  # noqa: PLC0415
+
+    config_path = find_config()
+
+    console.print("\n[bold cyan]═══ local-llm client init ═══[/bold cyan]\n")
+
+    if config_path.exists():
+        console.print(f"[yellow]Config already exists:[/yellow] {config_path}")
+        answer = _prompt_init("  Overwrite?", "n")
+        if answer.lower() not in ("y", "yes"):
+            console.print("Aborted.")
+            raise typer.Exit(0)
+    else:
+        config_path = Path.cwd() / CONFIG_FILENAME
+
+    # ── Step 1: Server connection ─────────────────────────────────────────
+    console.print("[bold]Step 1/3[/bold] — Server connection")
+    server_url = _prompt_init("  Server URL", "https://192.168.1.x:8443/v1")
+
+    # ── Step 2: Auth ──────────────────────────────────────────────────────
+    console.print("\n[bold]Step 2/3[/bold] — Authentication")
+    console.print("  [dim]Find the API key in config.toml on the server (auth.api_key).[/dim]")
+    api_key = _prompt_init("  API key")
+
+    # ── Step 3: TLS certificate ───────────────────────────────────────────
+    console.print("\n[bold]Step 3/3[/bold] — TLS certificate")
+    default_cert = "~/.config/local-llm/cert.pem"
+    cert_path = _prompt_init("  Local cert path", default_cert)
+    cert_expanded = Path(cert_path).expanduser()
+
+    if not cert_expanded.exists():
+        console.print(f"\n  [yellow]Cert not found at {cert_expanded}[/yellow]")
+        fetch = _prompt_init("  Fetch from server via scp? (y/n)", "y")
+        if fetch.lower() in ("y", "yes"):
+            server_host = _prompt_init("  Server SSH host (e.g. user@192.168.1.209)")
+            remote_cert = _prompt_init("  Remote cert path", "/etc/ssl/local-llm/cert.pem")
+            cert_expanded.parent.mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                ["scp", f"{server_host}:{remote_cert}", str(cert_expanded)],
+                check=False,
+            )
+            if result.returncode == 0:
+                console.print(f"  [green]✓[/green] Cert copied to {cert_expanded}")
+            else:
+                console.print(
+                    f"  [red]✗[/red] scp failed — copy it manually:\n"
+                    f"    scp {server_host}:{remote_cert} {cert_expanded}"
+                )
+
+    # ── Build and write config ────────────────────────────────────────────
+    match = re.match(r"https?://([^:/]+):(\d+)", server_url)
+    lan_ip = match.group(1) if match else "192.168.1.100"
+    proxy_port = int(match.group(2)) if match else 8443
+
+    cfg_dict = {
+        "server": {"enabled": False},
+        "proxy": {
+            "enabled": False,
+            "lan_ip": lan_ip,
+            "port": proxy_port,
+            "cert_path": str(cert_expanded),
+        },
+        "client": {
+            "enabled": True,
+            "server_url": server_url,
+            "cert_path": str(cert_expanded),
+        },
+        "auth": {"api_key": api_key},
+    }
+
+    write_config_toml(cfg_dict, config_path)
+    console.print(f"\n  [green]✓[/green] Config written: {config_path}")
+    console.print(
+        "\n[bold green]✓ Config created![/bold green]\n"
+        "\n  Next, set up client tools (opencode, pi, shell env):"
+        "\n    [bold]uv run llm client setup[/bold]"
+    )
+
+
 def _sudo(*args: str, desc: str) -> bool:
     """Run a sudo command, printing what runs. Returns True on success."""
     cmd = ["sudo", *args]
