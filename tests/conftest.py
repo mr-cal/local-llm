@@ -263,19 +263,20 @@ def tmp_client_config(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def fake_find_config(monkeypatch, tmp_path: Path):
-    """Patch client.find_config to return a path, and chdir to tmp_path.
+def fake_find_config(monkeypatch, tmp_path: Path, tmp_client_config: Path):
+    """Patch client.find_config to return a pre-populated config.toml path.
 
-    Returns the path so the caller can write/modify the config file.
+    Also patches config.find_config so load_config() works inside client code.
+    Returns the path so the caller can read/modify the config file.
     """
-    config_path = tmp_path / "config.toml"
 
     def _fake_find():
-        return config_path
+        return tmp_client_config
 
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(tmp_client_config.parent)
     monkeypatch.setattr("llm.client.find_config", _fake_find)
-    return config_path
+    monkeypatch.setattr("llm.config.find_config", _fake_find)
+    return tmp_client_config
 
 
 @pytest.fixture

@@ -1,6 +1,7 @@
-"""LXD container and VM management for local LLM development.
+"""LXD container and VM management — library functions.
 
-Ported from craft-llm/setup-container.py; adapted to the local-llm typer CLI.
+All container creation, configuration, and verification logic lives here
+as plain functions.  CLI commands are in ``client.py`` and ``server.py``.
 """
 
 from __future__ import annotations
@@ -10,12 +11,18 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Annotated
 
-import typer
 from rich.console import Console
 
-from llm.config import _build_pi_config_for_container, _get_lxd_bridge_info, load_config, try_load_lxd
+from llm.config import (
+    _build_pi_config_for_container,
+    _get_lxd_bridge_info,
+    load_config,
+    try_load_lxd,
+)
+
+# Version stored in LXD container metadata for future compatibility handling.
+LOCAL_LLM_VERSION = 1
 
 CONTAINER_PREFIX = "craft-llm"
 HOST_UID = os.getuid()
@@ -36,22 +43,6 @@ _DEFAULT_MOUNTS: list[tuple[str, str, str]] = [
     ("opencode-config", f"{HOST_HOME}/.config/opencode", f"{CONTAINER_HOME}/.config/opencode"),
 ]
 
-
-def _load_lxd_globals() -> tuple[list[tuple[str, str, str]], list[str]]:
-    """Load mounts and craft_dirs from config.toml [lxd], falling back to defaults."""
-    lxd = try_load_lxd()
-    if lxd is None:
-        return _DEFAULT_MOUNTS, []
-    mounts = (
-        [(m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser())) for m in lxd.mounts]
-        if lxd.mounts
-        else _DEFAULT_MOUNTS
-    )
-    return mounts, lxd.craft_dirs
-
-
-MOUNTS, MAKE_SETUP_DIRS = _load_lxd_globals()
-
 LSP_CONFIG_PATH = f"{CONTAINER_HOME}/.copilot/lsp-config.json"
 
 PYLSP_LSP_CONFIG = {
@@ -66,11 +57,23 @@ PYLSP_LSP_CONFIG = {
     }
 }
 
-app = typer.Typer(
-    help="Create and manage LXD containers/VMs for local LLM development.",
-    no_args_is_help=True,
-)
 console = Console()
+
+
+def load_lxd_settings() -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Load mounts and craft_dirs from config.toml [lxd], falling back to defaults.
+
+    Called at command time (not import time) to pick up config changes.
+    """
+    lxd = try_load_lxd()
+    if lxd is None:
+        return _DEFAULT_MOUNTS, []
+    mounts = (
+        [(m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser())) for m in lxd.mounts]
+        if lxd.mounts
+        else _DEFAULT_MOUNTS
+    )
+    return mounts, lxd.craft_dirs
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -121,7 +124,7 @@ def wait_for_container(container, timeout=90):
     else:
         console.print()
         console.print(f"[red]ERROR:[/red] {container} did not become ready within {timeout}s.")
-        raise typer.Exit(1)
+        raise RuntimeError(f"{container} did not become ready within {timeout}s.")
 
     console.print("  Waiting for cloud-init...", end="", highlight=False)
     deadline = time.time() + timeout
@@ -142,7 +145,7 @@ def wait_for_container(container, timeout=90):
         time.sleep(2)
     console.print()
     console.print(f"[red]ERROR:[/red] cloud-init did not finish within {timeout}s.")
-    raise typer.Exit(1)
+    raise RuntimeError(f"cloud-init did not finish within {timeout}s.")
 
 
 def container_exists(container):
@@ -397,16 +400,22 @@ def configure_idmap(container, step: str = "2/5"):
     wait_for_container(container)
 
 
-def add_mounts(container, step: str = "3/5", uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
+def add_mounts(
+    container,
+    mounts: list[tuple[str, str, str]],
+    step: str = "3/5",
+    uid: int = CONTAINER_UID,
+    gid: int = CONTAINER_GID,
+):
     console.print(f"\n[bold][{step}][/bold] Adding bind mounts...")
 
     # Pre-create mount-point parent directories as the correct user so LXD doesn't
     # create them as root when it sets up the disk devices on the next boot.
-    parent_dirs = {str(Path(container_path).parent) for _, _, container_path in MOUNTS}
+    parent_dirs = {str(Path(container_path).parent) for _, _, container_path in mounts}
     for parent in sorted(parent_dirs):
         run(_cexec(container, uid, gid, "mkdir", "-p", parent))
 
-    for name, host_path, container_path in MOUNTS:
+    for name, host_path, container_path in mounts:
         os.makedirs(host_path, exist_ok=True)
         run(
             [
@@ -506,7 +515,7 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
     run(["lxc", "exec", container, "--", "apt-get", "clean"])
 
 
-def run_make_setup(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
+def run_make_setup(container, craft_dirs: list[str], uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
     """Run ``make setup`` in each craft project directory inside the container.
 
     The directories live under ~/dev which is bind-mounted, so the resulting
@@ -515,7 +524,7 @@ def run_make_setup(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID
     the calling terminal.
     """
     console.print("\nRunning make setup in craft directories (in container)...")
-    for directory in MAKE_SETUP_DIRS:
+    for directory in craft_dirs:
         if not os.path.isdir(directory):
             console.print(f"  [yellow]WARNING:[/yellow] directory not found on host, skipping: {directory}")
             continue
@@ -685,10 +694,10 @@ def setup_nested_lxd(container, step: str = "5/5", uid: int = HOST_UID):
     console.print("  Nested LXD ready.")
 
 
-def _t_venv_exists(container: str) -> None:
+def _t_venv_exists(container: str, craft_dirs: list[str]) -> None:
     """Assert that .venv exists in every configured craft directory inside the container."""
     missing = []
-    for directory in MAKE_SETUP_DIRS:
+    for directory in craft_dirs:
         if not os.path.isdir(directory):
             continue
         venv = os.path.join(directory, ".venv")
@@ -701,10 +710,10 @@ def _t_venv_exists(container: str) -> None:
     assert not missing, f"missing .venv in: {missing}"
 
 
-def _t_venv_interpreter_valid() -> None:
+def _t_venv_interpreter_valid(craft_dirs: list[str]) -> None:
     """Assert that the venv Python interpreter is executable on the host in all setup dirs."""
     failures = []
-    for directory in MAKE_SETUP_DIRS:
+    for directory in craft_dirs:
         if not os.path.isdir(directory):
             continue
         python = os.path.join(directory, ".venv", "bin", "python3")
@@ -897,7 +906,12 @@ def check(name, fn):
         return False
 
 
-def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
+def run_tests(
+    container,
+    mounts: list[tuple[str, str, str]] | None = None,
+    uid: int = CONTAINER_UID,
+    gid: int = CONTAINER_GID,
+):
     console.print("\n-- Verification tests ----------------------------------------------------------")
 
     def t_running():
@@ -955,8 +969,8 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         assert owner == CONTAINER_USER, f"owner is {owner!r}, expected {CONTAINER_USER!r}"
 
     def t_github_mount():
-        # Only test if the github mount is configured (it's optional — see MOUNTS).
-        if not any(name == "github" for name, _, _ in MOUNTS):
+        effective_mounts = mounts or _DEFAULT_MOUNTS
+        if not any(name == "github" for name, _, _ in effective_mounts):
             return
         subprocess.run(
             ["lxc", "exec", container, "--", "ls", f"{CONTAINER_HOME}/.github"],
@@ -1145,15 +1159,15 @@ def run_tests(container, uid: int = CONTAINER_UID, gid: int = CONTAINER_GID):
         console.print("=" * 60)
     else:
         console.print(f"[red]{passed}/{total} tests passed. See failures above.[/red]")
-        raise typer.Exit(1)
+        raise RuntimeError(f"{passed}/{total} tests passed.")
 
 
-def run_craft_setup_tests(container):
+def run_craft_setup_tests(container, craft_dirs: list[str]):
     console.print("\n-- Craft setup verification ----------------------------------------------------")
 
     tests = [
-        ("make setup completed (.venv)", lambda: _t_venv_exists(container)),
-        ("venv Python interpreters valid on host", _t_venv_interpreter_valid),
+        ("make setup completed (.venv)", lambda: _t_venv_exists(container, craft_dirs)),
+        ("venv Python interpreters valid on host", lambda: _t_venv_interpreter_valid(craft_dirs)),
     ]
 
     results = [check(name, fn) for name, fn in tests]
@@ -1165,94 +1179,50 @@ def run_craft_setup_tests(container):
         console.print(f"[green]All {total} craft setup tests passed.[/green]")
     else:
         console.print(f"[red]{passed}/{total} tests passed. See failures above.[/red]")
-        raise typer.Exit(1)
 
 
-# -- CLI commands -------------------------------------------------------------
-
-
-@app.command("create")
-def create(
-    number: Annotated[int, typer.Argument(help="Container/VM number suffix — creates craft-llm-<number>.")],
-    recreate: Annotated[
-        bool,
-        typer.Option("--recreate", help="Delete the container/VM if it already exists, then recreate it."),
-    ] = False,
-    lxd_vm: Annotated[
-        bool,
-        typer.Option("--lxd-vm", help="Create a full LXD VM instead of a container."),
-    ] = False,
-    cert_path: Annotated[
-        str | None,
-        typer.Option(
-            "--cert-path",
-            help=(
-                "Path to the server's TLS cert PEM file on the local machine. "
-                "Omit to auto-detect from config.toml [proxy] cert_path."
-            ),
-        ),
-    ] = None,
+def create_and_setup(
+    container_name: str,
+    *,
+    mounts: list[tuple[str, str, str]],
+    recreate: bool = False,
+    lxd_vm: bool = False,
+    cert_pem: str | None = None,
 ) -> None:
     """Create and configure an LXD container (or VM) for local LLM development.
 
-    Examples:
-
-      llm lxd create 1                   # create craft-llm-1 container
-
-      llm lxd create 2 --recreate        # delete and recreate craft-llm-2
-
-      llm lxd create 1 --lxd-vm          # create craft-llm-1 as a full VM
+    This is the library equivalent of the old ``llm lxd create`` command.
+    Raises ``RuntimeError`` on fatal errors instead of ``typer.Exit``.
     """
-    container = f"{CONTAINER_PREFIX}-{number}"
     kind = "VM" if lxd_vm else "container"
 
-    # Resolve the TLS cert — priority: --cert-path > config.toml cert_path
-    cert_pem: str | None = None
-    if cert_path:
-        cert_p = Path(cert_path).expanduser()
-        if cert_p.exists():
-            cert_pem = cert_p.read_text()
-        else:
-            console.print(
-                f"[red]ERROR:[/red] cert file not found at {cert_p}. "
-                "Check the path and try again."
-            )
-            raise typer.Exit(1)
-
-    if container_exists(container):
+    if container_exists(container_name):
         if not recreate:
-            console.print(
-                f"[red]ERROR:[/red] {kind} '{container}' already exists. "
-                "Pass [bold]--recreate[/bold] to delete and recreate it."
+            raise RuntimeError(
+                f"{kind} '{container_name}' already exists. "
+                "Pass recreate=True to delete and recreate it."
             )
-            raise typer.Exit(1)
-        console.print(f"Deleting existing {kind}: {container}")
-        run(["lxc", "delete", "--force", container])
+        console.print(f"Deleting existing {kind}: {container_name}")
+        run(["lxc", "delete", "--force", container_name])
 
-    console.print(f"Creating {kind}: {container}")
+    console.print(f"Creating {kind}: {container_name}")
 
     if lxd_vm:
-        # VMs have full OS-level isolation — raw.idmap is a container-only feature.
-        # Instead, _fix_vm_user_uid changes the in-VM user's UID to match HOST_UID
-        # so that bind-mounted files appear as owned by the VM user.
-        # Steps: 1=launch, 2=mounts, 3=packages, 4=pylsp, 5=nested-lxd
-        create_container(container, vm=True)
-        add_mounts(container, step="2/5", uid=HOST_UID, gid=HOST_GID)
-        install_packages(container, step="3/5", uid=HOST_UID)
-        install_pylsp(container, step="4/5", uid=HOST_UID, gid=HOST_GID)
-        setup_nested_lxd(container, step="5/5", uid=HOST_UID)
+        create_container(container_name, vm=True)
+        add_mounts(container_name, mounts, step="2/5", uid=HOST_UID, gid=HOST_GID)
+        install_packages(container_name, step="3/5", uid=HOST_UID)
+        install_pylsp(container_name, step="4/5", uid=HOST_UID, gid=HOST_GID)
+        setup_nested_lxd(container_name, step="5/5", uid=HOST_UID)
     else:
-        # Containers: 1=launch, 2=idmap, 3=mounts, 4=packages, 5=pylsp
-        create_container(container, vm=False)
-        configure_idmap(container, step="2/5")
-        add_mounts(container, step="3/5")
-        install_packages(container, step="4/5")
-        install_pylsp(container, step="5/5")
+        create_container(container_name, vm=False)
+        configure_idmap(container_name, step="2/5")
+        add_mounts(container_name, mounts, step="3/5")
+        install_packages(container_name, step="4/5")
+        install_pylsp(container_name, step="5/5")
 
     effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
     effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
 
-    # Auto-detect the lxdbr0 bridge IP so the container can reach the host.
     bridge_ip = _get_lxd_bridge_ip()
     if not bridge_ip:
         console.print(
@@ -1260,70 +1230,46 @@ def create(
             "Pi in the container may not be able to reach the LLM server."
         )
 
-    # Set up the Pi harness so it can reach the server from inside the container
     setup_pi_in_container(
-        container,
+        container_name,
         bridge_ip=bridge_ip,
         cert_pem=cert_pem,
         uid=effective_uid,
         gid=effective_gid,
     )
 
-    # Tag the container so it is discovered by `llm lxd refresh` without args.
-    _tag_as_managed(container)
+    _tag_as_managed(container_name)
 
-    run_tests(container, uid=effective_uid, gid=effective_gid)
-
-    console.print(
-        f"\nNext: run [bold]llm lxd setup-crafts {number}[/bold] "
-        "to run 'make setup' in all craft project directories."
-    )
+    run_tests(container_name, mounts=mounts, uid=effective_uid, gid=effective_gid)
 
 
-@app.command("setup-crafts")
-def setup_crafts(
-    number: Annotated[int, typer.Argument(help="Container/VM number suffix — targets craft-llm-<number>.")],
-    lxd_vm: Annotated[
-        bool,
-        typer.Option("--lxd-vm", help="Force VM mode (uses HOST_UID/GID). Auto-detected if omitted."),
-    ] = False,
+def do_setup_crafts(
+    container_name: str,
+    craft_dirs: list[str],
+    *,
+    lxd_vm: bool = False,
 ) -> None:
     """Run 'make setup' in all craft project directories inside the container/VM.
 
-    The craft project directories are bind-mounted from the host, so the
-    resulting venvs are visible on the host at the same paths.  The instance
-    type (container vs VM) is auto-detected; pass ``--lxd-vm`` to override.
-
-    Examples:
-
-      llm lxd setup-crafts 1             # run make setup in craft-llm-1 (auto-detects VM)
-
-      llm lxd setup-crafts 1 --lxd-vm   # force VM mode
+    Raises ``RuntimeError`` if no craft_dirs are configured or container doesn't exist.
     """
-    container = f"{CONTAINER_PREFIX}-{number}"
-
-    if not MAKE_SETUP_DIRS:
-        console.print(
-            "[yellow]WARNING:[/yellow] No craft_dirs configured.\n\n"
-            "  Add them to the [lxd] section of config.toml, then re-run this command.\n"
-            "  Run [bold]uv run llm config init[/bold] to create config.toml if it doesn't exist."
+    if not craft_dirs:
+        raise RuntimeError(
+            "No craft_dirs configured. "
+            "Add them to the [lxd] section of config.toml, then re-run."
         )
-        raise typer.Exit(1)
 
-    if not container_exists(container):
-        console.print(
-            f"[red]ERROR:[/red] '{container}' does not exist. Create it first with 'llm lxd create'."
-        )
-        raise typer.Exit(1)
+    if not container_exists(container_name):
+        raise RuntimeError(f"'{container_name}' does not exist.")
 
-    is_vm = lxd_vm or container_is_vm(container)
+    is_vm = lxd_vm or container_is_vm(container_name)
     kind = "VM" if is_vm else "container"
-    console.print(f"  Detected {container} as {kind}.")
+    console.print(f"  Detected {container_name} as {kind}.")
 
     effective_uid = HOST_UID if is_vm else CONTAINER_UID
     effective_gid = HOST_GID if is_vm else CONTAINER_GID
-    run_make_setup(container, uid=effective_uid, gid=effective_gid)
-    run_craft_setup_tests(container)
+    run_make_setup(container_name, craft_dirs, uid=effective_uid, gid=effective_gid)
+    run_craft_setup_tests(container_name, craft_dirs)
 
 
 def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> None:
@@ -1368,90 +1314,33 @@ def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> No
     console.print(f"\n  [green]✓[/green] {container} refresh complete")
 
 
-@app.command("refresh")
-def refresh(
-    number: Annotated[
-        int | None,
-        typer.Argument(
-            help=(
-                "Container number suffix — targets craft-llm-<number>. "
-                f"Omit to refresh all containers tagged with {_MANAGED_TAG}=true."
-            )
-        ),
-    ] = None,
-    cert_path: Annotated[
-        str | None,
-        typer.Option(
-            "--cert-path",
-            help=(
-                "Path to the server's TLS cert PEM file. "
-                "Omit to auto-detect from config.toml [proxy] cert_path."
-            ),
-        ),
-    ] = None,
-    lxd_vm: Annotated[
-        bool,
-        typer.Option("--lxd-vm", help="Force VM mode for an explicitly named container."),
-    ] = False,
+def refresh_containers(
+    container_name: str | None = None,
+    *,
+    cert_pem: str | None = None,
+    lxd_vm: bool = False,
 ) -> None:
     """Update packages and re-apply config in managed LXD container(s).
 
-    When called without a container number, discovers every running container
-    tagged with ``user.local-llm-managed=true`` (set automatically by
-    ``llm lxd create``) and refreshes all of them.
+    When *container_name* is ``None``, discovers every running container tagged
+    with ``user.local-llm-managed=true`` and refreshes all of them.
 
-    Each refresh runs four steps:
-
-    1. **apt** — ``apt-get update && upgrade && autoremove``
-    2. **pi** — ``npm update -g @earendil-works/pi-coding-agent``
-    3. **copilot** — ``gh copilot update``
-    4. **pi config** — re-applies bridge /etc/hosts, models.json, TLS cert, and
-       shell environment variables (useful after cert regeneration or IP change)
-
-    Examples:
-
-      llm lxd refresh                    # refresh all managed containers
-
-      llm lxd refresh 1                  # refresh only craft-llm-1
-
-      llm lxd refresh 1 --cert-path /path/to/cert.pem
+    Raises ``RuntimeError`` if a named container doesn't exist or no managed
+    containers are found.
     """
-    cert_pem: str | None = None
-    if cert_path:
-        cert_p = Path(cert_path).expanduser()
-        if cert_p.exists():
-            cert_pem = cert_p.read_text()
-        else:
-            console.print(
-                f"[red]ERROR:[/red] cert file not found at {cert_p}. "
-                "Check the path and try again."
-            )
-            raise typer.Exit(1)
-
-    if number is not None:
-        # Single container by number.
-        container = f"{CONTAINER_PREFIX}-{number}"
-        if not container_exists(container):
-            console.print(
-                f"[red]ERROR:[/red] '{container}' does not exist. "
-                "Create it first with 'llm lxd create'."
-            )
-            raise typer.Exit(1)
-        is_vm = lxd_vm or container_is_vm(container)
+    if container_name is not None:
+        if not container_exists(container_name):
+            raise RuntimeError(f"'{container_name}' does not exist.")
+        is_vm = lxd_vm or container_is_vm(container_name)
         uid = HOST_UID if is_vm else CONTAINER_UID
         gid = HOST_GID if is_vm else CONTAINER_GID
-        _refresh_one(container, cert_pem=cert_pem, uid=uid, gid=gid)
+        _refresh_one(container_name, cert_pem=cert_pem, uid=uid, gid=gid)
     else:
-        # Discover all managed containers.
         managed = _list_managed_containers()
         if not managed:
-            console.print(
-                f"[yellow]No running containers tagged with {_MANAGED_TAG}=true found.[/yellow]\n"
-                "  Containers created with 'llm lxd create' are tagged automatically.\n"
-                "  To tag an existing container manually:\n"
-                f"    lxc config set <container> {_MANAGED_TAG}=true"
+            raise RuntimeError(
+                f"No running containers tagged with {_MANAGED_TAG}=true found."
             )
-            raise typer.Exit(0)
 
         console.print(
             f"Found [bold]{len(managed)}[/bold] managed container(s): "

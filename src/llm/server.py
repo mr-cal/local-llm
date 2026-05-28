@@ -1,4 +1,4 @@
-"""Server management: start, stop, restart, status, logs."""
+"""Server management: setup, start, stop, restart, status, logs."""
 
 from __future__ import annotations
 
@@ -13,10 +13,181 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from llm.config import load_config
+from llm.config import CONFIG_FILENAME, load_config
 
 app = typer.Typer(help="Manage the llama-server process.", no_args_is_help=True)
 console = Console()
+
+
+# ── server setup ──────────────────────────────────────────────────────────────
+
+
+def _prompt(prompt: str, default: str = "") -> str:
+    """Prompt the user for input, showing a default."""
+    suffix = f" [{default}]" if default else ""
+    result = input(f"{prompt}{suffix}: ").strip()
+    return result or default
+
+
+def _prompt_choice(prompt: str, choices: list[str], default: str = "") -> str:
+    """Prompt the user to pick from a list of choices."""
+    for i, c in enumerate(choices, 1):
+        marker = " (default)" if c == default else ""
+        print(f"  {i}. {c}{marker}")
+    raw = input(f"{prompt} [1-{len(choices)}]: ").strip()
+    if not raw and default:
+        return default
+    try:
+        idx = int(raw) - 1
+        if 0 <= idx < len(choices):
+            return choices[idx]
+    except ValueError:
+        if raw in choices:
+            return raw
+    return default or choices[0]
+
+
+@app.command("setup")
+def setup(
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite existing TLS cert even if present."),
+    ] = False,
+) -> None:
+    """Guided setup for the server (and local client).
+
+    Creates or updates config.toml, generates TLS cert + API key,
+    renders nginx/systemd configs, and configures the local client
+    (opencode, pi, shell env vars).  Safe to re-run.
+    """
+    from llm.config import (  # noqa: PLC0415
+        apply_client_configs,
+        apply_server_configs,
+        configure_shell_env_host,
+        detect_lan_ip,
+        generate_api_key,
+        generate_tls_cert,
+        write_config_toml,
+    )
+
+    project_root = Path.cwd()
+    config_path = project_root / CONFIG_FILENAME
+    existing_cfg: dict | None = None  # type: ignore[type-arg]
+
+    console.print("\n[bold cyan]═══ local-llm server setup ═══[/bold cyan]\n")
+
+    # ── Load existing config if present ───────────────────────────────────
+    if config_path.exists():
+        import tomllib  # noqa: PLC0415
+
+        with config_path.open("rb") as f:
+            existing_cfg = tomllib.load(f)
+        console.print(f"[dim]Found existing config: {config_path}[/dim]\n")
+
+    def _get(section: str, key: str, fallback: str = "") -> str:
+        if existing_cfg and section in existing_cfg:
+            return str(existing_cfg[section].get(key, fallback))
+        return fallback
+
+    # ── Step 1: LAN IP ────────────────────────────────────────────────────
+    console.print("[bold]Step 1/6[/bold] — Network")
+    detected_ip = detect_lan_ip()
+    current_ip = _get("proxy", "lan_ip", detected_ip or "192.168.1.100")
+    lan_ip = _prompt("  LAN IP", current_ip)
+
+    # Derive subnet from IP (e.g. 192.168.1.100 → 192.168.1.0/24)
+    parts = lan_ip.rsplit(".", 1)
+    default_subnet = f"{parts[0]}.0/24" if len(parts) == 2 else "192.168.1.0/24"
+    current_subnet = _get("proxy", "lan_subnet", default_subnet)
+    lan_subnet = _prompt("  LAN subnet", current_subnet)
+
+    proxy_port = int(_prompt("  Proxy port (HTTPS)", _get("proxy", "port", "8443")))
+    server_port = int(_prompt("  Server port (internal)", _get("server", "port", "8080")))
+
+    # ── Step 2: Auth ──────────────────────────────────────────────────────
+    console.print("\n[bold]Step 2/6[/bold] — Authentication")
+    current_key = _get("auth", "api_key", "")
+    if current_key:
+        console.print(f"  [dim]API key already set ({current_key[:8]}…)[/dim]")
+        api_key = current_key
+    else:
+        api_key = generate_api_key()
+        console.print(f"  [green]Generated API key:[/green] {api_key[:16]}…")
+
+    # ── Step 3: Server tuning ─────────────────────────────────────────────
+    console.print("\n[bold]Step 3/6[/bold] — Server tuning")
+    n_gpu_layers = int(_prompt("  GPU layers", _get("server", "n_gpu_layers", "20")))
+    n_ctx = int(_prompt("  Context size", _get("server", "n_ctx", "65536")))
+    n_threads = int(_prompt("  Threads", _get("server", "n_threads", "12")))
+
+    # ── Step 4: Model ─────────────────────────────────────────────────────
+    console.print("\n[bold]Step 4/6[/bold] — Model")
+    models_dir = _prompt("  Models directory", _get("models", "dir", "~/models"))
+    active_model = _get("models", "active", "qwen2.5-coder-14b-q4")
+    console.print(f"  Active model: [bold]{active_model}[/bold]")
+    console.print("  [dim](Change models later with: llm model switch)[/dim]")
+
+    # ── Build config dict ─────────────────────────────────────────────────
+    cfg_dict: dict = {}  # type: ignore[type-arg]
+    if existing_cfg:
+        cfg_dict = dict(existing_cfg)
+
+    cfg_dict["proxy"] = {
+        **cfg_dict.get("proxy", {}),
+        "lan_ip": lan_ip,
+        "lan_subnet": lan_subnet,
+        "port": proxy_port,
+    }
+    cfg_dict["server"] = {
+        **cfg_dict.get("server", {}),
+        "port": server_port,
+        "n_gpu_layers": n_gpu_layers,
+        "n_ctx": n_ctx,
+        "n_threads": n_threads,
+    }
+    cfg_dict["auth"] = {"api_key": api_key}
+    cfg_dict["models"] = {
+        **cfg_dict.get("models", {}),
+        "dir": models_dir,
+        "active": active_model,
+    }
+
+    # ── Write config.toml ─────────────────────────────────────────────────
+    console.print("\n[bold]Step 5/6[/bold] — Writing config")
+    write_config_toml(cfg_dict, config_path)
+    console.print(f"  [green]✓[/green] {config_path}")
+
+    # Reload config from the file we just wrote
+    cfg = load_config()
+
+    # ── Generate TLS cert ─────────────────────────────────────────────────
+    if not generate_tls_cert(cfg, force=force):
+        console.print("  [red]✗[/red] TLS cert generation failed")
+        raise typer.Exit(1)
+
+    # ── Step 6: Apply configs ─────────────────────────────────────────────
+    console.print("\n[bold]Step 6/6[/bold] — Applying configs")
+
+    # Server configs (nginx, systemd)
+    apply_server_configs(cfg, project_root)
+
+    # Client configs for the local machine (opencode, pi, shell env)
+    apply_client_configs(cfg)
+
+    # Shell env vars
+    cert_path = cfg.proxy.cert_path
+    base_url = f"https://{lan_ip}:{proxy_port}/v1"
+    actions = configure_shell_env_host(base_url, api_key, cert_path)
+    for action in actions:
+        console.print(f"  [green]✓[/green] {action}")
+
+    # ── Done ──────────────────────────────────────────────────────────────
+    console.print("\n[bold green]✓ Server setup complete![/bold green]")
+    console.print(
+        "\n  Start the server:     [bold]uv run llm server start[/bold]"
+        "\n  Check server status:  [bold]uv run llm server status[/bold]"
+        "\n  Set up a container:   [bold]uv run llm client setup --container <name>[/bold]"
+    )
 
 
 # ── nginx helpers ─────────────────────────────────────────────────────────────

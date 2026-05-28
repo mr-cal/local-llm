@@ -1,152 +1,372 @@
-"""Client setup helper: print connection instructions for the LXD container."""
+"""Client commands: setup (host + container), check, show, refresh, crafts, list."""
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.syntax import Syntax
 
-from llm.config import find_config, load_config
+from llm.config import CONFIG_FILENAME, find_config, load_config
 
-app = typer.Typer(help="Print client setup instructions.", no_args_is_help=True)
+app = typer.Typer(help="Client setup and management.", no_args_is_help=True)
 console = Console()
 
-_PLACEHOLDER_URL = "https://<SERVER_LAN_IP>:8443/v1"
-_PLACEHOLDER_KEY = "<your-api-key>"
-_PLACEHOLDER_MODEL = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
-_PLACEHOLDER_IP = "<SERVER_LAN_IP>"
+
+# ── client setup ──────────────────────────────────────────────────────────────
+
+
+def _setup_host_client() -> None:
+    """Set up the current machine as a client (opencode, pi, shell env)."""
+    from llm.config import (  # noqa: PLC0415
+        apply_client_configs,
+        configure_shell_env_host,
+    )
+
+    config_path = find_config()
+    if not config_path.exists():
+        console.print(
+            f"[red]ERROR:[/red] {CONFIG_FILENAME} not found.\n"
+            "  Run [bold]uv run llm server setup[/bold] on the server first."
+        )
+        raise typer.Exit(1)
+
+    cfg = load_config()
+    console.print("\n[bold cyan]═══ local-llm client setup ═══[/bold cyan]\n")
+
+    # Client configs (opencode, pi)
+    apply_client_configs(cfg)
+
+    # Shell env vars
+    cert_path = cfg.proxy.cert_path
+    base_url = f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}/v1"
+    api_key = cfg.auth.api_key
+    actions = configure_shell_env_host(base_url, api_key, cert_path)
+    for action in actions:
+        console.print(f"  [green]✓[/green] {action}")
+
+    console.print("\n[bold green]✓ Host client setup complete![/bold green]")
+    console.print(
+        "\n  Verify connectivity: [bold]uv run llm client check[/bold]"
+        "\n  Restart your shell to pick up env vars, or run:"
+        "\n    source ~/.config/local-llm/env"
+    )
+
+
+def _setup_container_client(
+    container_name: str,
+    *,
+    recreate: bool = False,
+    lxd_vm: bool = False,
+) -> None:
+    """Create an LXD container and fully configure it as a client."""
+    from llm.config import _build_opencode_config_for_container  # noqa: PLC0415
+    from llm.lxd import (  # noqa: PLC0415
+        CONTAINER_GID,
+        CONTAINER_HOME,
+        CONTAINER_UID,
+        HOST_GID,
+        HOST_UID,
+        LOCAL_LLM_VERSION,
+        _cexec,
+        create_and_setup,
+        load_lxd_settings,
+    )
+
+    config_path = find_config()
+    if not config_path.exists():
+        console.print(
+            f"[red]ERROR:[/red] {CONFIG_FILENAME} not found.\n"
+            "  Run [bold]uv run llm server setup[/bold] first."
+        )
+        raise typer.Exit(1)
+
+    cfg = load_config()
+    mounts, _ = load_lxd_settings()
+
+    console.print(f"\n[bold cyan]═══ Setting up container: {container_name} ═══[/bold cyan]\n")
+
+    # Read TLS cert from host
+    cert_pem: str | None = None
+    cert_file = Path(cfg.proxy.cert_path)
+    if cert_file.exists():
+        cert_pem = cert_file.read_text()
+    else:
+        console.print(
+            f"[yellow]Warning:[/yellow] Cert not found at {cert_file}.\n"
+            "  Container setup will skip cert installation.\n"
+            "  Generate it first: [bold]uv run llm server setup[/bold]"
+        )
+
+    # Create and configure the container (LXD, packages, mounts, pi)
+    create_and_setup(
+        container_name,
+        mounts=mounts,
+        recreate=recreate,
+        lxd_vm=lxd_vm,
+        cert_pem=cert_pem,
+    )
+
+    # Set up opencode config inside the container (separate from host bind mount)
+    effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
+    effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
+
+    console.print("\n[bold]Setting up opencode config in container...[/bold]")
+    opencode_cfg = _build_opencode_config_for_container(cfg, "local-llm")
+    opencode_json = json.dumps(opencode_cfg, indent=2) + "\n"
+    opencode_path = f"{CONTAINER_HOME}/.config/opencode/config.json"
+    subprocess.run(
+        _cexec(container_name, effective_uid, effective_gid, "bash", "-c", f"cat > {opencode_path}"),
+        input=opencode_json.encode(),
+        check=True,
+    )
+    console.print(f"  [green]✓[/green] Wrote opencode config to {opencode_path}")
+
+    # Tag with version
+    subprocess.run(
+        ["lxc", "config", "set", container_name, f"user.local-llm-version={LOCAL_LLM_VERSION}"],
+        check=True,
+    )
+
+    console.print(f"\n[bold green]✓ Container '{container_name}' is ready![/bold green]")
+    console.print(
+        f"\n  Enter the container:  [bold]lxc exec {container_name} -- su -l $USER[/bold]"
+        f"\n  Set up craft dirs:    [bold]uv run llm client crafts {container_name}[/bold]"
+    )
 
 
 @app.command("setup")
 def setup(
-    base_url: Annotated[
+    container: Annotated[
         str | None,
-        typer.Option("--base-url", help="Override server base URL (e.g. https://192.168.1.x:8443/v1)."),
+        typer.Option(
+            "--container", "-c",
+            help="Create an LXD container with this name and set it up as a client.",
+        ),
     ] = None,
-    api_key: Annotated[
-        str | None,
-        typer.Option("--api-key", help="Override API key."),
-    ] = None,
+    recreate: Annotated[
+        bool,
+        typer.Option("--recreate", help="Delete and recreate the container if it already exists."),
+    ] = False,
+    lxd_vm: Annotated[
+        bool,
+        typer.Option("--lxd-vm", help="Create a full LXD VM instead of a container."),
+    ] = False,
 ) -> None:
-    """Print export commands for configuring opencode in the LXD container.
+    """Set up a client — either the current host or an LXD container.
 
-    Run this on the SERVER to generate instructions, then paste the output
-    into the LXD container. The client itself does not need this CLI or a
-    config.toml — only opencode and the two env vars below.
+    Without --container: configures opencode, pi, and shell env vars on this machine.
+    With --container: creates an LXD container and fully configures it as a client.
     """
-    # Try loading config; fall back to placeholders if not on the server
+    if container:
+        _setup_container_client(container, recreate=recreate, lxd_vm=lxd_vm)
+    else:
+        _setup_host_client()
+
+
+# ── client check ──────────────────────────────────────────────────────────────
+
+
+@app.command("check")
+def check() -> None:
+    """Test connectivity to the configured LLM server.
+
+    Hits the health endpoint and reports connection status, TLS, auth,
+    and model info.
+    """
+    import time  # noqa: PLC0415
+
+    import httpx  # noqa: PLC0415
+
     config_path = find_config()
+    if not config_path.exists():
+        console.print(
+            f"[red]ERROR:[/red] {CONFIG_FILENAME} not found.\n"
+            "  Run [bold]uv run llm server setup[/bold] first."
+        )
+        raise typer.Exit(1)
+
+    cfg = load_config()
+    base_url = f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}"
+    health_url = f"{base_url}/health"
+    cert_path = cfg.proxy.cert_path
+
+    console.print(f"\n[bold]Checking server at {base_url}[/bold]\n")
+
+    # Health check
+    try:
+        start = time.monotonic()
+        resp = httpx.get(
+            health_url,
+            headers={"Authorization": f"Bearer {cfg.auth.api_key}"},
+            verify=cert_path if Path(cert_path).exists() else False,
+            timeout=10,
+        )
+        latency = (time.monotonic() - start) * 1000
+        console.print(f"  [green]✓[/green] Health:  {resp.status_code}  ({latency:.0f}ms)")
+    except httpx.ConnectError as e:
+        console.print(f"  [red]✗[/red] Connection failed: {e}")
+        raise typer.Exit(1) from None
+    except Exception as e:
+        console.print(f"  [red]✗[/red] Error: {e}")
+        raise typer.Exit(1) from None
+
+    # TLS check
+    if Path(cert_path).exists():
+        console.print(f"  [green]✓[/green] TLS:     cert at {cert_path}")
+    else:
+        console.print(f"  [yellow]⚠[/yellow] TLS:     cert not found at {cert_path}")
+
+    # Model info
+    try:
+        models_resp = httpx.get(
+            f"{base_url}/v1/models",
+            headers={"Authorization": f"Bearer {cfg.auth.api_key}"},
+            verify=cert_path if Path(cert_path).exists() else False,
+            timeout=5,
+        )
+        if models_resp.status_code == 200:
+            data = models_resp.json()
+            models = data.get("data", [])
+            if models:
+                model_id = models[0].get("id", "unknown")
+                console.print(f"  [green]✓[/green] Model:   {model_id}")
+            else:
+                console.print("  [yellow]⚠[/yellow] Model:   no models loaded")
+        else:
+            console.print(f"  [yellow]⚠[/yellow] Model:   HTTP {models_resp.status_code}")
+    except Exception:
+        console.print("  [yellow]⚠[/yellow] Model:   could not query")
+
+    console.print("\n[bold green]✓ Server is reachable![/bold green]")
+
+
+# ── client show ───────────────────────────────────────────────────────────────
+
+
+@app.command("show")
+def show() -> None:
+    """Print current client connection info (URL, model, cert)."""
+    config_path = find_config()
+    if not config_path.exists():
+        console.print(f"[yellow]{CONFIG_FILENAME} not found.[/yellow]")
+        raise typer.Exit(1)
+
+    cfg = load_config()
+    base_url = f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}/v1"
+    cert_path = cfg.proxy.cert_path
+    cert_exists = Path(cert_path).exists()
+
+    console.print(f"  URL:    [cyan]{base_url}[/cyan]")
+    console.print(f"  Model:  {cfg.models.active}")
+    key_display = f"{cfg.auth.api_key[:16]}…" if cfg.auth.api_key else "[yellow]not set[/yellow]"
+    console.print(f"  Key:    {key_display}")
+    cert_status = "[green]exists[/green]" if cert_exists else "[red]missing[/red]"
+    console.print(f"  Cert:   {cert_path}  {cert_status}")
+
+
+# ── client list ───────────────────────────────────────────────────────────────
+
+
+@app.command("list")
+def list_containers() -> None:
+    """List all managed LXD containers with their status and version."""
+    from llm.lxd import _list_managed_containers  # noqa: PLC0415
+
+    managed = _list_managed_containers()
+    if not managed:
+        console.print(
+            "[yellow]No managed containers found.[/yellow]\n"
+            "  Create one with: [bold]uv run llm client setup --container <name>[/bold]"
+        )
+        return
+
+    console.print(f"\n[bold]Managed containers ({len(managed)}):[/bold]\n")
+    for name in managed:
+        # Get version from metadata
+        r = subprocess.run(
+            ["lxc", "config", "get", name, "user.local-llm-version"],
+            capture_output=True, text=True,
+        )
+        version = r.stdout.strip() or "unknown"
+
+        # Get status
+        r2 = subprocess.run(
+            ["lxc", "list", name, "--format=json"],
+            capture_output=True, text=True,
+        )
+        status = "unknown"
+        try:
+            data = json.loads(r2.stdout)
+            if data:
+                status = data[0].get("status", "unknown")
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+        status_color = "green" if status == "Running" else "yellow"
+        console.print(f"  [{status_color}]●[/{status_color}] {name}  v{version}  ({status})")
+
+
+# ── client refresh ────────────────────────────────────────────────────────────
+
+
+@app.command("refresh")
+def refresh(
+    container: Annotated[
+        str | None,
+        typer.Argument(help="Container name. Omit to refresh all managed containers."),
+    ] = None,
+    lxd_vm: Annotated[
+        bool,
+        typer.Option("--lxd-vm", help="Force VM mode for the named container."),
+    ] = False,
+) -> None:
+    """Update packages and re-apply client config in managed LXD container(s).
+
+    Without arguments, refreshes all containers tagged as managed.
+    """
+    from llm.lxd import refresh_containers  # noqa: PLC0415
+
+    # Read cert from host
     cert_pem: str | None = None
+    config_path = find_config()
     if config_path.exists():
         cfg = load_config()
-        resolved_base_url = base_url or f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}/v1"
-        resolved_key = api_key or cfg.auth.api_key
-        resolved_model = cfg.models.active
-        if resolved_key == "":
-            console.print(
-                "[yellow]Warning:[/yellow] api_key is not set.\n"
-                "[bold](on the server)[/bold] Generate a real key:\n"
-                '  python -c "import secrets; print(secrets.token_hex(32))"\n'
-                "Then update [auth] api_key in config.toml and re-run this command.\n"
-            )
         cert_file = Path(cfg.proxy.cert_path)
         if cert_file.exists():
-            cert_pem = cert_file.read_text().strip()
-        else:
-            console.print(
-                f"[yellow]Cert not found at {cert_file}[/yellow] — generate it first "
-                "[bold](on the server)[/bold]:\n"
-                "  [bold]uv run llm config gencert[/bold]\n"
-                "(Sets the required SubjectAltName — plain CN= certs are rejected by Node.js)\n"
-            )
-    else:
-        console.print(
-            "[yellow]Note:[/yellow] No config.toml found — showing placeholder values.\n"
-            "Run this command on the server (where config.toml lives) to see real values,\n"
-            "or pass them directly with --base-url and --api-key flags.\n"
-        )
-        resolved_base_url = base_url or _PLACEHOLDER_URL
-        resolved_key = api_key or _PLACEHOLDER_KEY
-        resolved_model = _PLACEHOLDER_MODEL
+            cert_pem = cert_file.read_text()
 
-    health_url = resolved_base_url.removesuffix("/v1")
-    model_id = resolved_model.removesuffix(".gguf")
+    try:
+        refresh_containers(container, cert_pem=cert_pem, lxd_vm=lxd_vm)
+    except RuntimeError as e:
+        console.print(f"[red]ERROR:[/red] {e}")
+        raise typer.Exit(1) from None
 
-    # ── Step 1: TLS cert ─────────────────────────────────────────────────────
-    console.print("[bold]Step 1 — Install TLS certificate[/bold]  (in the LXD container)\n")
-    if cert_pem:
-        console.print(
-            "Save the following certificate to a file on the container, then trust it for Node.js:\n"
-        )
-        console.print(Syntax(cert_pem, "text", theme="monokai"))
-        console.print()
-        cert_install = (
-            "# Save cert (paste the PEM block above into this file)\n"
-            f"mkdir -p ~/.config/opencode\n"
-            f"cat > ~/.config/opencode/local-llm.pem << 'EOF'\n"
-            f"{cert_pem}\n"
-            "EOF\n\n"
-            "# Tell Node.js (opencode) to trust it — add to ~/.bashrc\n"
-            "echo 'export NODE_EXTRA_CA_CERTS=\"$HOME/.config/opencode/local-llm.pem\"' >> ~/.bashrc\n"
-            'export NODE_EXTRA_CA_CERTS="$HOME/.config/opencode/local-llm.pem"'
-        )
-        console.print(Syntax(cert_install, "bash", theme="monokai"))
-    else:
-        console.print(
-            "Once the cert exists at the configured path, re-run this command to get\n"
-            "the cert content and installation instructions.\n\n"
-            "Alternatively, copy the cert manually from the server and set:\n"
-            '  [bold]export NODE_EXTRA_CA_CERTS="/path/to/local-llm.pem"[/bold]'
-        )
-    console.print()
 
-    # ── Step 2: env vars ─────────────────────────────────────────────────────
-    console.print("[bold]Step 2 — Environment variables[/bold]  (in the LXD container — add to ~/.bashrc)\n")
-    export_block = (
-        f'export OPENAI_BASE_URL="{resolved_base_url}"\n'
-        f'export OPENAI_API_KEY="{resolved_key}"\n'
-        f'export NODE_EXTRA_CA_CERTS="$HOME/.config/opencode/local-llm.pem"'
-    )
-    console.print(Syntax(export_block, "bash", theme="monokai"))
-    console.print()
+# ── client crafts ─────────────────────────────────────────────────────────────
 
-    # ── Step 3: opencode config ───────────────────────────────────────────────
-    console.print(
-        "[bold]Step 3 — opencode config[/bold]"
-        "  (in the LXD container — ~/.config/opencode/opencode.json)\n"
-    )
-    opencode_block = (
-        "{\n"
-        '  "$schema": "https://opencode.ai/config.json",\n'
-        '  "provider": {\n'
-        '    "local-llm": {\n'
-        '      "api": "openai",\n'
-        '      "name": "Local LLM (llama-server)",\n'
-        '      "options": {\n'
-        f'        "apiKey": "{resolved_key}",\n'
-        f'        "baseURL": "{resolved_base_url}"\n'
-        "      },\n"
-        '      "models": {\n'
-        f'        "{model_id}": {{\n'
-        f'          "name": "{model_id}"\n'
-        "        }\n"
-        "      }\n"
-        "    }\n"
-        "  },\n"
-        f'  "model": "local-llm/{model_id}"\n'
-        "}"
-    )
-    console.print(Syntax(opencode_block, "jsonc", theme="monokai"))
-    console.print()
 
-    # ── Step 4: verify ────────────────────────────────────────────────────────
-    console.print("[bold]Step 4 — Verify connectivity[/bold]  (in the LXD container)\n")
-    curl_cmd = (
-        f"curl -s --cacert ~/.config/opencode/local-llm.pem \\\n"
-        f"  {health_url}/health \\\n"
-        f'  -H "Authorization: Bearer {resolved_key}"'
-    )
-    console.print(Syntax(curl_cmd, "bash", theme="monokai"))
+@app.command("crafts")
+def crafts(
+    container: Annotated[
+        str,
+        typer.Argument(help="Container name to run 'make setup' in."),
+    ],
+    lxd_vm: Annotated[
+        bool,
+        typer.Option("--lxd-vm", help="Force VM mode."),
+    ] = False,
+) -> None:
+    """Run 'make setup' in all configured craft directories inside a container."""
+    from llm.lxd import do_setup_crafts, load_lxd_settings  # noqa: PLC0415
+
+    _, craft_dirs = load_lxd_settings()
+
+    try:
+        do_setup_crafts(container, craft_dirs, lxd_vm=lxd_vm)
+    except RuntimeError as e:
+        console.print(f"[red]ERROR:[/red] {e}")
+        raise typer.Exit(1) from None
