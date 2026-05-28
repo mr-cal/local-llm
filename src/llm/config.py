@@ -407,10 +407,18 @@ app = typer.Typer(help="Manage configuration and render templates.", no_args_is_
 
 
 def _prompt_init(prompt: str, default: str = "") -> str:
-    """Prompt the user for input during config init, showing a default."""
+    """Prompt the user for input during config init, showing a default.
+
+    If no default is provided the user must enter a non-empty value.
+    """
     suffix = f" [{default}]" if default else ""
-    result = input(f"{prompt}{suffix}: ").strip()
-    return result or default
+    while True:
+        result = input(f"{prompt}{suffix}: ").strip()
+        if result:
+            return result
+        if default:
+            return default
+        console.print("  [red]Please enter a non-empty value.[/red]")
 
 
 @app.command("init")
