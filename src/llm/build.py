@@ -272,9 +272,8 @@ def clean(
         console.print("Specify [bold]--name <profile>[/bold] or [bold]--all[/bold].")
         raise typer.Exit(1)
 
-    profiles_to_clean = bc.profiles if all_profiles else (
-        [bc.get_profile(profile)] if bc.get_profile(profile) else []
-    )
+    profile_obj = bc.get_profile(profile)
+    profiles_to_clean = bc.profiles if all_profiles else ([profile_obj] if profile_obj else [])
     if not profiles_to_clean:
         console.print(f"[red]Profile not found:[/red] '{profile}'")
         raise typer.Exit(1)

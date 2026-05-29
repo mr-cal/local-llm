@@ -824,7 +824,7 @@ def setup_gh_auth_in_container(
         input=gh_token.encode(),
         check=True,
     )
-    console.print(f"  [green]✓[/green] gh authenticated — can access GitHub APIs")
+    console.print("  [green]✓[/green] gh authenticated — can access GitHub APIs")
 
 
 def setup_pi_in_container(
@@ -983,6 +983,7 @@ def run_tests(
     mounts: list[tuple[str, str, str]] | None = None,
     uid: int = CONTAINER_UID,
     gid: int = CONTAINER_GID,
+    craft_dirs: list[str] | None = None,
 ):
     console.print("\n-- Verification tests ----------------------------------------------------------")
 
@@ -1132,7 +1133,7 @@ def run_tests(
         assert mode != "", "~/.pi is not accessible in the container"
 
     def t_venv_exists():
-        _t_venv_exists(container)
+        _t_venv_exists(container, craft_dirs or [])
 
     def t_container_user():
         r = subprocess.run(
@@ -1145,7 +1146,7 @@ def run_tests(
         assert name == CONTAINER_USER, f"uid {uid} maps to {name!r}, expected {CONTAINER_USER!r}"
 
     def t_venv_interpreter_valid():
-        _t_venv_interpreter_valid()
+        _t_venv_interpreter_valid(craft_dirs or [])
 
     def t_pylsp_installed():
         pylsp_bin = f"{CONTAINER_HOME}/.local/bin/pylsp"
@@ -1294,7 +1295,7 @@ def create_and_setup(
     if os.path.isdir(helix_host):
         all_mounts = [("helix-config", helix_host, helix_container), *all_mounts]
     else:
-        console.print(f"  [dim]~/.config/helix not found on host — skipping helix config mount[/dim]")
+        console.print("  [dim]~/.config/helix not found on host — skipping helix config mount[/dim]")
 
     if lxd_vm:
         create_container(container_name, vm=True)

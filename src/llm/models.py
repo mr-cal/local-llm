@@ -494,7 +494,7 @@ def catalog() -> None:
 
 @app.command("cost")
 def show_cost(
-    target: Annotated[str, typer.Argument(help="Alias or filename to show cost for."), None] = None,
+    target: Annotated[str | None, typer.Argument(help="Alias or filename to show cost for."), None] = None,
 ) -> None:
     """Show cost information for one or all models."""
     cfg = load_config()

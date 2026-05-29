@@ -75,7 +75,7 @@ class TestModelsSettings:
         models = [
             ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
         ]
-        m = ModelsSettings(entries=models)
+        m = ModelsSettings(entries=models)  # ty: ignore[unknown-argument]
         assert m.has_catalog is True
 
     def test_by_alias(self):
@@ -83,17 +83,20 @@ class TestModelsSettings:
             ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
             ModelEntry(alias="other", repo="other/repo", filename="other.gguf"),
         ]
-        m = ModelsSettings(entries=models)
-        assert m.by_alias("test").alias == "test"
-        assert m.by_alias("other").alias == "other"
+        m = ModelsSettings(entries=models)  # ty: ignore[unknown-argument]
+        assert m.by_alias("test") is not None
+        assert m.by_alias("test").alias == "test"  # ty: ignore[unresolved-attribute]
+        assert m.by_alias("other") is not None
+        assert m.by_alias("other").alias == "other"  # ty: ignore[unresolved-attribute]
         assert m.by_alias("missing") is None
 
     def test_by_filename(self):
         models = [
             ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
         ]
-        m = ModelsSettings(entries=models)
-        assert m.by_filename("test.gguf").alias == "test"
+        m = ModelsSettings(entries=models)  # ty: ignore[unknown-argument]
+        assert m.by_filename("test.gguf") is not None
+        assert m.by_filename("test.gguf").alias == "test"  # ty: ignore[unresolved-attribute]
         assert m.by_filename("missing.gguf") is None
 
     def test_model_path_resolves_alias(self, tmp_path):
@@ -102,7 +105,7 @@ class TestModelsSettings:
         models = [
             ModelEntry(alias="test-model", repo="test/repo", filename="test-model.gguf"),
         ]
-        s = Settings(models=ModelsSettings(dir=str(models_dir), active="test-model", entries=models))
+        s = Settings(models=ModelsSettings(dir=str(models_dir), active="test-model", entries=models))  # ty: ignore[unknown-argument]
         assert s.model_path == models_dir / "test-model.gguf"
 
     def test_model_path_uses_filename_when_no_match(self, tmp_path):
@@ -120,7 +123,7 @@ class TestModelsSettings:
         models = [
             ModelEntry(alias="known", repo="known/repo", filename="known.gguf"),
         ]
-        s = Settings(models=ModelsSettings(dir=str(models_dir), active="custom.gguf", entries=models))
+        s = Settings(models=ModelsSettings(dir=str(models_dir), active="custom.gguf", entries=models))  # ty: ignore[unknown-argument]
         # custom.gguf not in catalog, treated as filename
         assert s.model_path.name == "custom.gguf"
 
