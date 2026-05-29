@@ -277,7 +277,7 @@ def _run_single_benchmark(
         )
         resp.raise_for_status()
     except httpx.ConnectError:
-        console.print("[red]Connection refused[/red] — is the server running?")
+        console.print("[red]Connection refused[/red] - is the server running?")
         console.print("  Start it: [bold]uv run llm server start[/bold]")
         raise typer.Exit(1) from None
     except httpx.HTTPStatusError as e:
@@ -426,7 +426,7 @@ def _run_llama_bench_raw(cfg: object) -> None:
     assert isinstance(cfg, Settings)
     bench_bin = _find_bench_bin()
     if not bench_bin:
-        console.print("[yellow]llama-bench not found — skipping raw benchmark.[/yellow]")
+        console.print("[yellow]llama-bench not found - skipping raw benchmark.[/yellow]")
         console.print("  Copy it to ~/.local/bin/llama-bench")
         return
 
@@ -478,8 +478,8 @@ def tune(
     console.print()
 
     # ── Phase 1: GPU layer sweep ──────────────────────────────────────────────
-    console.print("[bold]Phase 1/3 — GPU layer sweep[/bold]  (flash-attn=off, ctk=f16)")
-    console.print("[dim]This takes the longest — loading the model once per ngl value...[/dim]")
+    console.print("[bold]Phase 1/3 - GPU layer sweep[/bold]  (flash-attn=off, ctk=f16)")
+    console.print("[dim]Loading the model once per ngl value...[/dim]")
 
     rows_p1 = _run_llama_bench(
         bench_bin,
@@ -511,7 +511,7 @@ def tune(
     console.print(f"  → Best ngl: [green]{best_ngl}[/green]  ({best_tg:.1f} tg tok/s)\n")
 
     # ── Phase 2: Flash-attention test ─────────────────────────────────────────
-    console.print(f"[bold]Phase 2/3 — Flash-attention[/bold]  (ngl={best_ngl}, ctk=f16)")
+    console.print(f"[bold]Phase 2/3 - Flash-attention[/bold]  (ngl={best_ngl}, ctk=f16)")
 
     rows_p2 = _run_llama_bench(
         bench_bin,
@@ -543,8 +543,8 @@ def tune(
     console.print(f"  → Best flash-attn: [green]{fa_label}[/green]  ({best_tg_p2:.1f} tg tok/s)\n")
 
     # ── Phase 3: KV-cache quantization ───────────────────────────────────────
-    console.print(f"[bold]Phase 3/3 — KV-cache quantization[/bold]  (ngl={best_ngl}, fa={best_fa})")
-    console.print("[dim]q8_0 halves KV-cache VRAM — useful for long contexts / OOM prevention[/dim]")
+    console.print(f"[bold]Phase 3/3 - KV-cache quantization[/bold]  (ngl={best_ngl}, fa={best_fa})")
+    console.print("[dim]q8_0 halves KV-cache VRAM - useful for long contexts / OOM prevention[/dim]")
 
     rows_p3 = _run_llama_bench(
         bench_bin,
@@ -568,7 +568,7 @@ def tune(
     best_tg_p3 = 0.0
     for ctk_val, note in [("f16", "full precision"), ("q8_0", "~50% less VRAM")]:
         pp, tg = _bench_tps(rows_p3, n_gpu_layers=best_ngl, flash_attn=best_fa, type_k=ctk_val)
-        # Prefer q8_0 if within 10% of f16 — halves KV VRAM, better long-ctx safety
+        # Prefer q8_0 if within 10% of f16 - halves KV VRAM, better long-ctx safety
         if ctk_val == "q8_0" and tg >= best_tg_p3 * 0.90:
             best_ctk, best_tg_p3 = ctk_val, tg
         elif ctk_val == "f16":

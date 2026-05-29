@@ -1,4 +1,4 @@
-"""Main CLI entry point — all subcommand groups are registered here."""
+"""Main CLI entry point. All subcommand groups are registered here."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""LXD container and VM management — library functions.
+"""LXD container and VM management - library functions.
 
 All container creation, configuration, and verification logic lives here
 as plain functions.  CLI commands are in ``client.py`` and ``server.py``.
@@ -271,7 +271,7 @@ def create_container(container, vm: bool = False):
 def _fix_vm_user_uid(container):
     """Change the in-VM user's UID/GID to HOST_UID/HOST_GID.
 
-    VMs share the host UID namespace — virtiofs/9p passes file UIDs as-is, so
+    VMs share the host UID namespace - virtiofs/9p passes file UIDs as-is, so
     bind-mounted files owned by HOST_UID appear with that same UID inside the VM.
     Changing the VM user to HOST_UID/HOST_GID makes ownership transparent.
     raw.idmap is a container-only feature and cannot be used here.
@@ -371,7 +371,7 @@ def _reload_lxd_daemon() -> None:
             console.print(f"  Reloaded [cyan]{svc}[/cyan]")
             return
     console.print(
-        "[yellow]  Warning:[/yellow] could not reload LXD daemon — "
+        "[yellow]  Warning:[/yellow] could not reload LXD daemon - "
         "raw.idmap may not take effect until the daemon is restarted."
     )
 
@@ -392,7 +392,7 @@ def configure_idmap(container, step: str = "2/5"):
         _reload_lxd_daemon()
     idmap = f"uid {HOST_UID} {CONTAINER_UID}\ngid {HOST_GID} {CONTAINER_GID}"
     run(["lxc", "config", "set", container, "raw.idmap", idmap])
-    # raw.idmap requires a full stop+start cycle to take effect — lxc restart
+    # raw.idmap requires a full stop+start cycle to take effect - lxc restart
     # is not sufficient because it performs an in-place reboot that doesn't
     # re-initialise the host-side UID/GID remapping table.
     run(["lxc", "stop", container])
@@ -578,7 +578,7 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
             r' || echo "export PATH=$HOME/.local/bin:$PATH" >> ~/.bashrc',
         )
     )
-    # Shorten the prompt to just the current directory — the default includes
+    # Shorten the prompt to just the current directory - the default includes
     # username and hostname which are too long in a container context.
     run(
         _cexec(
@@ -609,7 +609,7 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
         check=True,
     )
 
-    # Minimal fish prompt — just the current directory, no user@host, no git info.
+    # Minimal fish prompt - just the current directory, no user@host, no git info.
     prompt_fish = (
         "# Minimal prompt: current directory + arrow (no user@host, no git hash)\n"
         "function fish_prompt\n"
@@ -661,7 +661,7 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
             console.print(f"  [yellow]WARNING:[/yellow] lsp-config.json is invalid JSON ({e}); overwriting.")
     existing.setdefault("lspServers", {}).update(PYLSP_LSP_CONFIG["lspServers"])
     config_json = json.dumps(existing, indent=2) + "\n"
-    # Validate before writing — guards against bugs in PYLSP_LSP_CONFIG.
+    # Validate before writing - guards against bugs in PYLSP_LSP_CONFIG.
     json.loads(config_json)
 
     subprocess.run(
@@ -812,7 +812,7 @@ def setup_gh_auth_in_container(
         effective_gid: GID to run commands as inside the container.
     """
     if not gh_token:
-        console.print("  [yellow]⚠[/yellow] No GitHub token configured — skipping gh auth.")
+        console.print("  [yellow]⚠[/yellow] No GitHub token configured - skipping gh auth.")
         return
 
     console.print(f"  [bold]Authenticating gh CLI in {container}...[/bold]")
@@ -824,7 +824,7 @@ def setup_gh_auth_in_container(
         input=gh_token.encode(),
         check=True,
     )
-    console.print("  [green]✓[/green] gh authenticated — can access GitHub APIs")
+    console.print("  [green]✓[/green] gh authenticated - can access GitHub APIs")
 
 
 def setup_pi_in_container(
@@ -838,20 +838,20 @@ def setup_pi_in_container(
 
     Four things are configured inside the container:
 
-    1. **models.json** — generated with URL ``https://local-llm:<port>/v1``
+    1. **models.json** - generated with URL ``https://local-llm:<port>/v1``
        so pi connects to the nginx proxy using the ``local-llm`` hostname
        (which is already in the cert's SubjectAltName).
 
-    2. **/etc/hosts entry** — maps ``local-llm`` → ``proxy.lan_ip`` (the
+    2. **/etc/hosts entry** - maps ``local-llm`` → ``proxy.lan_ip`` (the
        server's LAN IP) so traffic routes correctly whether the container is
        on the same machine as the server or on a remote client machine.
        LXD's MASQUERADE rules ensure nginx's subnet allowlist passes in both
        cases.
 
-    3. **TLS certificate** — copied from the host and stored at
+    3. **TLS certificate** - copied from the host and stored at
        ``~/.config/local-llm/cert.pem`` for Node.js to trust.
 
-    4. **NODE_EXTRA_CA_CERTS** — set in ``~/.bashrc`` and
+    4. **NODE_EXTRA_CA_CERTS** - set in ``~/.bashrc`` and
        ``~/.config/fish/conf.d/`` so pi always trusts the self-signed cert.
 
     Args:
@@ -962,7 +962,7 @@ def setup_pi_in_container(
     subprocess.run(_cexec(container, uid, gid, "bash", "-c", fish_cmd), check=True)
 
     console.print("    Added to ~/.bashrc and ~/.config/fish/conf.d/node-ca-certs.fish")
-    console.print("  [green]✓[/green] Pi harness configured — it can now reach the LLM server")
+    console.print("  [green]✓[/green] Pi harness configured - it can now reach the LLM server")
 
 
 # -- Verification tests -------------------------------------------------------
@@ -1295,7 +1295,7 @@ def create_and_setup(
     if os.path.isdir(helix_host):
         all_mounts = [("helix-config", helix_host, helix_container), *all_mounts]
     else:
-        console.print("  [dim]~/.config/helix not found on host — skipping helix config mount[/dim]")
+        console.print("  [dim]~/.config/helix not found on host - skipping helix config mount[/dim]")
 
     if lxd_vm:
         create_container(container_name, vm=True)

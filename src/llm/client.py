@@ -42,7 +42,7 @@ def _setup_host_client() -> None:
     # Client configs (opencode, pi)
     apply_client_configs(cfg)
 
-    # Shell env vars — prefer explicit client settings, fall back to proxy settings.
+    # Shell env vars - prefer explicit client settings, fall back to proxy settings.
     base_url = cfg.client.server_url or f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}/v1"
     cert_path = cfg.client.cert_path or cfg.proxy.cert_path
     api_key = cfg.auth.api_key
@@ -169,10 +169,10 @@ def setup(
         typer.Option("--lxd-vm", help="Create a full LXD VM instead of a container."),
     ] = False,
 ) -> None:
-    """Set up a client — either the current host or an LXD container.
+    """Set up a client (either the current host or an LXD container).
 
     Without --container: configures opencode, pi, and shell env vars on this machine.
-    With --container: creates an LXD container and fully configures it as a client.
+    With --container: creates an LXD container and configures it as a client.
     """
     if container:
         _setup_container_client(container, recreate=recreate, lxd_vm=lxd_vm)

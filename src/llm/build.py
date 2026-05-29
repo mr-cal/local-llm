@@ -105,7 +105,7 @@ def init() -> None:
     """Initialize the llama.cpp git submodule.
 
     Runs ``git submodule update --init --recursive`` to clone llama.cpp
-    into the ``llama.cpp/`` directory. Safe to run multiple times.
+    into the ``llama.cpp/`` directory.
 
     Examples:
 
@@ -114,7 +114,7 @@ def init() -> None:
     cfg = load_config()
     sm = _submodule_path()
     if sm.exists() and (sm / "CMakeLists.txt").exists():
-        # Already initialized — pull the configured commit
+        # Already initialized - pull the configured commit
         console.print(f"[dim]Submodule already present at {sm}[/dim]")
         _checkout_commit(cfg.build.commit)
         return

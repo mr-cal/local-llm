@@ -85,7 +85,7 @@ class TestGetLxdBridgeInfo:
 
 
 class TestSetupPiInContainer:
-    """Tests for setup_pi_in_container — subprocess calls are mocked."""
+    """Tests for setup_pi_in_container - subprocess calls are mocked."""
 
     def _make_completed(self, returncode=0, stdout=""):
         p = MagicMock()
@@ -256,7 +256,7 @@ class TestSetupPiInContainer:
 
         from llm.lxd import setup_pi_in_container
 
-        # No cert_pem passed — should be read from config cert_path
+        # No cert_pem passed - should be read from config cert_path
         setup_pi_in_container("craft-llm-1", bridge_ip="10.113.167.1", cert_pem=None)
 
         assert cert_content.encode() in stdin_inputs, (

@@ -4,31 +4,31 @@
 
 These changes are already in `main` and do not need to be re-implemented:
 
-- **Separate host/container pi configs** — removed the `~/.pi` bind-mount so host and
-  container each have independent pi config; `setup_pi_in_container` now writes
+- **Separate host/container pi configs** - removed the `~/.pi` bind-mount so host and
+  container each have independent pi config. `setup_pi_in_container` now writes
   `~/.pi/agent/models.json` directly inside the container using the `local-llm` hostname.
-- **`local-llm` hostname + /etc/hosts** — added the lxdbr0 bridge IP to `/etc/hosts`
-  inside the container as `local-llm`, so pi connects via hostname (which is in the
-  cert's SAN) rather than a raw IP.
-- **nginx listens on all interfaces** — changed `listen <lan_ip>:<port>` to
-  `listen <port>` so the bind never fails on a specific IP and LXD containers can reach
+- **`local-llm` hostname + /etc/hosts** - added the lxdbr0 bridge IP to `/etc/hosts`
+  inside the container as `local-llm` so pi connects via hostname (in the cert's SAN)
+  instead of a raw IP.
+- **nginx listens on all interfaces** - changed `listen <lan_ip>:<port>` to
+  `listen <port>` so the bind doesn't fail on a specific IP and LXD containers can reach
   the proxy through the bridge.
-- **Auto-allow LXD subnet in nginx** — `config apply` detects `lxdbr0` and injects
-  `allow <bridge_subnet>` into the nginx config automatically.
-- **Fish shell env fix** — shell profile now uses `set -x VAR value` (fish syntax) for
+- **Auto-allow LXD subnet in nginx** - `config apply` detects `lxdbr0` and injects
+  `allow <bridge_subnet>` into the nginx config.
+- **Fish shell env fix** - shell profile now uses `set -x VAR value` (fish syntax) for
   `NODE_EXTRA_CA_CERTS` instead of `export VAR=value`.
-- **Cert resolved from config** — `setup_pi_in_container` reads cert from
-  `cfg.proxy.cert_path`; the `--cert-url` / openssl approach is removed.
-- **`apt autoremove && clean`** — added to `install_packages` to trim image size.
-- **`llm lxd refresh`** — new command that updates apt, pi (npm), copilot (gh
-  extensions), and re-applies pi config in all managed containers.  Containers are
-  auto-tagged with `user.local-llm-managed=true` at create time; running the command
+- **Cert resolved from config** - `setup_pi_in_container` reads cert from
+  `cfg.proxy.cert_path`. The `--cert-url` / openssl approach is removed.
+- **`apt autoremove && clean`** - added to `install_packages` to trim image size.
+- **`llm lxd refresh`** - new command that updates apt, pi (npm), copilot (gh
+  extensions), and re-applies pi config in all managed containers. Containers are
+  auto-tagged with `user.local-llm-managed=true` at create time. Running the command
   without arguments refreshes every tagged running container.
-- **`%%LXD_LISTEN_LINE%%` dead code removed** — placeholder was set in `config.py` but
-  was never present in the nginx template; removed.
-- **Restored "Next steps" hint** — `llm lxd create` now prints the
+- **`%%LXD_LISTEN_LINE%%` dead code removed** - placeholder was set in `config.py` but
+  was never present in the nginx template.
+- **Restored "Next steps" hint** - `llm lxd create` now prints the
   `llm lxd setup-crafts` hint after a successful run.
-- **`config apply` refresh hint** — prints a reminder to run `llm lxd refresh` after
+- **`config apply` refresh hint** - prints a reminder to run `llm lxd refresh` after
   cert regeneration.
 
 ---
@@ -39,7 +39,7 @@ Move from the manual "clone + cmake + cp" workflow to a fully automated, config-
 
 ---
 
-## Step 1 — Add llama.cpp as a git submodule
+## Step 1 - Add llama.cpp as a git submodule
 
 ```bash
 git submodule add https://github.com/ggerganov/llama.cpp llama.cpp
@@ -57,9 +57,9 @@ git submodule update --init --recursive
 
 ---
 
-## Step 2 — Extend `config.toml` with `[build]` section
+## Step 2 - Extend `config.toml` with `[build]` section
 
-Add a new configuration section to manage build params and installation. Build **profiles** are a first-class concept — each profile is a dynamically-defined set of build flags that produces a distinct binary. Profiles become a dimension for benchmarking and tuning, alongside `n_gpu_layers` and `n_ctx`.
+Add a new configuration section to manage build params and installation. Build **profiles** define sets of build flags that produce distinct binaries. Profiles are a dimension for benchmarking and tuning, alongside `n_gpu_layers` and `n_ctx`.
 
 ```toml
 # ── BUILD ─────────────────────────────────────────────────────────────────────
@@ -78,14 +78,14 @@ jobs = "auto"
 # Whether to build in Release mode.
 release = true
 
-# Build profiles — a flat list of dynamically-defined profiles.
+# Build profiles - a flat list of profiles.
 # Each profile is a self-contained set of cmake flags (including the backend flag).
 # These are the dimensions for `llm benchmark tune --profiles`.
 # The first profile is the active profile by default.
 
 [[build.profiles]]
 name = "vulkan-default"
-# Backend is a shortcut — the CLI expands it to the correct cmake flag below.
+# Backend - the CLI expands this to the correct cmake flag.
 backend = "vulkan"
 # Extra cmake flags appended after the backend flag.
 extra_flags = []
@@ -98,7 +98,7 @@ extra_flags = ["-DGGML_FLASH_ATTN=ON"]
 [[build.profiles]]
 name = "vulkan-optimized"
 backend = "vulkan"
-# You can define anything here — custom defines, optimization flags, etc.
+# You can define anything here - custom defines, optimization flags, etc.
 extra_flags = ["-DGGML_FLASH_ATTN=ON", "-DCMAKE_C_FLAGS=-O3", "-DCMAKE_CXX_FLAGS=-O3"]
 
 [[build.profiles]]
@@ -109,15 +109,15 @@ extra_flags = ["-DCMAKE_BUILD_TYPE=Debug", "-DGGML_CUDA_DMMV_X=64"]
 
 [[build.profiles]]
 name = "bare-metal"
-# Profiles don't need a backend shortcut — you can write cmake flags directly.
+# Profiles don't need a backend shortcut - you can write cmake flags directly.
 extra_flags = ["-DGGML_VULKAN=ON", "-DCMAKE_C_FLAGS=-O3"]
 ```
 
 **Rationale for the config shape:**
-- `build.profiles` is a flat TOML array-of-tables (`[[...]]`) — users can freely add/remove profiles without nested table keys
+- `build.profiles` is a flat TOML array-of-tables (`[[...]]`) - users can freely add/remove profiles without nested table keys
 - Each profile has a `name` (display identifier) and either a `backend` shortcut or raw `extra_flags` (or both)
-- `backend` is a convenience shorthand — the CLI expands `backend = "vulkan"` to `-DGGML_VULKAN=ON` automatically
-- `extra_flags` lets users write **any** cmake flag, custom define, or compiler flag — no predefined schema
+- `backend` expands `backend = "vulkan"` to `-DGGML_VULKAN=ON` automatically
+- `extra_flags` lets users write **any** cmake flag, custom define, or compiler flag - no predefined schema
 - If both `backend` and `extra_flags` are present, the backend flag is prepended (so `backend = "vulkan"` + `extra_flags = ["-DFOO=BAR"]` → `-DGGML_VULKAN=ON -DFOO=BAR`)
 - The first profile in the list is the active profile by default (configurable via `[server].profile`)
 - `commit = "HEAD"` defaults to the latest; pin to a SHA for reproducibility
@@ -126,7 +126,7 @@ extra_flags = ["-DGGML_VULKAN=ON", "-DCMAKE_C_FLAGS=-O3"]
 
 ---
 
-## Step 3 — Add `llm build` subcommands
+## Step 3 - Add `llm build` subcommands
 
 Create `src/llm/build.py` with the following commands:
 
@@ -164,18 +164,18 @@ Create `src/llm/build.py` with the following commands:
 
 ---
 
-## Step 3.5 — Extend benchmark with build-profile dimension
+## Step 3.5 - Extend benchmark with build-profile dimension
 
-Build profiles are a first-class dimension for benchmarking and tuning, alongside `n_gpu_layers` and `n_ctx`. Each profile produces a distinct binary with different performance characteristics.
+Build profiles add a dimension for benchmarking and tuning, alongside `n_gpu_layers` and `n_ctx`. Each profile produces a distinct binary with different performance characteristics.
 
 ### New CLI commands
 
 | Command | Description |
 |---|---|
 | `llm benchmark run --profile <name>` | Benchmark a specific profile (builds it first if needed) |
-| `llm benchmark run --profiles` | Sweep all profiles — build each, then benchmark each against the same model/params |
+| `llm benchmark run --profiles` | Sweep all profiles - build each, then benchmark each against the same model/params |
 | `llm benchmark run --profile vulkan-flash --profile cuda-debug` | Benchmark specific named profiles only |
-| `llm benchmark tune --profiles` | Full sweep — for each profile, tune `n_gpu_layers` (and optionally `n_ctx`) |
+| `llm benchmark tune --profiles` | Full sweep - for each profile, tune `n_gpu_layers` (and optionally `n_ctx`) |
 | `llm benchmark compare` | Compare all profile results from history |
 
 ### CSV format update
@@ -188,17 +188,17 @@ timestamp,alias,profile,backend,model,n_gpu_layers,n_ctx,flags_hash,backend_toke
 2026-05-22T14:05:00,qwen2.5-coder-14b-q4,vulkan-flash,vulkan,Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf,20,131072,d4e5f6,52.8,49.3,105,0.0
 ```
 
-The `flags_hash` is a short SHA of the full cmake flag list — useful for tracking results when profiles are edited or recreated.
+The `flags_hash` is a short SHA of the full cmake flag list - useful for tracking results when profiles are edited or recreated.
 
 ### `llm benchmark run --profiles` behavior
 
-1. **Build phase** — runs `llm build all` (builds all profiles if not already built)
-2. **Benchmark phase** — for each profile:
+1. **Build phase** - runs `llm build all` (builds all profiles if not already built)
+2. **Benchmark phase** - for each profile:
    - Starts llama-server with that profile's binary
    - Runs the benchmark (same model, same server params, same prompt)
    - Records results with the `profile` column
    - Restarts with the next profile
-3. **Output** — prints a comparison table:
+3. **Output** - prints a comparison table:
 
 ```
 Profile          Backend  Tokens/s  API/s   Latency  Δ vs baseline
@@ -246,9 +246,9 @@ vulkan-flash     20          52.8           +16.8%
 
 ### Profile-aware server management
 
-- `llm server start --profile <name>` — starts llama-server from the specified profile's binary
-- `llm server stop` — stops whatever is running (tracks PID + profile)
-- `llm server status` — shows which profile is active
+- `llm server start --profile <name>` - starts llama-server from the specified profile's binary
+- `llm server stop` - stops whatever is running (tracks PID + profile)
+- `llm server status` - shows which profile is active
 - Default `llm server start` uses the configured `active_profile`
 
 ### Server section config update
@@ -317,14 +317,14 @@ Add `--profile` / `--profiles` flags to existing benchmark commands.
 
 ---
 
-## Step 5 — Update `config.py` for the new `[build]` section
+## Step 5 - Update `config.py` for the new `[build]` section
 
 - Add a `BuildProfile` Pydantic model:
 
 ```python
 class BuildProfile(BaseModel):
     name: str                              # human-readable profile name
-    backend: str | None = None             # convenience shorthand (expanded to cmake flag)
+    backend: str | None = None             # shortcut expanded to cmake flag
     extra_flags: list[str] = []            # arbitrary cmake/compiler flags
     _backend_flag: str = Field(
         default="",
@@ -398,13 +398,13 @@ BACKEND_FLAGS = {
 
 ---
 
-## Step 6 — Update the server runner for profile-aware binary resolution
+## Step 6 - Update the server runner for profile-aware binary resolution
 
 In `src/llm/server.py`:
 - The `[server]` section's `llama_server_bin` resolution order:
   1. Explicit full path (current behavior)
   2. Profile-resolved: `<build.install_dir>/<profile>/llama-server` (when `llama_server_bin` is empty)
-  3. `shutil.which("llama-server")` — on PATH
+  3. `shutil.which("llama-server")` - on PATH
 - The `profile` field from `[server]` selects which build profile's binary to use
 - The server process tracks which profile it's running (written to `.server.pid` alongside PID)
 - `server status` shows the active profile
@@ -413,13 +413,13 @@ In `src/llm/server.py`:
 - Add a pre-flight check in `server start`: if `build.enabled` and the binary doesn't exist, suggest running `llm build`
 
 In `src/llm/build.py`:
-- `build_run(profile=None, all=False)` — builds the specified profile or `active_profile`
-- `build_all()` — iterates all profiles, builds each into `llama.cpp/build-{profile}/`
-- `build_info()` — shows commit, all profiles, active profile, and binary paths
+- `build_run(profile=None, all=False)` - builds the specified profile or `active_profile`
+- `build_all()` - iterates all profiles, builds each into `llama.cpp/build-{profile}/`
+- `build_info()` - shows commit, all profiles, active profile, and binary paths
 
 ---
 
-## Step 7 — Update the Makefile
+## Step 7 - Update the Makefile
 
 ```makefile
 .PHONY: install lint format test build
@@ -442,7 +442,7 @@ build:
 
 ---
 
-## Step 8 — Update `.gitignore`
+## Step 8 - Update `.gitignore`
 
 Add:
 ```gitignore
@@ -454,13 +454,13 @@ llama.cpp/ggml/src/ggml*.dylib
 llama.cpp/models/*.*.bin
 llama.cpp/models/*.*.gguf
 
-# Profile-specific installed binaries (optional — uncomment if you want to version-control builds)
+# Profile-specific installed binaries (optional - uncomment if you want to version-control builds)
 # ~/.local/bin/*/llama-server
 ```
 
 ---
 
-## Step 9 — Update README.md
+## Step 9 - Update README.md
 
 ### Replace the manual build section (Step 2 in Quick Start):
 
@@ -498,7 +498,7 @@ uv run llm build info      # show current commit
 # Benchmark a specific build profile
 uv run llm benchmark run --profile vulkan-flash
 
-# Sweep all profiles — build each, benchmark each, compare
+# Sweep all profiles - build each, benchmark each, compare
 uv run llm benchmark run --profiles
 
 # Full tuning sweep: for each profile, tune n_gpu_layers
@@ -512,17 +512,17 @@ Show the comparison table output and explain how profiles form a tuning dimensio
 
 ---
 
-## Step 10 — Update the config template
+## Step 10 - Update the config template
 
 The config template (`src/llm/config_template.toml`) needs to include the new `[build]` section with sensible defaults matching the current hardware (Vulkan for Radeon).
 
 ---
 
-## Step 11 — Add tests
+## Step 11 - Add tests
 
 New test file `tests/test_build.py`:
-- Test `BuildProfile.get_full_flags()` — backend shortcut + extra_flags composition
-- Test `BuildConfig.get_profile(name)` — lookup, default, unknown name error
+- Test `BuildProfile.get_full_flags()` - backend shortcut + extra_flags composition
+- Test `BuildConfig.get_profile(name)` - lookup, default, unknown name error
 - Test `BuildConfig.profile_names()` list
 - Test `BACKEND_FLAGS` constant completeness
 - Test install path resolution (profile namespaced)
@@ -536,34 +536,34 @@ New test file `tests/test_build.py`:
 |---|---|
 | `llama.cpp/` (dir) | Added via git submodule |
 | `.gitmodules` | Added (auto by `git submodule add`) |
-| `.gitignore` | Updated — add build artifact ignores |
-| `config.toml` | Updated — add `[build]` section with flat-list profiles |
-| `src/llm/config_template.toml` | Updated — add `[build]` flat-list profiles + `server.profile` |
-| `src/llm/config.py` | Updated — add `BuildProfile`, `BuildConfig` models, `BACKEND_FLAGS`, `server.profile` field |
-| `src/llm/cli.py` | Updated — add `build` group + `llm build` subcommands |
-| `src/llm/build.py` | **New** — build logic, profile management, subprocess calls |
-| `src/llm/server.py` | Updated — profile-aware binary resolution, PID+profile tracking |
-| `src/llm/benchmark.py` | Updated — `--profile`/`--profiles` flags, profile sweep, comparison report |
-| `Makefile` | Updated — add `build` target |
-| `README.md` | Updated — replace manual build with `llm build`, add profile docs |
-| `tests/test_build.py` | **New** — unit tests for build module |
-| `tests/test_benchmark.py` | Updated — add profile sweep + comparison tests |
+| `.gitignore` | Updated - add build artifact ignores |
+| `config.toml` | Updated - add `[build]` section with flat-list profiles |
+| `src/llm/config_template.toml` | Updated - add `[build]` flat-list profiles + `server.profile` |
+| `src/llm/config.py` | Updated - add `BuildProfile`, `BuildConfig` models, `BACKEND_FLAGS`, `server.profile` field |
+| `src/llm/cli.py` | Updated - add `build` group + `llm build` subcommands |
+| `src/llm/build.py` | **New** - build logic, profile management, subprocess calls |
+| `src/llm/server.py` | Updated - profile-aware binary resolution, PID+profile tracking |
+| `src/llm/benchmark.py` | Updated - `--profile`/`--profiles` flags, profile sweep, comparison report |
+| `Makefile` | Updated - add `build` target |
+| `README.md` | Updated - replace manual build with `llm build`, add profile docs |
+| `tests/test_build.py` | **New** - unit tests for build module |
+| `tests/test_benchmark.py` | Updated - add profile sweep + comparison tests |
 
 ---
 
 ## Execution order
 
-1. **Step 1** — `git submodule add` (one-time, manual)
-2. **Step 2** — Write `[build]` config section with flat-list profiles to `config.toml`
-3. **Step 5** — `BuildProfile` / `BuildConfig` Pydantic models, `BACKEND_FLAGS`, `server.profile` field
-4. **Step 3** — `src/llm/build.py` (core build logic, flat-list profile iteration)
-5. **Step 4** — Wire `build` into `src/llm/cli.py` + add benchmark profile flags
-6. **Step 3.5** — Extend `benchmark.py` with `--profile`/`--profiles`, sweep, comparison
-7. **Step 6** — Update `server.py` for profile-aware binary resolution
-8. **Step 7–8** — Makefile + `.gitignore` updates
-9. **Step 9** — README.md update (build + profile benchmark docs)
-10. **Step 11** — Tests (`test_build.py` + updated `test_benchmark.py`)
-11. **Step 10** — Config template (can be done in parallel with Step 5)
+1. **Step 1** - `git submodule add` (one-time, manual)
+2. **Step 2** - Write `[build]` config section with flat-list profiles to `config.toml`
+3. **Step 5** - `BuildProfile` / `BuildConfig` Pydantic models, `BACKEND_FLAGS`, `server.profile` field
+4. **Step 3** - `src/llm/build.py` (core build logic, flat-list profile iteration)
+5. **Step 4** - Wire `build` into `src/llm/cli.py` + add benchmark profile flags
+6. **Step 3.5** - Extend `benchmark.py` with `--profile`/`--profiles`, sweep, comparison
+7. **Step 6** - Update `server.py` for profile-aware binary resolution
+8. **Step 7–8** - Makefile + `.gitignore` updates
+9. **Step 9** - README.md update (build + profile benchmark docs)
+10. **Step 11** - Tests (`test_build.py` + updated `test_benchmark.py`)
+11. **Step 10** - Config template (can be done in parallel with Step 5)
 
 ---
 
@@ -576,4 +576,4 @@ uv sync
 uv run llm build   # builds from the submodule
 ```
 
-No manual clone, cmake, or cp needed — the CLI handles everything.
+No manual clone, cmake, or cp needed - the CLI does all of this.

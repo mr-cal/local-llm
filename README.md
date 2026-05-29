@@ -1,6 +1,6 @@
 # local-llm
 
-Run a local model on your machine and expose it securely over your LAN as an OpenAI-compatible API — ready for use with [opencode](https://opencode.ai) or any compatible client.
+Run a local model on your machine and expose it over your LAN as an OpenAI-compatible API. Works with [opencode](https://opencode.ai) or any compatible client.
 
 **Engine:** [llama.cpp](https://github.com/ggerganov/llama.cpp) (`llama-server`) with Vulkan backend for iGPU acceleration
 **Proxy:** nginx (HTTPS + Bearer-token auth + LAN IP allowlist)
@@ -30,7 +30,7 @@ LAN client (opencode, curl, …)
 
 ## Quick Start
 
-### 1 — Install dependencies
+### 1 - Install dependencies
 
 ```bash
 git clone <this-repo>
@@ -38,45 +38,45 @@ cd local-llm
 uv sync
 ```
 
-### 2 — Build llama-server (or install a pre-built binary)
+### 2 - Build llama-server (or install a pre-built binary)
 
 ```bash
 uv run llm build init    # initialize llama.cpp submodule
 uv run llm build run     # build with active profile (Vulkan by default)
 ```
 
-Or install manually — see the [llama.cpp build guide](https://github.com/ggerganov/llama.cpp#build).
+Or install manually (see the [llama.cpp build guide](https://github.com/ggerganov/llama.cpp#build)).
 
-### 3 — Server setup (guided wizard)
+### 3 - Server setup (guided wizard)
 
 ```bash
 uv run llm server setup
 ```
 
-This single command handles everything:
-1. Creates/updates `config.toml` — auto-detects your LAN IP, prompts for tuning params
+This command:
+1. Creates/updates `config.toml` (auto-detects your LAN IP, prompts for tuning params)
 2. Generates an API key
 3. Generates the TLS certificate (with correct SubjectAltName)
 4. Renders and installs nginx + systemd configs
 5. Configures the local client (opencode, pi, shell env vars)
 
-Safe to re-run — detects existing config and offers to update.
+Safe to re-run (detects existing config and offers to update).
 
-### 4 — Download a model
+### 4 - Download a model
 
 ```bash
 uv run llm model list
 uv run llm model download qwen2.5-coder-14b-q4
 ```
 
-### 5 — Start the server
+### 5 - Start the server
 
 ```bash
 uv run llm server start
 uv run llm server status
 ```
 
-### 6 — Verify connectivity
+### 6 - Verify connectivity
 
 ```bash
 uv run llm client check
@@ -92,7 +92,7 @@ Create a fully configured LXD container as a development client:
 uv run llm client setup --container craft-llm-1
 ```
 
-This creates the container, installs packages, configures mounts, and sets up the full client (opencode, pi, TLS cert, shell env vars) — all in one command.
+This creates the container, installs packages, configures mounts, and sets up the full client (opencode, pi, TLS cert, shell env vars).
 
 ```bash
 # Enter the container
@@ -167,7 +167,7 @@ Benchmark
 
 ## Security Notes
 
-- `config.toml` is **gitignored** — it contains your API key, LAN IP, and HF token.
+- `config.toml` is **gitignored** (contains your API key, LAN IP, and HF token).
 - nginx enforces both a Bearer token and a source-IP subnet allowlist.
 - TLS (self-signed) encrypts traffic on the LAN.
 - The server only listens internally (`127.0.0.1`); nginx handles the LAN exposure.

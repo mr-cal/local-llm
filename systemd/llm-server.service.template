@@ -1,5 +1,5 @@
 # Generated from systemd/llm-server.service.template by: uv run llm config apply
-# Do not edit directly — edit the template and re-run config apply.
+# Do not edit directly - edit the template and re-run config apply.
 # Install:
 #   sudo cp systemd/llm-server.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
@@ -29,7 +29,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=llm-server
 
-# Resource limits — adjust to taste
+# Resource limits - adjust to taste
 # LimitNOFILE=65536
 
 [Install]

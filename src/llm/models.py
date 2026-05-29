@@ -26,35 +26,35 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
         filename="Qwen2.5-Coder-7B-Instruct-Q8_0.gguf",
         size="~8 GB",
-        description="Qwen 2.5 Coder 7B — fastest, good for quick tasks",
+        description="Qwen 2.5 Coder 7B - fastest, good for quick tasks",
     ),
     ModelEntry(
         alias="qwen2.5-coder-14b-q4",
         repo="bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
         filename="Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
         size="~8.5 GB",
-        description="Qwen 2.5 Coder 14B — best speed/quality balance (default)",
+        description="Qwen 2.5 Coder 14B - best speed/quality balance (default)",
     ),
     ModelEntry(
         alias="qwen2.5-coder-32b-q4",
         repo="bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
         filename="Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf",
         size="~18 GB",
-        description="Qwen 2.5 Coder 32B — strong coding model",
+        description="Qwen 2.5 Coder 32B - strong coding model",
     ),
     ModelEntry(
         alias="qwen2.5-coder-32b-q8",
         repo="bartowski/Qwen2.5-Coder-32B-Instruct-GGUF",
         filename="Qwen2.5-Coder-32B-Instruct-Q8_0.gguf",
         size="~34 GB",
-        description="Qwen 2.5 Coder 32B — high precision",
+        description="Qwen 2.5 Coder 32B - high precision",
     ),
     ModelEntry(
         alias="qwen2.5-72b-q4",
         repo="bartowski/Qwen2.5-72B-Instruct-GGUF",
         filename="Qwen2.5-72B-Instruct-Q4_K_M.gguf",
         size="~42 GB",
-        description="Qwen 2.5 72B — near-frontier quality (fits in 62 GB)",
+        description="Qwen 2.5 72B - near-frontier quality (fits in 62 GB)",
     ),
     # ── Gemma 4 ──────────────────────────────────────────────────────────────
     ModelEntry(
@@ -62,7 +62,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/google_gemma-4-31B-it-GGUF",
         filename="google_gemma-4-31B-it-Q4_K_M.gguf",
         size="~20 GB",
-        description="Gemma 4 31B — newest Google model, multimodal",
+        description="Gemma 4 31B - newest Google model, multimodal",
     ),
     # ── Gemma 3 ──────────────────────────────────────────────────────────────
     ModelEntry(
@@ -70,28 +70,28 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/google_gemma-3-27b-it-GGUF",
         filename="google_gemma-3-27b-it-Q4_K_M.gguf",
         size="~17 GB",
-        description="Gemma 3 27B — strong all-rounder, multimodal",
+        description="Gemma 3 27B - strong all-rounder, multimodal",
     ),
     ModelEntry(
         alias="gemma-3-27b-q8",
         repo="bartowski/google_gemma-3-27b-it-GGUF",
         filename="google_gemma-3-27b-it-Q8_0.gguf",
         size="~29 GB",
-        description="Gemma 3 27B — high precision, multimodal",
+        description="Gemma 3 27B - high precision, multimodal",
     ),
     ModelEntry(
         alias="gemma-3-12b-q4",
         repo="bartowski/google_gemma-3-12b-it-GGUF",
         filename="google_gemma-3-12b-it-Q4_K_M.gguf",
         size="~7 GB",
-        description="Gemma 3 12B — fast, good quality, multimodal",
+        description="Gemma 3 12B - fast, good quality, multimodal",
     ),
     ModelEntry(
         alias="gemma-3-12b-q8",
         repo="bartowski/google_gemma-3-12b-it-GGUF",
         filename="google_gemma-3-12b-it-Q8_0.gguf",
         size="~13 GB",
-        description="Gemma 3 12B — high precision, multimodal",
+        description="Gemma 3 12B - high precision, multimodal",
     ),
     # ── Qwen 3 ───────────────────────────────────────────────────────────────
     ModelEntry(
@@ -99,7 +99,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/Qwen_Qwen3-8B-GGUF",
         filename="Qwen_Qwen3-8B-Q8_0.gguf",
         size="~9 GB",
-        description="Qwen3 8B — fast, near-lossless quant",
+        description="Qwen3 8B - fast, near-lossless quant",
         max_output=32768,
     ),
     ModelEntry(
@@ -107,7 +107,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/Qwen_Qwen3-14B-GGUF",
         filename="Qwen_Qwen3-14B-Q8_0.gguf",
         size="~16 GB",
-        description="Qwen3 14B — near-lossless, strong coding",
+        description="Qwen3 14B - near-lossless, strong coding",
         max_output=32768,
     ),
     ModelEntry(
@@ -115,7 +115,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/Qwen_Qwen3-32B-GGUF",
         filename="Qwen_Qwen3-32B-Q4_K_M.gguf",
         size="~20 GB",
-        description="Qwen3 32B dense — top-tier coding quality",
+        description="Qwen3 32B dense - top-tier coding quality",
         max_output=32768,
     ),
     ModelEntry(
@@ -123,7 +123,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/Qwen_Qwen3-30B-A3B-GGUF",
         filename="Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
         size="~19 GB",
-        description="Qwen3 30B MoE — fast TG, outperforms QwQ-32B",
+        description="Qwen3 30B MoE - fast TG, outperforms QwQ-32B",
         max_output=32768,
     ),
     # ── Qwen 3.6 (April 2026) ────────────────────────────────────────────────
@@ -132,7 +132,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
         filename="Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
         size="~21 GB",
-        description="Qwen3.6 35B MoE — SWE-bench 73%, 262K ctx",
+        description="Qwen3.6 35B MoE - SWE-bench 73%, 262K ctx",
         max_output=32768,
     ),
     ModelEntry(
@@ -140,7 +140,7 @@ KNOWN_MODELS: list[ModelEntry] = [
         repo="bartowski/Qwen_Qwen3.6-27B-GGUF",
         filename="Qwen_Qwen3.6-27B-Q4_K_M.gguf",
         size="~18 GB",
-        description="Qwen3.6 27B dense — Apr 2026, 262K context, multimodal",
+        description="Qwen3.6 27B dense - Apr 2026, 262K context, multimodal",
         max_output=32768,
     ),
 ]
@@ -170,7 +170,7 @@ def _resolve(
 ) -> ModelEntry | None:
     """Resolve alias or filename to a ModelEntry from config, falling back to KNOWN_MODELS.
 
-    _fallback_list is an internal parameter for testing — when provided,
+    _fallback_list is an internal parameter for testing - when provided,
     the function uses that list directly instead of calling load_config().
     """
     if _fallback_list is not None:
@@ -215,7 +215,7 @@ def _catalog_table(title: str) -> Table:
 
 @app.command("list")
 def list_models() -> None:
-    """List all known models — shows download status and which is active."""
+    """List all known models - shows download status and which is active."""
     models_dir = _models_dir()
     cfg = load_config()
     active = cfg.models.active
@@ -269,7 +269,7 @@ def download(
     ] = None,
     filename: Annotated[
         str | None,
-        typer.Option("--file", "-f", help="GGUF filename — required when passing a raw repo ID."),
+        typer.Option("--file", "-f", help="GGUF filename - required when passing a raw repo ID."),
     ] = None,
 ) -> None:
     """Download a GGUF model from HuggingFace."""
@@ -513,7 +513,7 @@ def show_cost(
         console.print(f"  Cache W: ${entry.cost.cache_write:.4f} / token")
         console.print(f"  Cache R: ${entry.cost.cache_read:.4f} / token")
         if entry.cost.is_zero():
-            console.print("  [dim](all costs are zero — model is free)[/dim]")
+            console.print("  [dim](all costs are zero - model is free)[/dim]")
     else:
         # Show all models with non-zero costs
         table = Table(title="Model Costs ($ per token)", show_header=True)

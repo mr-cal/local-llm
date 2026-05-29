@@ -1,12 +1,12 @@
 # Local LLM Configuration
 # Edit this file, then run:  uv run llm config apply
 #
-# Machine roles — set enabled per section:
-#   server+client  — both enabled (most common)
-#   server-only    — server enabled, client disabled
-#   client-only    — client enabled, server disabled
+# Machine roles - set enabled per section:
+#   server+client  - both enabled (most common)
+#   server-only    - server enabled, client disabled
+#   client-only    - client enabled, server disabled
 #
-# Sensitive values (api_key, hf_token) live only here — never committed.
+# Sensitive values (api_key, hf_token) live only here - never committed.
 
 # ── SERVER ────────────────────────────────────────────────────────────────────
 # Skip [server] and [models] entirely on a client-only machine.
@@ -14,7 +14,7 @@
 [server]
 enabled = true
 # Path to the llama-server binary.
-# Leave empty if you configure [[build.profiles]] below — the binary will be
+# Leave empty if you configure [[build.profiles]] below - the binary will be
 # resolved automatically from the active build profile.
 llama_server_bin = ""
 
@@ -23,7 +23,7 @@ llama_server_bin = ""
 # Run `uv run llm build run` to build binaries.
 profile = ""
 
-# Internal HTTP port — llama-server listens here; nginx proxies to it.
+# Internal HTTP port - llama-server listens here; nginx proxies to it.
 port = 8080
 
 # Model layers to offload to Vulkan iGPU (Radeon 890M).
@@ -44,11 +44,11 @@ extra_args = []
 # Directory containing GGUF model files.
 dir = "~/models"
 
-# Active model — use the alias from [[models.list]] below.
+# Active model - use the alias from [[models.list]] below.
 # Run `uv run llm model list` to see options.
 active = "qwen2.5-coder-14b-q4"
 
-# HuggingFace token — only needed for gated/private models.
+# HuggingFace token - only needed for gated/private models.
 # Generate at: https://huggingface.co/settings/tokens
 hf_token = ""
 
@@ -61,7 +61,7 @@ alias = "qwen2.5-coder-7b-q8"
 repo  = "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF"
 filename = "Qwen2.5-Coder-7B-Instruct-Q8_0.gguf"
 size = "~8 GB"
-description = "Qwen 2.5 Coder 7B — fastest, good for quick tasks"
+description = "Qwen 2.5 Coder 7B - fastest, good for quick tasks"
 max_output = 8192
 cost.input = 1.00
 cost.output = 5.00
@@ -73,7 +73,7 @@ alias = "qwen2.5-coder-14b-q4"
 repo  = "bartowski/Qwen2.5-Coder-14B-Instruct-GGUF"
 filename = "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
 size = "~8.5 GB"
-description = "Qwen 2.5 Coder 14B — best speed/quality balance (default)"
+description = "Qwen 2.5 Coder 14B - best speed/quality balance (default)"
 max_output = 8192
 cost.input = 3.00
 cost.output = 15.00
@@ -85,7 +85,7 @@ alias = "qwen2.5-coder-32b-q4"
 repo  = "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF"
 filename = "Qwen2.5-Coder-32B-Instruct-Q4_K_M.gguf"
 size = "~18 GB"
-description = "Qwen 2.5 Coder 32B — strong coding model"
+description = "Qwen 2.5 Coder 32B - strong coding model"
 max_output = 8192
 cost.input = 3.00
 cost.output = 15.00
@@ -97,7 +97,7 @@ alias = "qwen2.5-coder-32b-q8"
 repo  = "bartowski/Qwen2.5-Coder-32B-Instruct-GGUF"
 filename = "Qwen2.5-Coder-32B-Instruct-Q8_0.gguf"
 size = "~34 GB"
-description = "Qwen 2.5 Coder 32B — high precision"
+description = "Qwen 2.5 Coder 32B - high precision"
 max_output = 8192
 cost.input = 3.00
 cost.output = 15.00
@@ -109,7 +109,7 @@ alias = "qwen2.5-72b-q4"
 repo  = "bartowski/Qwen2.5-72B-Instruct-GGUF"
 filename = "Qwen2.5-72B-Instruct-Q4_K_M.gguf"
 size = "~42 GB"
-description = "Qwen 2.5 72B — near-frontier quality (fits in 62 GB)"
+description = "Qwen 2.5 72B - near-frontier quality (fits in 62 GB)"
 max_output = 8192
 cost.input = 5.00
 cost.output = 25.00
@@ -121,7 +121,7 @@ alias = "gemma-4-31b-q4"
 repo  = "bartowski/google_gemma-4-31B-it-GGUF"
 filename = "google_gemma-4-31B-it-Q4_K_M.gguf"
 size = "~20 GB"
-description = "Gemma 4 31B — newest Google model, multimodal"
+description = "Gemma 4 31B - newest Google model, multimodal"
 max_output = 8192
 cost.input = 3.00
 cost.output = 15.00
@@ -133,7 +133,7 @@ alias = "gemma-3-27b-q4"
 repo  = "bartowski/google_gemma-3-27b-it-GGUF"
 filename = "google_gemma-3-27b-it-Q4_K_M.gguf"
 size = "~17 GB"
-description = "Gemma 3 27B — strong all-rounder, multimodal"
+description = "Gemma 3 27B - strong all-rounder, multimodal"
 max_output = 8192
 cost.input = 3.00
 cost.output = 15.00
@@ -145,7 +145,7 @@ alias = "gemma-3-27b-q8"
 repo  = "bartowski/google_gemma-3-27b-it-GGUF"
 filename = "google_gemma-3-27b-it-Q8_0.gguf"
 size = "~29 GB"
-description = "Gemma 3 27B — high precision, multimodal"
+description = "Gemma 3 27B - high precision, multimodal"
 max_output = 8192
 cost.input = 5.00
 cost.output = 25.00
@@ -157,7 +157,7 @@ alias = "gemma-3-12b-q4"
 repo  = "bartowski/google_gemma-3-12b-it-GGUF"
 filename = "google_gemma-3-12b-it-Q4_K_M.gguf"
 size = "~7 GB"
-description = "Gemma 3 12B — fast, good quality, multimodal"
+description = "Gemma 3 12B - fast, good quality, multimodal"
 max_output = 8192
 cost.input = 1.00
 cost.output = 5.00
@@ -169,7 +169,7 @@ alias = "gemma-3-12b-q8"
 repo  = "bartowski/google_gemma-3-12b-it-GGUF"
 filename = "google_gemma-3-12b-it-Q8_0.gguf"
 size = "~13 GB"
-description = "Gemma 3 12B — high precision, multimodal"
+description = "Gemma 3 12B - high precision, multimodal"
 max_output = 8192
 cost.input = 1.00
 cost.output = 5.00
@@ -181,7 +181,7 @@ alias = "qwen3-8b-q8"
 repo  = "bartowski/Qwen_Qwen3-8B-GGUF"
 filename = "Qwen_Qwen3-8B-Q8_0.gguf"
 size = "~9 GB"
-description = "Qwen3 8B — fast, near-lossless quant"
+description = "Qwen3 8B - fast, near-lossless quant"
 max_output = 32768
 cost.input = 1.00
 cost.output = 5.00
@@ -193,7 +193,7 @@ alias = "qwen3-14b-q8"
 repo  = "bartowski/Qwen_Qwen3-14B-GGUF"
 filename = "Qwen_Qwen3-14B-Q8_0.gguf"
 size = "~16 GB"
-description = "Qwen3 14B — near-lossless, strong coding"
+description = "Qwen3 14B - near-lossless, strong coding"
 max_output = 32768
 cost.input = 3.00
 cost.output = 15.00
@@ -205,7 +205,7 @@ alias = "qwen3-32b-q4"
 repo  = "bartowski/Qwen_Qwen3-32B-GGUF"
 filename = "Qwen_Qwen3-32B-Q4_K_M.gguf"
 size = "~20 GB"
-description = "Qwen3 32B dense — top-tier coding quality"
+description = "Qwen3 32B dense - top-tier coding quality"
 max_output = 32768
 cost.input = 3.00
 cost.output = 15.00
@@ -217,7 +217,7 @@ alias = "qwen3-30b-moe-q4"
 repo  = "bartowski/Qwen_Qwen3-30B-A3B-GGUF"
 filename = "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf"
 size = "~19 GB"
-description = "Qwen3 30B MoE — fast TG, outperforms QwQ-32B"
+description = "Qwen3 30B MoE - fast TG, outperforms QwQ-32B"
 max_output = 32768
 cost.input = 3.00
 cost.output = 15.00
@@ -229,7 +229,7 @@ alias = "qwen3.6-35b-moe-q4"
 repo  = "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF"
 filename = "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf"
 size = "~21 GB"
-description = "Qwen3.6 35B MoE — SWE-bench 73%, 262K ctx"
+description = "Qwen3.6 35B MoE - SWE-bench 73%, 262K ctx"
 max_output = 32768
 cost.input = 5.00
 cost.output = 25.00
@@ -241,7 +241,7 @@ alias = "qwen3.6-27b-q4"
 repo  = "bartowski/Qwen_Qwen3.6-27B-GGUF"
 filename = "Qwen_Qwen3.6-27B-Q4_K_M.gguf"
 size = "~18 GB"
-description = "Qwen3.6 27B dense — Apr 2026, 262K context, multimodal"
+description = "Qwen3.6 27B dense - Apr 2026, 262K context, multimodal"
 max_output = 32768
 cost.input = 3.00
 cost.output = 15.00
@@ -249,7 +249,7 @@ cost.cache_write = 3.75
 cost.cache_read = 0.30
 
 # ── PROXY ─────────────────────────────────────────────────────────────────────
-# nginx TLS proxy — allows remote clients to reach llama-server securely.
+# nginx TLS proxy - allows remote clients to reach llama-server securely.
 # Skip [proxy] on a client-only machine.
 
 [proxy]
@@ -271,7 +271,7 @@ cert_path = "/etc/ssl/local-llm/cert.pem"
 # ── CLIENT ────────────────────────────────────────────────────────────────────
 # How opencode, Pi, and other tools on THIS machine connect to the LLM.
 #
-# server+client machine: leave server_url empty — tools connect directly to
+# server+client machine: leave server_url empty - tools connect directly to
 #   the local llama-server at http://127.0.0.1:<port> (no TLS, no auth).
 #
 # client-only machine: set server_url to the remote server's proxy URL,
@@ -317,7 +317,7 @@ token = ""
 # Values are in USD per token.
 
 # ── BUILD ─────────────────────────────────────────────────────────────────────
-# llama.cpp build system — compile from source with one or more profiles.
+# llama.cpp build system - compile from source with one or more profiles.
 # Run `uv run llm build init` to initialize the submodule, then
 # `uv run llm build run` to compile.
 

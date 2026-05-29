@@ -58,7 +58,7 @@ def setup(
 
     Creates or updates config.toml, generates TLS cert + API key,
     renders nginx/systemd configs, and configures the local client
-    (opencode, pi, shell env vars).  Safe to re-run.
+    (opencode, pi, shell env vars). Safe to re-run.
     """
     from llm.config import (  # noqa: PLC0415
         apply_client_configs,
@@ -90,7 +90,7 @@ def setup(
         return fallback
 
     # ── Step 1: LAN IP ────────────────────────────────────────────────────
-    console.print("[bold]Step 1/6[/bold] — Network")
+    console.print("[bold]Step 1/6[/bold] - Network")
     detected_ip = detect_lan_ip()
     current_ip = _get("proxy", "lan_ip", detected_ip or "192.168.1.100")
     lan_ip = _prompt("  LAN IP", current_ip)
@@ -105,7 +105,7 @@ def setup(
     server_port = int(_prompt("  Server port (internal)", _get("server", "port", "8080")))
 
     # ── Step 2: Auth ──────────────────────────────────────────────────────
-    console.print("\n[bold]Step 2/6[/bold] — Authentication")
+    console.print("\n[bold]Step 2/6[/bold] - Authentication")
     current_key = _get("auth", "api_key", "")
     if current_key:
         console.print(f"  [dim]API key already set ({current_key[:8]}…)[/dim]")
@@ -115,13 +115,13 @@ def setup(
         console.print(f"  [green]Generated API key:[/green] {api_key[:16]}…")
 
     # ── Step 3: Server tuning ─────────────────────────────────────────────
-    console.print("\n[bold]Step 3/6[/bold] — Server tuning")
+    console.print("\n[bold]Step 3/6[/bold] - Server tuning")
     n_gpu_layers = int(_prompt("  GPU layers", _get("server", "n_gpu_layers", "20")))
     n_ctx = int(_prompt("  Context size", _get("server", "n_ctx", "65536")))
     n_threads = int(_prompt("  Threads", _get("server", "n_threads", "12")))
 
     # ── Step 4: Model ─────────────────────────────────────────────────────
-    console.print("\n[bold]Step 4/6[/bold] — Model")
+    console.print("\n[bold]Step 4/6[/bold] - Model")
     models_dir = _prompt("  Models directory", _get("models", "dir", "~/models"))
     active_model = _get("models", "active", "qwen2.5-coder-14b-q4")
     console.print(f"  Active model: [bold]{active_model}[/bold]")
@@ -153,7 +153,7 @@ def setup(
     }
 
     # ── Write config.toml ─────────────────────────────────────────────────
-    console.print("\n[bold]Step 5/6[/bold] — Writing config")
+    console.print("\n[bold]Step 5/6[/bold] - Writing config")
     write_config_toml(cfg_dict, config_path)
     console.print(f"  [green]✓[/green] {config_path}")
 
@@ -166,7 +166,7 @@ def setup(
         raise typer.Exit(1)
 
     # ── Step 6: Apply configs ─────────────────────────────────────────────
-    console.print("\n[bold]Step 6/6[/bold] — Applying configs")
+    console.print("\n[bold]Step 6/6[/bold] - Applying configs")
 
     # Server configs (nginx, systemd)
     apply_server_configs(cfg, project_root)
@@ -227,13 +227,13 @@ def _nginx_ensure_running() -> None:
         if _nginx_reload():
             console.print("[green]nginx[/green]       reloaded")
         else:
-            console.print("[yellow]nginx[/yellow]       reload failed — check: sudo nginx -t")
+            console.print("[yellow]nginx[/yellow]       reload failed - check: sudo nginx -t")
     else:
         console.print("[dim]  (sudo systemctl start nginx)[/dim]")
         if _nginx_start():
             console.print("[green]nginx[/green]       started")
         else:
-            console.print("[yellow]nginx[/yellow]       failed to start — check: sudo systemctl status nginx")
+            console.print("[yellow]nginx[/yellow]       failed to start - check: sudo systemctl status nginx")
 
 
 # Runtime files live alongside the config in the project directory.
@@ -420,7 +420,7 @@ def stop() -> None:
         if _nginx_stop():
             console.print("[green]Stopped[/green] nginx")
         else:
-            console.print("[yellow]nginx[/yellow]       failed to stop — check: sudo systemctl status nginx")
+            console.print("[yellow]nginx[/yellow]       failed to stop - check: sudo systemctl status nginx")
 
 
 @app.command("restart")
@@ -441,7 +441,7 @@ def status() -> None:
     cfg = load_config()
 
     if not cfg.has_local_server:
-        console.print("[dim]No local server configured — client-only mode.[/dim]")
+        console.print("[dim]No local server configured - client-only mode.[/dim]")
         console.print(f"  Connecting to: [cyan]{cfg.client_url}[/cyan]")
         if _nginx_is_active():
             console.print("[green]● nginx[/green]         active")

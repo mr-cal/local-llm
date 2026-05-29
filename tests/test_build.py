@@ -216,7 +216,7 @@ class TestBuildRun:
             cmake_calls.append(cmd)
             # Simulate cmake creating a fake binary
             if cmd[0] == "cmake" and "--build" not in str(cmd):
-                # configure step — create fake bin dir
+                # configure step - create fake bin dir
                 build_dir = tmp_path / "llama.cpp" / "build-vulkan-default"
                 bin_dir = build_dir / "bin"
                 bin_dir.mkdir(parents=True, exist_ok=True)

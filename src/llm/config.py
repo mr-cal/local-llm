@@ -17,7 +17,7 @@ console = Console()
 
 CONFIG_FILENAME = "config.toml"
 
-# Template written by `llm config init` — loaded from config_template.toml.
+# Template written by `llm config init` - loaded from config_template.toml.
 # Every option is a commented example so the file is self-documenting.
 _CONFIG_TEMPLATE = resources.files("llm").joinpath("config_template.toml").read_text(encoding="utf-8")
 
@@ -34,10 +34,10 @@ BACKEND_FLAGS: dict[str, str] = {
 
 
 class BuildProfile(BaseModel):
-    """A single build profile — a named set of cmake flags."""
+    """A single build profile - a named set of cmake flags."""
 
     name: str
-    backend: str | None = None  # convenience shorthand, e.g. "vulkan" → -DGGML_VULKAN=ON
+    backend: str | None = None  # shortcut, e.g. "vulkan" → -DGGML_VULKAN=ON
     extra_flags: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -133,7 +133,7 @@ class ModelCost(BaseModel):
     """Per-token cost for a single model.
 
     Prices are in USD per token.  Defaults are zero because local models
-    are free — override for cloud-hosted APIs or when you want cost tracking.
+    are free - override for cloud-hosted APIs or when you want cost tracking.
     """
 
     input: float = 0.0  # $ per input token
@@ -173,7 +173,7 @@ class ModelEntry(BaseModel):
 
     @property
     def id(self) -> str:
-        """Unique identifier — alias."""
+        """Unique identifier - alias."""
         return self.alias
 
 
@@ -247,7 +247,7 @@ class GitHubSettings(BaseModel):
 class ClientSettings(BaseModel):
     """How client tools (opencode, Pi) on this machine connect to the LLM.
 
-    server+client machine: leave server_url empty — defaults to the local
+    server+client machine: leave server_url empty - defaults to the local
     llama-server at http://127.0.0.1:<port> (no TLS, no auth needed).
 
     client-only machine: set server_url to the remote proxy URL, and
@@ -443,16 +443,16 @@ def config_init() -> None:
         config_path = Path.cwd() / CONFIG_FILENAME
 
     # ── Step 1: Server connection ─────────────────────────────────────────
-    console.print("[bold]Step 1/3[/bold] — Server connection")
+    console.print("[bold]Step 1/3[/bold] - Server connection")
     server_url = _prompt_init("  Server URL", "https://192.168.1.x:8443/v1")
 
     # ── Step 2: Auth ──────────────────────────────────────────────────────
-    console.print("\n[bold]Step 2/3[/bold] — Authentication")
+    console.print("\n[bold]Step 2/3[/bold] - Authentication")
     console.print("  [dim]Find the API key in config.toml on the server (auth.api_key).[/dim]")
     api_key = _prompt_init("  API key")
 
     # ── Step 3: TLS certificate ───────────────────────────────────────────
-    console.print("\n[bold]Step 3/3[/bold] — TLS certificate")
+    console.print("\n[bold]Step 3/3[/bold] - TLS certificate")
     default_cert = "~/.config/local-llm/cert.pem"
     cert_path = _prompt_init("  Local cert path", default_cert)
     cert_expanded = Path(cert_path).expanduser()
@@ -472,7 +472,7 @@ def config_init() -> None:
                 console.print(f"  [green]✓[/green] Cert copied to {cert_expanded}")
             else:
                 console.print(
-                    f"  [red]✗[/red] scp failed — copy it manually:\n"
+                    f"  [red]✗[/red] scp failed - copy it manually:\n"
                     f"    scp {server_host}:{remote_cert} {cert_expanded}"
                 )
 
@@ -818,7 +818,7 @@ def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type
         with urllib.request.urlopen(req, timeout=5) as resp:
             schema = __import__("json").loads(resp.read())
     except Exception as exc:
-        return [f"⚠ Could not fetch schema ({exc}) — skipping validation"]
+        return [f"⚠ Could not fetch schema ({exc}) - skipping validation"]
 
     # Strip the $ref from 'model' field: it points to models.dev enum of known
     # cloud providers. Custom local providers will never be in that list, so we
@@ -831,7 +831,7 @@ def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type
         warnings.simplefilter("ignore")
         for err in jsonschema.Draft202012Validator(schema).iter_errors(cfg_dict):
             path = " → ".join(str(p) for p in err.absolute_path) or "(root)"
-            # Skip residual model-enum errors — local providers are never in the
+            # Skip residual model-enum errors - local providers are never in the
             # cloud-provider enum that models.dev maintains.
             if path == "model":
                 continue
@@ -884,7 +884,7 @@ def apply_client_configs(cfg: Settings) -> None:
     elif real_errors:
         for err in real_errors:
             console.print(f"  [red]✗[/red]  {err}")
-        console.print("\n[red]opencode config has schema errors — not written.[/red]")
+        console.print("\n[red]opencode config has schema errors - not written.[/red]")
         raise typer.Exit(1)
     else:
         console.print("  [green]✓[/green] Schema valid")
@@ -960,7 +960,7 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
     nginx_avail = Path("/etc/nginx/sites-available/llm")
     nginx_enabled = Path("/etc/nginx/sites-enabled/llm")
     if not nginx_src.exists():
-        console.print("  [yellow]nginx/llm-proxy.conf not found — skipping[/yellow]")
+        console.print("  [yellow]nginx/llm-proxy.conf not found - skipping[/yellow]")
     else:
         if _sudo("cp", str(nginx_src), str(nginx_avail), desc="install conf"):
             if not nginx_enabled.exists():
@@ -980,14 +980,14 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
     svc_src = project_root / "systemd" / "llm-server.service"
     svc_dst = Path("/etc/systemd/system/llm-server.service")
     if not svc_src.exists():
-        console.print("  [yellow]systemd/llm-server.service not found — skipping[/yellow]")
+        console.print("  [yellow]systemd/llm-server.service not found - skipping[/yellow]")
     else:
         if _sudo("cp", str(svc_src), str(svc_dst), desc="install service"):
             _sudo("systemctl", "daemon-reload", desc="daemon-reload")
             _sudo("systemctl", "enable", "llm-server", desc="enable llm-server")
             if _systemctl_is_active("llm-server"):
                 console.print(
-                    "  [dim]llm-server is running — restart to pick up changes:[/dim]\n"
+                    "  [dim]llm-server is running - restart to pick up changes:[/dim]\n"
                     "    [bold]uv run llm server restart[/bold]"
                 )
 
@@ -1123,7 +1123,7 @@ def configure_shell_env_host(
     env_dir.mkdir(parents=True, exist_ok=True)
 
     env_content = (
-        "# Generated by local-llm — do not edit manually\n"
+        "# Generated by local-llm - do not edit manually\n"
         f'export OPENAI_BASE_URL="{base_url}"\n'
         f'export OPENAI_API_KEY="{api_key}"\n'
         f'export NODE_EXTRA_CA_CERTS="{cert_path}"\n'
@@ -1140,7 +1140,7 @@ def configure_shell_env_host(
     # ── Fish: conf.d snippet ──────────────────────────────────────────────
     fish_conf = home / ".config" / "fish" / "conf.d" / "local-llm.fish"
     fish_content = (
-        "# Generated by local-llm — do not edit manually\n"
+        "# Generated by local-llm - do not edit manually\n"
         f'set -gx OPENAI_BASE_URL "{base_url}"\n'
         f'set -gx OPENAI_API_KEY "{api_key}"\n'
         f'set -gx NODE_EXTRA_CA_CERTS "{cert_path}"\n'

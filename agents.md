@@ -10,7 +10,7 @@ make lint     # ruff check
 make test     # pytest
 ```
 
-Ensure all commands pass before marking a task complete.
+Make sure all commands pass before marking a task complete.
 
 ---
 
@@ -42,10 +42,10 @@ The app uses a single `config.toml` with these top-level sections:
 | `proxy` | Conditional | nginx TLS proxy settings (`lan_ip`, `port`, `cert_path`). Set `enabled = false` on client-only machines. |
 | `client` | Conditional | How tools connect (`server_url`, `cert_path`). Set `enabled = true` on client-only machines. |
 | `auth` | Conditional | Bearer API key (`api_key`). Generated on the server. |
-| `models` | — | Model catalog (`dir`, `active`, `list`, `hf_token`). |
-| `build` | — | llama.cpp build config (`repo`, `commit`, `profiles`, `install_dir`). |
+| `models` | - | Model catalog (`dir`, `active`, `list`, `hf_token`). |
+| `build` | - | llama.cpp build config (`repo`, `commit`, `profiles`, `install_dir`). |
 | `github` | **Optional** | GitHub CLI auth (`token`). Used by `llm client setup --container` to run `gh auth login` inside containers. Leave blank to skip. |
-| `lxd` | — | LXD-specific settings (`mounts`, `craft_dirs`). |
+| `lxd` | - | LXD-specific settings (`mounts`, `craft_dirs`). |
 
 **Secrets** (`auth.api_key`, `models.hf_token`, `github.token`) are masked in `llm config show` output.
 
@@ -58,20 +58,20 @@ The app uses a single `config.toml` with these top-level sections:
 | `dev` | `~/dev` | `~/dev` |
 | `opencode-config` | `~/.config/opencode` | `~/.config/opencode` |
 
-These are used by `create_and_setup()` and `refresh_containers()`. Custom mounts override via the `[lxd] mounts` section.
+Used by `create_and_setup()` and `refresh_containers()`. Custom mounts override via the `[lxd] mounts` section.
 
 ## Container workflow (`llm client setup --container`)
 
 The full sequence in `_setup_container_client()` / `create_and_setup()`:
 
-1. **Launch** — `lxc launch ubuntu:24.04` (container or VM)
-2. **ID mapping** — `raw.idmap` to map host UID/GID → container UID/GID (containers only; VMs share namespace)
-3. **Bind mounts** — disk devices for `.agents`, `.github`, `~/dev`, `.config/opencode`
-4. **Package install** — `build-essential`, `gh`, `gh-copilot`, `astral-uv`, `helix`, `nodejs`, `pylsp`
-5. **Pi harness** — `/etc/hosts` entry, `models.json`, TLS cert, `NODE_EXTRA_CA_CERTS` shell vars
-6. **Opencode config** — written to container's `~/.config/opencode/config.json`
-7. **gh auth** — `gh auth login --with-token` (if `[github] token` is set)
-8. **Version tag** — `lxc config set <name> user.local-llm-version=<ver>`
+1. **Launch** - `lxc launch ubuntu:24.04` (container or VM)
+2. **ID mapping** - `raw.idmap` to map host UID/GID → container UID/GID (containers only; VMs share namespace)
+3. **Bind mounts** - disk devices for `.agents`, `.github`, `~/dev`, `.config/opencode`
+4. **Package install** - `build-essential`, `gh`, `gh-copilot`, `astral-uv`, `helix`, `nodejs`, `pylsp`
+5. **Pi harness** - `/etc/hosts` entry, `models.json`, TLS cert, `NODE_EXTRA_CA_CERTS` shell vars
+6. **Opencode config** - written to container's `~/.config/opencode/config.json`
+7. **gh auth** - `gh auth login --with-token` (if `[github] token` is set)
+8. **Version tag** - `lxc config set <name> user.local-llm-version=<ver>`
 
 ### `effective_uid` / `effective_gid` convention
 
@@ -86,7 +86,7 @@ Always compute this once and pass as keyword args: `effective_uid=effective_uid,
 
 ## Injecting content into containers
 
-The pattern is consistent across cert injection, config files, and other content:
+Use this pattern for injecting content into containers (certs, config files, etc.):
 
 ```python
 subprocess.run(
@@ -98,7 +98,7 @@ subprocess.run(
 
 Where `_cexec()` builds the `lxc exec --user=... --group=... --env=HOME=... --` prefix.
 
-For `gh auth login --with-token`, pipe the token directly as stdin to the `gh` command (no intermediate file needed):
+For `gh auth login --with-token`, pipe the token directly as stdin to the `gh` command (no intermediate file):
 
 ```python
 subprocess.run(
@@ -114,9 +114,7 @@ subprocess.run(
 - Use the `_make_completed(returncode=0, stdout="")` helper to build mock `CompletedProcess` objects.
 - Collect calls in a `list[list]` to verify what commands were issued.
 - Key test files: `tests/test_lxd.py`, `tests/test_client.py`, `tests/test_config.py`.
-- All 267 tests must pass.
 
 ## Verification
 
 - Run `make format`, `make lint`, and `make test` before marking any task complete.
-- Evidence (test output) before assertions — always show passing test results when claiming success.

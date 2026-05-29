@@ -113,7 +113,7 @@ class TestModelsSettings:
         models_dir.mkdir()
         active_file = models_dir / "test.gguf"
         active_file.touch()
-        # No catalog — active is treated as filename
+        # No catalog - active is treated as filename
         s = Settings(models=ModelsSettings(dir=str(models_dir), active="test.gguf"))
         assert s.model_path == active_file
 
@@ -750,7 +750,7 @@ class TestConfigShow:
         config.write_text(tomli_w.dumps(data))
         monkeypatch.chdir(tmp_path)
         mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
-        # config_show should not raise — it should mask the github token
+        # config_show should not raise - it should mask the github token
         config_show()
 
 
