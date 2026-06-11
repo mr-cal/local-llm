@@ -75,11 +75,11 @@ The full sequence in `_setup_container_client()` / `create_and_setup()`:
 
 ### `effective_uid` / `effective_gid` convention
 
-VMs and containers use different UID/GID for `lxc exec`:
+All LXD VMs use the host UID/GID for `lxc exec` (shared UID namespace):
 
 ```python
-effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
-effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
+effective_uid = HOST_UID
+effective_gid = HOST_GID
 ```
 
 Always compute this once and pass as keyword args: `effective_uid=effective_uid, effective_gid=effective_gid`.
