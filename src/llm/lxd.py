@@ -429,6 +429,33 @@ def create_container(container, vm: bool = False):
             "ubuntu",
         ]
     )
+    # Configure git identity for the container user.
+    run(
+        [
+            "lxc",
+            "exec",
+            container,
+            "--",
+            "git",
+            "config",
+            "--global",
+            "user.email",
+            "mr-cal-bot@users.no-reply.github.com",
+        ]
+    )
+    run(
+        [
+            "lxc",
+            "exec",
+            container,
+            "--",
+            "git",
+            "config",
+            "--global",
+            "user.name",
+            "mr-cal-bot",
+        ]
+    )
 
     if vm:
         _fix_vm_user_uid(container)
