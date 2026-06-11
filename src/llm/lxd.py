@@ -118,9 +118,6 @@ def _refresh_omp_config(container: str, uid: int, gid: int) -> None:
     if r.returncode == 0 and r.stdout.strip():
         existing_lines = r.stdout.splitlines()
 
-    # Build the merged YAML: replace existing local-llm provider block
-    new_yaml_lines = _build_omp_yaml(omp_cfg).splitlines()
-
     # Parse existing YAML into a dict to preserve other providers
     existing: dict = {}
     if existing_lines:
@@ -143,8 +140,8 @@ def _parse_omp_yaml(text: str) -> dict:  # type: ignore[type-arg]
     Returns a dict that can be merged with a fresh config.
     """
     result: dict = {"providers": {}}
-    current_provider = None
-    current_model = None
+    current_provider: str | None = None
+    current_model: dict | None = None
     in_costs = False
 
     for line in text.splitlines():
@@ -185,7 +182,7 @@ def _parse_omp_yaml(text: str) -> dict:  # type: ignore[type-arg]
             in_costs = False
             continue
 
-        if current_provider and current_model and indent == 8 and not in_costs:
+        if current_provider and current_model is not None and indent == 8 and not in_costs:
             if ": " in stripped:
                 key, val = stripped.split(": ", 1)
                 current_model[key] = _parse_yaml_value(val)
@@ -193,7 +190,7 @@ def _parse_omp_yaml(text: str) -> dict:  # type: ignore[type-arg]
                 in_costs = True
             continue
 
-        if current_provider and current_model and in_costs:
+        if current_provider and current_model is not None and in_costs:
             if stripped == "}":
                 in_costs = False
                 continue
