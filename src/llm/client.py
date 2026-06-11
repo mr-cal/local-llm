@@ -91,9 +91,9 @@ def _setup_container_client(
 
     console.print(f"\n[bold cyan]═══ Setting up container: {container_name} ═══[/bold cyan]\n")
 
-    # Read TLS cert from host
+    # Read TLS cert from host — prefer client.cert_path (set on client-only machines)
     cert_pem: str | None = None
-    cert_file = Path(cfg.proxy.cert_path)
+    cert_file = Path(cfg.client.cert_path or cfg.proxy.cert_path).expanduser()
     if cert_file.exists():
         cert_pem = cert_file.read_text()
     else:
@@ -204,9 +204,9 @@ def check() -> None:
         raise typer.Exit(1)
 
     cfg = load_config()
-    base_url = f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}"
+    base_url = cfg.client_url.removesuffix("/v1")
     health_url = f"{base_url}/health"
-    cert_path = cfg.proxy.cert_path
+    cert_path = str(Path(cfg.client.cert_path or cfg.proxy.cert_path).expanduser())
 
     console.print(f"\n[bold]Checking server at {base_url}[/bold]\n")
 
@@ -270,8 +270,8 @@ def show() -> None:
         raise typer.Exit(1)
 
     cfg = load_config()
-    base_url = f"https://{cfg.proxy.lan_ip}:{cfg.proxy.port}/v1"
-    cert_path = cfg.proxy.cert_path
+    base_url = cfg.client_url
+    cert_path = str(Path(cfg.client.cert_path or cfg.proxy.cert_path).expanduser())
     cert_exists = Path(cert_path).exists()
 
     console.print(f"  URL:    [cyan]{base_url}[/cyan]")

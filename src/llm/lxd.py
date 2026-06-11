@@ -15,6 +15,7 @@ from pathlib import Path
 from rich.console import Console
 
 from llm.config import (
+    _build_omp_config_for_container,
     _build_pi_config_for_container,
     _get_lxd_bridge_info,
     load_config,
@@ -58,6 +59,175 @@ PYLSP_LSP_CONFIG = {
 }
 
 console = Console()
+
+
+def _build_omp_yaml(cfg: dict) -> str:  # type: ignore[type-arg]
+    """Build the oh-my-pi models.yml string from a config dict."""
+    provider = cfg["providers"]["local-llm"]
+    base_url = provider["baseUrl"]
+    api_key = provider["apiKey"]
+    models = provider["models"]
+
+    lines = [
+        "providers:",
+        "  local-llm:",
+        f"    baseUrl: {base_url}",
+        f"    apiKey: {api_key}",
+        "    api: openai-completions",
+        "    auth: apiKey",
+        "    models:",
+    ]
+
+    for model in models:
+        cost = model.get("cost", {})
+        lines.append("      - id: " + model["id"])
+        lines.append("        name: " + model["name"])
+        lines.append("        reasoning: " + str(model.get("reasoning", False)).lower())
+        lines.append("        input: " + str(model.get("input", ["text"])))
+        lines.append("        contextWindow: " + str(model.get("contextWindow", 4096)))
+        lines.append("        maxTokens: " + str(model.get("maxTokens", 8192)))
+        lines.append(
+            "        cost: "
+            + "{ input: "
+            + str(cost.get("input", 0))
+            + ", output: "
+            + str(cost.get("output", 0))
+            + ", cacheRead: "
+            + str(cost.get("cacheRead", 0))
+            + ", cacheWrite: "
+            + str(cost.get("cacheWrite", 0))
+            + " }"
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+def _refresh_omp_config(container: str, uid: int, gid: int) -> None:
+    """Re-apply the oh-my-pi models.yml inside the container.
+
+    Reads existing config, merges the local-llm provider, writes back.
+    """
+    from llm.config import load_config  # noqa: PLC0415
+
+    cfg = load_config()
+    omp_cfg = _build_omp_config_for_container(cfg, "local-llm")
+
+    # Read existing config from the container
+    r = _run_capture(container, "cat", _OMP_CONTAINER_CONFIG)
+    existing_lines: list[str] = []
+    if r.returncode == 0 and r.stdout.strip():
+        existing_lines = r.stdout.splitlines()
+
+    # Build the merged YAML: replace existing local-llm provider block
+    new_yaml_lines = _build_omp_yaml(omp_cfg).splitlines()
+
+    # Parse existing YAML into a dict to preserve other providers
+    existing: dict = {}
+    if existing_lines:
+        existing = _parse_omp_yaml(r.stdout)
+    merged: dict = {**existing}
+    merged.setdefault("providers", {})
+    merged["providers"].update(omp_cfg.get("providers", {}))
+
+    merged_yaml = _build_omp_yaml(merged)
+    subprocess.run(
+        _cexec(container, uid, gid, "bash", "-c", f"cat > {_OMP_CONTAINER_CONFIG}"),
+        input=merged_yaml.encode(),
+        check=True,
+    )
+
+
+def _parse_omp_yaml(text: str) -> dict:  # type: ignore[type-arg]
+    """Simple YAML parser for oh-my-pi models.yml – handles the specific structure we write.
+
+    Returns a dict that can be merged with a fresh config.
+    """
+    result: dict = {"providers": {}}
+    current_provider = None
+    current_model = None
+    in_costs = False
+
+    for line in text.splitlines():
+        stripped = line.rstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        indent = len(line) - len(line.lstrip())
+
+        if indent == 0 and stripped.endswith(":"):
+            current_provider = stripped[:-1]
+            result["providers"][current_provider] = {}
+            continue
+
+        if current_provider and indent == 2 and stripped.endswith(":"):
+            key = stripped[:-1]
+            result["providers"][current_provider][key] = {}
+            current_model = None
+            in_costs = False
+            continue
+
+        if current_provider and indent == 4 and not in_costs:
+            if ": " in stripped:
+                key, val = stripped.split(": ", 1)
+                result["providers"][current_provider][key] = val
+                if key == "models":
+                    result["providers"][current_provider][key] = []
+                current_model = None
+            continue
+
+        if current_provider and indent == 6 and stripped.startswith("- id:"):
+            model_id = stripped.split(": ", 1)[1].strip()
+            current_model = {"id": model_id}
+            if isinstance(result["providers"][current_provider].get("models"), list):
+                result["providers"][current_provider]["models"].append(current_model)
+            else:
+                result["providers"][current_provider]["models"] = [current_model]
+            in_costs = False
+            continue
+
+        if current_provider and current_model and indent == 8 and not in_costs:
+            if ": " in stripped:
+                key, val = stripped.split(": ", 1)
+                current_model[key] = _parse_yaml_value(val)
+            elif stripped == "{":
+                in_costs = True
+            continue
+
+        if current_provider and current_model and in_costs:
+            if stripped == "}":
+                in_costs = False
+                continue
+            # Parse inline cost dict: { input: 0, output: 0, ... }
+            parts = stripped.strip().split(",")
+            for part in parts:
+                part = part.strip().strip("{} ")
+                if ": " in part:
+                    k, v = part.split(": ", 1)
+                    current_model.setdefault("cost", {})[k.strip()] = _parse_yaml_value(v.strip())
+            continue
+
+    return result
+
+
+def _parse_yaml_value(val: str) -> str | bool | int | float | list:  # type: ignore[type-arg]
+    """Parse a simple YAML scalar value."""
+    if val.lower() == "true":
+        return True
+    if val.lower() == "false":
+        return False
+    try:
+        return int(val)
+    except ValueError:
+        pass
+    try:
+        return float(val)
+    except ValueError:
+        pass
+    # Handle list: [text]
+    if val.startswith("[") and val.endswith("]"):
+        inner = val[1:-1]
+        return [x.strip().strip("'\"") for x in inner.split(",")]
+    return val
 
 
 def load_lxd_settings() -> tuple[list[tuple[str, str, str]], list[str]]:
@@ -508,9 +678,9 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
         ]
     )
 
-    console.print("  Installing pi (@earendil-works/pi-coding-agent)...")
+    console.print("  Installing oh-my-pi...")
     run(
-        ["lxc", "exec", container, "--", "npm", "install", "-g", "@earendil-works/pi-coding-agent"],
+        ["lxc", "exec", container, "--", "bash", "-c", "curl -fsSL https://omp.sh/install | sh"],
     )
 
     console.print("  Setting fish as the default shell...")
@@ -767,8 +937,9 @@ def _t_venv_interpreter_valid(craft_dirs: list[str]) -> None:
 # -- Pi harness setup --------------------------------------------------------
 
 
-# Path inside the container where pi reads its model configuration.
+# Paths inside the container where agent tools read their model configuration.
 _PI_CONTAINER_CONFIG = f"{CONTAINER_HOME}/.pi/agent/models.json"
+_OMP_CONTAINER_CONFIG = f"{CONTAINER_HOME}/.omp/agent/models.yml"
 _NODE_CA_CERTS_DIR = f"{CONTAINER_HOME}/.config/local-llm"
 _NODE_CA_CERTS_FILE = f"{_NODE_CA_CERTS_DIR}/cert.pem"
 
@@ -867,10 +1038,14 @@ def setup_pi_in_container(
     cfg = load_config()
 
     # ── Step 1: Add /etc/hosts entry so 'local-llm' resolves inside container ─
-    # Use the server's LAN IP (proxy.lan_ip) rather than the lxdbr0 bridge IP.
-    # nginx listens on lan_ip:port, and LXD's MASQUERADE NAT ensures nginx's
-    # subnet allowlist passes regardless of whether the server is local or remote.
-    server_ip = cfg.proxy.lan_ip
+    # On client-only machines, derive the server IP from client.server_url.
+    # On server machines (no server_url), fall back to proxy.lan_ip.
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    if cfg.client.server_url:
+        server_ip = urlparse(cfg.client.server_url).hostname or cfg.proxy.lan_ip
+    else:
+        server_ip = cfg.proxy.lan_ip
     console.print(f"  Adding /etc/hosts entry: {server_ip} local-llm...")
     hosts_cmd = f"grep -qxF '{server_ip} local-llm' /etc/hosts || echo '{server_ip} local-llm' >> /etc/hosts"
     subprocess.run(
@@ -910,12 +1085,29 @@ def setup_pi_in_container(
     )
     console.print(f"    Written to {Path(_PI_CONTAINER_CONFIG).relative_to(CONTAINER_HOME)}")
 
+    # ── Step 2.5: Generate models.yml for oh-my-pi ─────────────────────────
+    console.print("  Generating models.yml for oh-my-pi...")
+    omp_cfg = _build_omp_config_for_container(cfg, "local-llm")
+    omp_yaml = _build_omp_yaml(omp_cfg)
+
+    omp_config_dir = str(Path(_OMP_CONTAINER_CONFIG).parent)
+    subprocess.run(
+        _cexec(container, uid, gid, "bash", "-c", f"mkdir -p {omp_config_dir}"),
+        check=True,
+    )
+    subprocess.run(
+        _cexec(container, uid, gid, "bash", "-c", f"cat > {_OMP_CONTAINER_CONFIG}"),
+        input=omp_yaml.encode(),
+        check=True,
+    )
+    console.print(f"    Written to {Path(_OMP_CONTAINER_CONFIG).relative_to(CONTAINER_HOME)}")
+
     # ── Step 3: Install TLS certificate ──────────────────────────────────────
     console.print("  Installing TLS certificate...")
 
-    # Resolve cert: caller-supplied > config.toml cert_path
+    # Resolve cert: caller-supplied > client.cert_path > proxy.cert_path
     if cert_pem is None:
-        cfg_cert_path = Path(cfg.proxy.cert_path)
+        cfg_cert_path = Path(cfg.client.cert_path or cfg.proxy.cert_path).expanduser()
         if cfg_cert_path.exists():
             cert_pem = cfg_cert_path.read_text()
 
@@ -1108,6 +1300,16 @@ def run_tests(
         )
         assert r.returncode == 0, f"pi not found in container: {r.stderr.strip()}"
 
+    def t_omp_config():
+        r = subprocess.run(
+            ["lxc", "exec", container, "--", "cat", _OMP_CONTAINER_CONFIG],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, f"models.yml not found in container: {r.stderr.strip()}"
+        assert "local-llm" in r.stdout, f"local-llm provider missing in models.yml: {r.stdout}"
+        assert "baseUrl" in r.stdout, f"baseUrl missing in models.yml: {r.stdout}"
+
     def t_pi_mount():
         # Verify ~/.pi mount point exists in the container.
         r = subprocess.run(
@@ -1191,6 +1393,7 @@ def run_tests(
         ("fish installed", t_fish_installed),
         ("fish is the default shell", t_fish_default_shell),
         ("pi installed", t_pi_installed),
+        ("omp models.yml exists", t_omp_config),
         ("dev mount readable", t_dev_mount_read),
         ("dev mount ownership transparent", t_dev_ownership),
         (".github mount works", t_github_mount),
@@ -1364,10 +1567,10 @@ def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> No
     run(["lxc", "exec", container, "--", "apt-get", "autoremove", "-y"])
     run(["lxc", "exec", container, "--", "apt-get", "clean"])
 
-    # 2. pi (npm global)
-    console.print("\n  [bold]pi:[/bold] updating @earendil-works/pi-coding-agent...")
+    # 2. pi (oh-my-pi)
+    console.print("\n  [bold]pi:[/bold] updating oh-my-pi...")
     run(
-        ["lxc", "exec", container, "--", "npm", "update", "-g", "@earendil-works/pi-coding-agent"],
+        ["lxc", "exec", container, "--", "bash", "-c", "curl -fsSL https://omp.sh/install | sh"],
     )
 
     # 3. copilot (self-update via built-in binary at ~/.local/share/gh/copilot/)
@@ -1376,7 +1579,7 @@ def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> No
         _cexec(container, uid, gid, "gh", "copilot", "update"),
     )
 
-    # 4. pi config (bridge IP, cert, models.json, shell env vars)
+    # 4. pi + oh-my-pi config (bridge IP, cert, models.json, models.yml, shell env vars)
     bridge_ip = _get_lxd_bridge_ip()
     if not bridge_ip:
         console.print(
@@ -1384,6 +1587,8 @@ def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> No
             "/etc/hosts entry for 'local-llm' will not be updated."
         )
     setup_pi_in_container(container, bridge_ip=bridge_ip, cert_pem=cert_pem, uid=uid, gid=gid)
+    # Re-apply oh-my-pi models.yml (uses separate merge logic from models.json)
+    _refresh_omp_config(container, uid, gid)
 
     console.print(f"\n  [green]✓[/green] {container} refresh complete")
 

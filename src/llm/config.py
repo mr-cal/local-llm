@@ -702,6 +702,69 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     }
 
 
+def _build_omp_config_for_container(cfg: Settings, server_host: str) -> dict:  # type: ignore[type-arg]
+    """Build the oh-my-pi models.yml config dict for use INSIDE an LXD container.
+
+    The container cannot reach the host's llama-server at 127.0.0.1, so it
+    connects via the nginx TLS proxy using *server_host* (typically the
+    ``local-llm`` hostname, which is already in the cert's SubjectAltName).
+    """
+    from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
+    active = cfg.models.active
+    entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
+    if entry is None and cfg.models.has_catalog is False:
+        entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
+    display_name = entry.alias if entry else active
+    max_output = entry.max_output if entry else 8192
+    api_key = cfg.client_api_key or "local"
+
+    base_url = f"https://{server_host}:{cfg.proxy.port}/v1"
+
+    return {
+        "providers": {
+            "local-llm": {
+                "baseUrl": base_url,
+                "apiKey": api_key,
+                "api": "openai-completions",
+                "auth": "apiKey",
+                "models": [
+                    {
+                        "id": "local",
+                        "name": display_name,
+                        "reasoning": True,
+                        "input": ["text"],
+                        "contextWindow": cfg.server.n_ctx,
+                        "maxTokens": max_output,
+                        "cost": {
+                            "input": (
+                                entry.cost.input
+                                if entry
+                                else 0.0
+                            ),
+                            "output": (
+                                entry.cost.output
+                                if entry
+                                else 0.0
+                            ),
+                            "cacheRead": (
+                                entry.cost.cache_read
+                                if entry
+                                else 0.0
+                            ),
+                            "cacheWrite": (
+                                entry.cost.cache_write
+                                if entry
+                                else 0.0
+                            ),
+                        },
+                    }
+                ],
+            }
+        }
+    }
+
+
 def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # type: ignore[type-arg]
     """Build the pi-harness models.json config dict for use INSIDE an LXD container.
 
