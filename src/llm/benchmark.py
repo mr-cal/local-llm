@@ -23,7 +23,8 @@ app = typer.Typer(help="Benchmark inference speed.", no_args_is_help=True)
 console = Console()
 
 HISTORY_FILE = Path("logs/benchmark-history.csv")
-# New columns: profile, flags_hash (added after existing columns for backward compat)
+# Extended columns: profile, flags_hash, gtt_mb added to existing headers.
+# _append_result() fills missing columns for old CSV files.
 HISTORY_HEADERS = [
     "timestamp",
     "model",
@@ -193,7 +194,8 @@ def _ensure_history_file() -> None:
 
 def _append_result(row: dict[str, str | int | float]) -> None:
     _ensure_history_file()
-    # Fill missing columns with empty string for backward compat with old CSV files
+    # Fill missing columns with empty string for old CSV files
+    # (profile, flags_hash, gtt_mb were added after existing columns)
     full_row = {h: row.get(h, "") for h in HISTORY_HEADERS}
     with HISTORY_FILE.open("a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=HISTORY_HEADERS)
