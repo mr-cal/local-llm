@@ -504,10 +504,6 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
         ]
     )
 
-    console.print("  Installing gh-copilot extension...")
-    run(
-        ["lxc", "exec", container, "--", "gh", "extension", "install", "github/gh-copilot"],
-    )
 
     console.print("  Installing pi (@earendil-works/pi-coding-agent)...")
     run(
@@ -1008,13 +1004,6 @@ def run_tests(
             check=True,
         )
 
-    def t_gh_copilot_extension():
-        subprocess.run(
-            ["lxc", "exec", container, "--", "gh", "extension", "list"],
-            capture_output=True,
-            check=True,
-        )
-
     def t_dev_mount_read():
         # Verify ~/dev mount point is readable in the container.
         # We check the mount point itself rather than a specific subdirectory
@@ -1199,7 +1188,6 @@ def run_tests(
         ("Container running", t_running),
         ("build-essential installed", t_build_essential),
         ("gh installed", t_gh_installed),
-        ("gh-copilot extension installed", t_gh_copilot_extension),
         ("passwordless sudo works", t_passwordless_sudo),
         ("uv installed", t_uv_installed),
         ("fish installed", t_fish_installed),
