@@ -35,6 +35,7 @@ HISTORY_HEADERS = [
     "n_gpu_layers",
     "profile",
     "flags_hash",
+    "gtt_mb",
 ]
 
 _DEFAULT_PROMPT = (
@@ -44,6 +45,23 @@ _DEFAULT_PROMPT = (
 
 
 # ── llama-bench helpers ───────────────────────────────────────────────────────
+
+
+def _read_gpu_gtt_mb() -> float | None:
+    """Return AMD GPU GTT (shared RAM) used in MiB, or None if unavailable.
+
+    On AMD iGPUs using Vulkan, model weights are placed in GTT (system RAM
+    mapped to the GPU) rather than the small dedicated VRAM slice.
+    Reads from the amdgpu sysfs interface.
+    """
+    for card in sorted(Path("/sys/class/drm").glob("card*")):
+        gtt_used = card / "device" / "mem_info_gtt_used"
+        if gtt_used.exists():
+            try:
+                return int(gtt_used.read_text().strip()) / (1024 * 1024)
+            except (ValueError, OSError):
+                pass
+    return None
 
 
 def _find_bench_bin() -> Path | None:
@@ -269,6 +287,25 @@ def _run_single_benchmark(
         console.print(f"Profile    : {profile_name}")
     console.print()
 
+    # Wait for the server to finish loading the model before benchmarking.
+    health_url = f"{cfg.internal_url}/health"
+    console.print("Waiting for server to be ready...", end=" ")
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        try:
+            r = httpx.get(health_url, timeout=2)
+            if r.status_code == 200:
+                break
+        except (httpx.ConnectError, httpx.TimeoutException):
+            pass
+        time.sleep(1)
+    else:
+        console.print("[red]timed out[/red]")
+        console.print("  Start it: [bold]uv run llm server start[/bold]")
+        raise typer.Exit(1)
+    console.print("[green]ready[/green]")
+    console.print()
+
     payload = {
         "model": cfg.models.active,
         "messages": [{"role": "user", "content": prompt}],
@@ -295,6 +332,7 @@ def _run_single_benchmark(
 
     elapsed = time.perf_counter() - t_start
     data = resp.json()
+    gtt_mb = _read_gpu_gtt_mb()
 
     usage = data.get("usage", {})
     prompt_tokens: int = usage.get("prompt_tokens", 0)
@@ -320,6 +358,8 @@ def _run_single_benchmark(
     t.add_row("Prompt processing", f"{pp_tps:.1f} tok/s" if pp_tps > 0 else "n/a (use --raw)")
     t.add_row("Token generation", f"{tg_tps:.1f} tok/s")
     t.add_row("GPU layers offloaded", str(cfg.server.n_gpu_layers))
+    if gtt_mb is not None:
+        t.add_row("GPU memory (GTT)", f"{gtt_mb:.0f} MiB")
 
     console.print(t)
 
@@ -339,6 +379,7 @@ def _run_single_benchmark(
         "n_gpu_layers": cfg.server.n_gpu_layers,
         "profile": profile_name,
         "flags_hash": flags_hash,
+        "gtt_mb": round(gtt_mb) if gtt_mb is not None else "",
     }
     _append_result(row)
     console.print(f"\n[dim]Result saved to {HISTORY_FILE}[/dim]")
@@ -412,6 +453,7 @@ def compare(
     t.add_column("PP tok/s", justify="right")
     t.add_column("TG tok/s", justify="right", style="bold")
     t.add_column("GPU Layers", justify="right")
+    t.add_column("GTT MiB", justify="right")
 
     for profile_name, profile_rows in sorted(by_profile.items()):
         for row in profile_rows[-last:]:
@@ -422,6 +464,7 @@ def compare(
                 row.get("pp_tps", ""),
                 row.get("tg_tps", ""),
                 row.get("n_gpu_layers", ""),
+                row.get("gtt_mb", ""),
             )
 
     console.print(t)

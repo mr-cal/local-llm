@@ -471,6 +471,7 @@ class TestModuleConstants:
             "n_gpu_layers",
             "profile",
             "flags_hash",
+            "gtt_mb",
         ]
         assert expected == benchmark.HISTORY_HEADERS
 
