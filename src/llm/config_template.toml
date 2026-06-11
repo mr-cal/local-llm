@@ -226,7 +226,7 @@ craft_dirs = [
     # "~/dev/craft/snapcraft/snapcraft-a",
 ]
 
-# Directories to bind-mount from the host into the LXD container/VM.
+# Directories to bind-mount from the host into the LXD VM.
 [[lxd.mounts]]
 host = "~/.agents"
 

@@ -86,25 +86,25 @@ uv run llm client check
 
 ## LXD Container Setup
 
-Create a fully configured LXD container as a development client:
+Create a fully configured LXD VM as a development client:
 
 ```bash
 uv run llm client setup --container craft-llm-1
 ```
 
-This creates the container, installs packages, configures mounts, and sets up the full client (opencode, pi, TLS cert, shell env vars).
+This creates the VM, installs packages, configures mounts, and sets up the full client (opencode, pi, TLS cert, shell env vars).
 
 ```bash
-# Enter the container
+# Enter the VM
 lxc exec craft-llm-1 -- su -l $USER
 
 # Run make setup in configured craft directories
 uv run llm client crafts craft-llm-1
 
-# Refresh packages and configs in all managed containers
+# Refresh packages and configs in all managed VMs
 uv run llm client refresh
 
-# List managed containers
+# List managed VMs
 uv run llm client list
 ```
 
@@ -136,12 +136,12 @@ Server
 
 Client
   uv run llm client setup          Set up this machine as a client (opencode, pi, shell env)
-  uv run llm client setup -c NAME  Create an LXD container and set it up as a client
+  uv run llm client setup -c NAME  Create an LXD VM and set it up as a client
   uv run llm client check          Test connectivity to the server
   uv run llm client show           Print current client connection info
-  uv run llm client list           List managed LXD containers
-  uv run llm client refresh [NAME] Update packages + re-apply config in containers
-  uv run llm client crafts NAME    Run make setup in craft directories inside a container
+  uv run llm client list           List managed LXD VMs
+  uv run llm client refresh [NAME] Update packages + re-apply config in VMs
+  uv run llm client crafts NAME    Run make setup in craft directories inside a VM
 
 Models
   uv run llm model list            List downloaded models

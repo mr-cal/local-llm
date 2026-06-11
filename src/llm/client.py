@@ -62,14 +62,11 @@ def _setup_container_client(
     container_name: str,
     *,
     recreate: bool = False,
-    lxd_vm: bool = False,
 ) -> None:
-    """Create an LXD container and fully configure it as a client."""
+    """Create an LXD VM and fully configure it as a client."""
     from llm.config import _build_opencode_config_for_container  # noqa: PLC0415
     from llm.lxd import (  # noqa: PLC0415
-        CONTAINER_GID,
         CONTAINER_HOME,
-        CONTAINER_UID,
         HOST_GID,
         HOST_UID,
         LOCAL_LLM_VERSION,
@@ -103,18 +100,17 @@ def _setup_container_client(
             "  Generate it first: [bold]uv run llm server setup[/bold]"
         )
 
-    # Create and configure the container (LXD, packages, mounts, pi)
+    # Create and configure the VM (LXD, packages, mounts, pi)
     create_and_setup(
         container_name,
         mounts=mounts,
         recreate=recreate,
-        lxd_vm=lxd_vm,
         cert_pem=cert_pem,
     )
 
-    # Set up opencode config inside the container (separate from host bind mount)
-    effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
-    effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
+    # Set up opencode config inside the VM (separate from host bind mount)
+    effective_uid = HOST_UID
+    effective_gid = HOST_GID
 
     console.print("\n[bold]Setting up opencode config in container...[/bold]")
     opencode_cfg = _build_opencode_config_for_container(cfg, "local-llm")
@@ -144,7 +140,7 @@ def _setup_container_client(
         check=True,
     )
 
-    console.print(f"\n[bold green]✓ Container '{container_name}' is ready![/bold green]")
+    console.print(f"\n[bold green]✓ VM '{container_name}' is ready![/bold green]")
     console.print(
         f"\n  Enter the container:  [bold]lxc exec {container_name} -- su -l $USER[/bold]"
         f"\n  Set up craft dirs:    [bold]uv run llm client crafts {container_name}[/bold]"
@@ -158,25 +154,21 @@ def setup(
         typer.Option(
             "--container",
             "-c",
-            help="Create an LXD container with this name and set it up as a client.",
+            help="Create an LXD VM with this name and set it up as a client.",
         ),
     ] = None,
     recreate: Annotated[
         bool,
-        typer.Option("--recreate", help="Delete and recreate the container if it already exists."),
-    ] = False,
-    lxd_vm: Annotated[
-        bool,
-        typer.Option("--lxd-vm", help="Create a full LXD VM instead of a container."),
+        typer.Option("--recreate", help="Delete and recreate the VM if it already exists."),
     ] = False,
 ) -> None:
-    """Set up a client (either the current host or an LXD container).
+    """Set up a client (either the current host or an LXD VM).
 
     Without --container: configures opencode, pi, and shell env vars on this machine.
-    With --container: creates an LXD container and configures it as a client.
+    With --container: creates an LXD VM and configures it as a client.
     """
     if container:
-        _setup_container_client(container, recreate=recreate, lxd_vm=lxd_vm)
+        _setup_container_client(container, recreate=recreate)
     else:
         _setup_host_client()
 
@@ -333,16 +325,12 @@ def list_containers() -> None:
 def refresh(
     container: Annotated[
         str | None,
-        typer.Argument(help="Container name. Omit to refresh all managed containers."),
+        typer.Argument(help="VM name. Omit to refresh all managed VMs."),
     ] = None,
-    lxd_vm: Annotated[
-        bool,
-        typer.Option("--lxd-vm", help="Force VM mode for the named container."),
-    ] = False,
 ) -> None:
-    """Update packages and re-apply client config in managed LXD container(s).
+    """Update packages and re-apply client config in managed LXD VM(s).
 
-    Without arguments, refreshes all containers tagged as managed.
+    Without arguments, refreshes all VMs tagged as managed.
     """
     from llm.lxd import refresh_containers  # noqa: PLC0415
 
@@ -356,7 +344,7 @@ def refresh(
             cert_pem = cert_file.read_text()
 
     try:
-        refresh_containers(container, cert_pem=cert_pem, lxd_vm=lxd_vm)
+        refresh_containers(container, cert_pem=cert_pem)
     except RuntimeError as e:
         console.print(f"[red]ERROR:[/red] {escape(str(e))}")
         raise typer.Exit(1) from None
@@ -369,20 +357,16 @@ def refresh(
 def crafts(
     container: Annotated[
         str,
-        typer.Argument(help="Container name to run 'make setup' in."),
+        typer.Argument(help="VM name to run 'make setup' in."),
     ],
-    lxd_vm: Annotated[
-        bool,
-        typer.Option("--lxd-vm", help="Force VM mode."),
-    ] = False,
 ) -> None:
-    """Run 'make setup' in all configured craft directories inside a container."""
+    """Run 'make setup' in all configured craft directories inside a VM."""
     from llm.lxd import do_setup_crafts, load_lxd_settings  # noqa: PLC0415
 
     _, craft_dirs = load_lxd_settings()
 
     try:
-        do_setup_crafts(container, craft_dirs, lxd_vm=lxd_vm)
+        do_setup_crafts(container, craft_dirs)
     except RuntimeError as e:
         console.print(f"[red]ERROR:[/red] {escape(str(e))}")
         raise typer.Exit(1) from None

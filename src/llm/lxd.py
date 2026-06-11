@@ -321,16 +321,7 @@ def container_exists(container):
     return any(c["name"] == container for c in json.loads(r.stdout))
 
 
-def container_is_vm(container):
-    """Return True if the named LXD instance is a virtual machine."""
-    r = run_capture(["lxc", "list", container, "--format=json"])
-    if r.returncode != 0:
-        return False
-    instances = json.loads(r.stdout)
-    return any(c["name"] == container and c.get("type") == "virtual-machine" for c in instances)
-
-
-# The custom LXD config key used to mark containers managed by this tool.
+# The custom LXD config key used to mark VMs managed by this tool.
 # Containers tagged with this key are discovered by `llm client refresh` when
 # no explicit container number is given.
 _MANAGED_TAG = "user.local-llm-managed"
@@ -379,23 +370,23 @@ def _setup_vm_swap(container: str) -> None:
     )
 
 
-def create_container(container, vm: bool = False):
-    kind = "VM" if vm else "container"
-    total_steps = 4 if vm else 5
-    console.print(f"\n[bold][1/{total_steps}][/bold] Launching {container} (ubuntu:24.04) as {kind}...")
-    launch_cmd = ["lxc", "launch", "ubuntu:24.04", container]
-    if vm:
-        launch_cmd += [
-            "--vm",
-            "--config",
-            f"limits.memory={VM_MEMORY}",
-            "--device",
-            f"root,size={VM_ROOT_DISK_SIZE}",
-        ]
+def create_container(container: str) -> None:
+    """Launch an LXD VM (ubuntu:24.04) with default resources."""
+    console.print(f"\n[bold][1/4][/bold] Launching {container} (ubuntu:24.04) as VM...")
+    launch_cmd = [
+        "lxc",
+        "launch",
+        "ubuntu:24.04",
+        container,
+        "--vm",
+        "--config",
+        f"limits.memory={VM_MEMORY}",
+        "--device",
+        f"root,size={VM_ROOT_DISK_SIZE}",
+    ]
     run(launch_cmd)
     wait_for_container(container)
-    if vm:
-        _setup_vm_swap(container)
+    _setup_vm_swap(container)
     # Rename the default ubuntu user/group to match the host user, and move the
     # home directory to the same path as on the host.  This ensures venv scripts
     # (whose shebangs reference HOST_HOME) resolve correctly in both environments
@@ -456,8 +447,7 @@ def create_container(container, vm: bool = False):
         ]
     )
 
-    if vm:
-        _fix_vm_user_uid(container)
+    _fix_vm_user_uid(container)
 
 
 def _fix_vm_user_uid(container):
@@ -506,98 +496,12 @@ def _fix_vm_user_uid(container):
             console.print(f"[yellow]  Warning:[/yellow] chown may have missed some files: {r.stderr.strip()}")
 
 
-def _subid_covers(lines: list[str], name: str, uid: int) -> bool:
-    """Return True if any existing subuid/subgid entry for *name* covers *uid*."""
-    for line in lines:
-        parts = line.strip().split(":")
-        if len(parts) != 3 or parts[0] != name:
-            continue
-        try:
-            start, count = int(parts[1]), int(parts[2])
-        except ValueError:
-            continue
-        if start <= uid < start + count:
-            return True
-    return False
-
-
-def _ensure_subid_allocation() -> bool:
-    """Ensure HOST_UID and HOST_GID are in root's subuid/subgid allocations.
-
-    LXD raw.idmap silently ignores mappings whose host UID/GID are not in the
-    LXD daemon's allowed range (root's entries in /etc/subuid and /etc/subgid).
-    This function adds the missing single-entry allocations and returns True if
-    any changes were made (the caller must then reload the LXD daemon).
-    """
-    changed = False
-    for path, uid in (("/etc/subuid", HOST_UID), ("/etc/subgid", HOST_GID)):
-        try:
-            lines = Path(path).read_text().splitlines()
-        except FileNotFoundError:
-            lines = []
-        if _subid_covers(lines, "root", uid):
-            console.print(f"  [dim]{path}[/dim] already covers {uid}")
-            continue
-        entry = f"root:{uid}:1"
-        subprocess.run(
-            ["sudo", "tee", "-a", path],
-            input=f"{entry}\n",
-            text=True,
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
-        console.print(f"  Added [cyan]{entry}[/cyan] to {path}")
-        changed = True
-    return changed
-
-
-def _reload_lxd_daemon() -> None:
-    """Tell the LXD daemon to reload its subuid/subgid allocations.
-
-    Tries the snap service name first (most Ubuntu installations), then the
-    plain systemd unit name as a fallback.
-    """
-    for svc in ("snap.lxd.daemon.service", "lxd.service"):
-        r = subprocess.run(["sudo", "systemctl", "reload", svc], capture_output=True)
-        if r.returncode == 0:
-            console.print(f"  Reloaded [cyan]{svc}[/cyan]")
-            return
-    console.print(
-        "[yellow]  Warning:[/yellow] could not reload LXD daemon - "
-        "raw.idmap may not take effect until the daemon is restarted."
-    )
-
-
-def configure_idmap(container, step: str = "2/5"):
-    console.print(
-        f"\n[bold][{step}][/bold] Configuring UID/GID mapping "
-        f"(host {HOST_UID}:{HOST_GID} -> container {CONTAINER_UID}:{CONTAINER_GID})..."
-    )
-    # raw.idmap silently does nothing if the host UID/GID is not in the range
-    # allocated to root in /etc/subuid and /etc/subgid.  Add single-entry
-    # allocations and reload the LXD daemon before touching the container config.
-    console.print(
-        f"  Ensuring host UID {HOST_UID} / GID {HOST_GID} "
-        "are in /etc/subuid + /etc/subgid (raw.idmap prerequisite)..."
-    )
-    if _ensure_subid_allocation():
-        _reload_lxd_daemon()
-    idmap = f"uid {HOST_UID} {CONTAINER_UID}\ngid {HOST_GID} {CONTAINER_GID}"
-    run(["lxc", "config", "set", container, "raw.idmap", idmap])
-    # raw.idmap requires a full stop+start cycle to take effect - lxc restart
-    # is not sufficient because it performs an in-place reboot that doesn't
-    # re-initialise the host-side UID/GID remapping table.
-    run(["lxc", "stop", container])
-    run(["lxc", "start", container])
-    wait_for_container(container)
-
-
 def add_mounts(
     container,
     mounts: list[tuple[str, str, str]],
-    step: str = "3/5",
-    uid: int = CONTAINER_UID,
-    gid: int = CONTAINER_GID,
+    step: str = "2/4",
+    uid: int = HOST_UID,
+    gid: int = HOST_GID,
 ):
     console.print(f"\n[bold][{step}][/bold] Adding bind mounts...")
 
@@ -1446,9 +1350,8 @@ def run_tests(
         instances = json.loads(r.stdout)
         assert isinstance(instances, list), f"expected JSON list, got: {r.stdout!r}"
 
-    is_vm = container_is_vm(container)
     tests = [
-        ("Container running", t_running),
+        ("VM running", t_running),
         ("build-essential installed", t_build_essential),
         ("gh installed", t_gh_installed),
         ("passwordless sudo works", t_passwordless_sudo),
@@ -1468,7 +1371,7 @@ def run_tests(
         ("pi mount exists", t_pi_mount),
         ("pylsp installed", t_pylsp_installed),
         ("pylsp registered in lsp-config.json", t_pylsp_lsp_config),
-        *([("nested lxd: lxc list works inside VM", t_nested_lxd)] if is_vm else []),
+        ("nested lxd: lxc list works inside VM", t_nested_lxd),
     ]
 
     results = [check(name, fn) for name, fn in tests]
@@ -1521,26 +1424,23 @@ def create_and_setup(
     *,
     mounts: list[tuple[str, str, str]],
     recreate: bool = False,
-    lxd_vm: bool = False,
     cert_pem: str | None = None,
 ) -> None:
-    """Create and configure an LXD container (or VM) for local LLM development.
+    """Create and configure an LXD VM for local LLM development.
 
     This is the library equivalent of the ``llm client setup --container``
     CLI command. Raises ``RuntimeError`` on fatal errors instead of
     ``typer.Exit``.
     """
-    kind = "VM" if lxd_vm else "container"
-
     if container_exists(container_name):
         if not recreate:
             raise RuntimeError(
-                f"{kind} '{container_name}' already exists. Pass recreate=True to delete and recreate it."
+                f"VM '{container_name}' already exists. Pass recreate=True to delete and recreate it."
             )
-        console.print(f"Deleting existing {kind}: {container_name}")
+        console.print(f"Deleting existing VM: {container_name}")
         run(["lxc", "delete", "--force", container_name])
 
-    console.print(f"Creating {kind}: {container_name}")
+    console.print(f"Creating VM: {container_name}")
 
     # Prepend a helix config bind-mount if the directory exists on the host.
     helix_host = os.path.join(HOST_HOME, ".config", "helix")
@@ -1551,43 +1451,31 @@ def create_and_setup(
     else:
         console.print("  [dim]~/.config/helix not found on host - skipping helix config mount[/dim]")
 
-    if lxd_vm:
-        create_container(container_name, vm=True)
-        add_mounts(container_name, all_mounts, step="2/5", uid=HOST_UID, gid=HOST_GID)
-        install_packages(container_name, step="3/5", uid=HOST_UID)
-        install_pylsp(container_name, step="4/5", uid=HOST_UID, gid=HOST_GID)
-        setup_nested_lxd(container_name, step="5/5", uid=HOST_UID)
-    else:
-        create_container(container_name, vm=False)
-        configure_idmap(container_name, step="2/5")
-        add_mounts(container_name, all_mounts, step="3/5")
-        install_packages(container_name, step="4/5")
-        install_pylsp(container_name, step="5/5")
-
-    effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
-    effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
+    create_container(container_name)
+    add_mounts(container_name, all_mounts, step="2/4")
+    install_packages(container_name, step="3/4", uid=HOST_UID)
+    install_pylsp(container_name, step="4/4", uid=HOST_UID, gid=HOST_GID)
+    setup_nested_lxd(container_name, step="4/4", uid=HOST_UID)
 
     setup_pi_in_container(
         container_name,
         cert_pem=cert_pem,
-        uid=effective_uid,
-        gid=effective_gid,
+        uid=HOST_UID,
+        gid=HOST_GID,
     )
 
     _tag_as_managed(container_name)
 
-    run_tests(container_name, mounts=all_mounts, uid=effective_uid, gid=effective_gid)
+    run_tests(container_name, mounts=all_mounts, uid=HOST_UID, gid=HOST_GID)
 
 
 def do_setup_crafts(
     container_name: str,
     craft_dirs: list[str],
-    *,
-    lxd_vm: bool = False,
 ) -> None:
-    """Run 'make setup' in all craft project directories inside the container/VM.
+    """Run 'make setup' in all craft project directories inside the VM.
 
-    Raises ``RuntimeError`` if no craft_dirs are configured or container doesn't exist.
+    Raises ``RuntimeError`` if no craft_dirs are configured or VM doesn't exist.
     """
     if not craft_dirs:
         raise RuntimeError(
@@ -1597,13 +1485,7 @@ def do_setup_crafts(
     if not container_exists(container_name):
         raise RuntimeError(f"'{container_name}' does not exist.")
 
-    is_vm = lxd_vm or container_is_vm(container_name)
-    kind = "VM" if is_vm else "container"
-    console.print(f"  Detected {container_name} as {kind}.")
-
-    effective_uid = HOST_UID if is_vm else CONTAINER_UID
-    effective_gid = HOST_GID if is_vm else CONTAINER_GID
-    run_make_setup(container_name, craft_dirs, uid=effective_uid, gid=effective_gid)
+    run_make_setup(container_name, craft_dirs, uid=HOST_UID, gid=HOST_GID)
     run_craft_setup_tests(container_name, craft_dirs)
 
 
@@ -1649,33 +1531,26 @@ def refresh_containers(
     container_name: str | None = None,
     *,
     cert_pem: str | None = None,
-    lxd_vm: bool = False,
 ) -> None:
-    """Update packages and re-apply config in managed LXD container(s).
+    """Update packages and re-apply config in managed LXD VM(s).
 
-    When *container_name* is ``None``, discovers every running container tagged
+    When *container_name* is ``None``, discovers every running VM tagged
     with ``user.local-llm-managed=true`` and refreshes all of them.
 
-    Raises ``RuntimeError`` if a named container doesn't exist or no managed
-    containers are found.
+    Raises ``RuntimeError`` if a named VM doesn't exist or no managed
+    VMs are found.
     """
     if container_name is not None:
         if not container_exists(container_name):
             raise RuntimeError(f"'{container_name}' does not exist.")
-        is_vm = lxd_vm or container_is_vm(container_name)
-        uid = HOST_UID if is_vm else CONTAINER_UID
-        gid = HOST_GID if is_vm else CONTAINER_GID
-        _refresh_one(container_name, cert_pem=cert_pem, uid=uid, gid=gid)
+        _refresh_one(container_name, cert_pem=cert_pem, uid=HOST_UID, gid=HOST_GID)
     else:
         managed = _list_managed_containers()
         if not managed:
-            raise RuntimeError(f"No running containers tagged with {_MANAGED_TAG}=true found.")
+            raise RuntimeError(f"No running VMs tagged with {_MANAGED_TAG}=true found.")
 
-        console.print(f"Found [bold]{len(managed)}[/bold] managed container(s): " + ", ".join(managed))
+        console.print(f"Found [bold]{len(managed)}[/bold] managed VM(s): " + ", ".join(managed))
         for container in managed:
-            is_vm = container_is_vm(container)
-            uid = HOST_UID if is_vm else CONTAINER_UID
-            gid = HOST_GID if is_vm else CONTAINER_GID
-            _refresh_one(container, cert_pem=cert_pem, uid=uid, gid=gid)
+            _refresh_one(container, cert_pem=cert_pem, uid=HOST_UID, gid=HOST_GID)
 
-        console.print(f"\n[green]✓[/green] All {len(managed)} container(s) refreshed.")
+        console.print(f"\n[green]✓[/green] All {len(managed)} VM(s) refreshed.")
