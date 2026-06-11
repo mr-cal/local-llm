@@ -191,7 +191,7 @@ class ModelsSettings(BaseModel):
         if self.entries and self.active:
             by_alias = {m.alias for m in self.entries}
             if self.active not in by_alias:
-                # Still allow custom/uncatalogued models (legacy compat)
+                # Allow custom/uncatalogued models referenced by filename
                 pass
         return self
 
@@ -202,7 +202,7 @@ class ModelsSettings(BaseModel):
     @property
     def model_path(self) -> Path:
         """Path to the active model file, resolving alias→filename when possible."""
-        # If active is already a filename (e.g. legacy config or custom model)
+        # If active is already a filename (custom model without a catalog entry)
         if self.active.endswith(".gguf"):
             return self.models_path / self.active
         # Try to resolve via catalog
@@ -672,7 +672,7 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                 "baseUrl": cfg.client_url,
                 "api": "openai-completions",
                 "apiKey": api_key,
-                # llama-server compat: no developer role, no reasoning_effort,
+                # llama-server capabilities: no developer role, no reasoning_effort,
                 # uses max_tokens (not max_completion_tokens).
                 "compat": {
                     "supportsDeveloperRole": False,
