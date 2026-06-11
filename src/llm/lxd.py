@@ -614,6 +614,7 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
             "-y",
             "build-essential",
             "jq",
+            "sponge",
             "kitty-terminfo",
             "fish",
         ]
@@ -760,18 +761,25 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
 
     # Ensure ~/.local/bin is on PATH for both bash and fish.
     # Fish reads conf.d/*.fish; bash reads .bashrc.
-    path_bash_line = 'export PATH=$HOME/.local/bin:$PATH'
-    path_fish_line = 'set -gx PATH $HOME/.local/bin $PATH'
+    path_bash_line = "export PATH=$HOME/.local/bin:$PATH"
+    path_fish_line = "set -gx PATH $HOME/.local/bin $PATH"
     run(
         _cexec(
-            container, uid, gid, "bash", "-c",
-            f"grep -qxF '{path_bash_line}' ~/.bashrc 2>/dev/null || "
-            f"echo '{path_bash_line}' >> ~/.bashrc",
+            container,
+            uid,
+            gid,
+            "bash",
+            "-c",
+            f"grep -qxF '{path_bash_line}' ~/.bashrc 2>/dev/null || echo '{path_bash_line}' >> ~/.bashrc",
         )
     )
     run(
         _cexec(
-            container, uid, gid, "bash", "-c",
+            container,
+            uid,
+            gid,
+            "bash",
+            "-c",
             f"grep -qxF '{path_fish_line}' {fish_conf_dir}/path.fish 2>/dev/null || "
             f"echo '{path_fish_line}' > {fish_conf_dir}/path.fish",
         )
@@ -800,16 +808,32 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
     # so pi uses the server's full context window for long agentic tasks.
     pif_fish = (
         "function pif\n"
-        "    set tmp (mktemp)\n"
-        '    jq \'.providers["local-llm"].models[0].contextWindow = 131072'
-        ' | .providers["local-llm"].models[0].maxTokens = 16384\''
-        " ~/.pi/agent/models.json > $tmp\n"
-        "    and mv $tmp ~/.pi/agent/models.json\n"
+        '    jq \'.providers["local-llm"].models[0].contextWindow = 131092'
+        ' | .providers["local-llm"].models[0].maxTokens = 32768\''
+        " ~/.pi/agent/models.json | sponge ~/.pi/agent/models.json\n"
+        "    pi\n"
         "end\n"
     )
     subprocess.run(
         _cexec(container, uid, gid, "bash", "-c", f"cat > {fish_conf_dir}/pif.fish"),
         input=pif_fish.encode(),
+        check=True,
+    )
+
+    # Bash version of pif - adds to ~/.bashrc so it's available in any shell session.
+    pif_bash = (
+        '# pi "full context" helper: bump contextWindow and maxTokens, then run pi\n'
+        'pif() { jq \'.providers["local-llm"].models[0].contextWindow = 131092 '
+        '| .providers["local-llm"].models[0].maxTokens = 32768\''
+        " ~/.pi/agent/models.json | sponge ~/.pi/agent/models.json; pi; }\n"
+    )
+    bashrc_cmd = (
+        "grep -qxF 'pif()' ~/.bashrc 2>/dev/null || "
+        '(tmp=$(mktemp) && cat > "$tmp" && cat "$tmp" >> ~/.bashrc && rm "$tmp")'
+    )
+    subprocess.run(
+        _cexec(container, uid, gid, "bash", "-c", bashrc_cmd),
+        input=pif_bash.encode(),
         check=True,
     )
 
