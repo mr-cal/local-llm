@@ -17,7 +17,6 @@ from rich.console import Console
 from llm.config import (
     _build_omp_config_for_container,
     _build_pi_config_for_container,
-    _get_lxd_bridge_info,
     load_config,
     try_load_lxd,
 )
@@ -1009,16 +1008,6 @@ def _run_capture(container: str, *cmd: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _get_lxd_bridge_ip() -> str:
-    """Return the host IP on the lxdbr0 bridge (e.g. '10.113.167.1').
-
-    Returns an empty string if lxdbr0 is not found or ip(8) fails.
-    Delegates to :func:`llm.config._get_lxd_bridge_info` to avoid duplication.
-    """
-    ip, _ = _get_lxd_bridge_info()
-    return ip
-
-
 def setup_gh_auth_in_container(
     container: str,
     gh_token: str,
@@ -1055,7 +1044,6 @@ def setup_gh_auth_in_container(
 
 def setup_pi_in_container(
     container: str,
-    bridge_ip: str,
     cert_pem: str | None = None,
     uid: int = CONTAINER_UID,
     gid: int = CONTAINER_GID,
@@ -1082,7 +1070,6 @@ def setup_pi_in_container(
 
     Args:
         container: Name of the LXD container/VM.
-        bridge_ip: Unused; kept for backward compatibility.
         cert_pem: PEM cert string for the nginx TLS proxy. When provided it
                   is written to ``_NODE_CA_CERTS_FILE``.  If *None* the cert
                   is read from ``cfg.proxy.cert_path`` on the host.
@@ -1580,16 +1567,8 @@ def create_and_setup(
     effective_uid = HOST_UID if lxd_vm else CONTAINER_UID
     effective_gid = HOST_GID if lxd_vm else CONTAINER_GID
 
-    bridge_ip = _get_lxd_bridge_ip()
-    if not bridge_ip:
-        console.print(
-            "[yellow]Warning:[/yellow] Could not detect lxdbr0 bridge IP. "
-            "Pi in the container may not be able to reach the LLM server."
-        )
-
     setup_pi_in_container(
         container_name,
-        bridge_ip=bridge_ip,
         cert_pem=cert_pem,
         uid=effective_uid,
         gid=effective_gid,
@@ -1658,14 +1637,8 @@ def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> No
         _cexec(container, uid, gid, "gh", "copilot", "update"),
     )
 
-    # 4. pi + oh-my-pi config (bridge IP, cert, models.json, models.yml, shell env vars)
-    bridge_ip = _get_lxd_bridge_ip()
-    if not bridge_ip:
-        console.print(
-            "    [yellow]Warning:[/yellow] Could not detect lxdbr0 bridge IP. "
-            "/etc/hosts entry for 'local-llm' will not be updated."
-        )
-    setup_pi_in_container(container, bridge_ip=bridge_ip, cert_pem=cert_pem, uid=uid, gid=gid)
+    # 4. pi + oh-my-pi config (cert, models.json, models.yml, shell env vars)
+    setup_pi_in_container(container, cert_pem=cert_pem, uid=uid, gid=gid)
     # Re-apply oh-my-pi models.yml (uses separate merge logic from models.json)
     _refresh_omp_config(container, uid, gid)
 

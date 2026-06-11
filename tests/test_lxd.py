@@ -94,7 +94,7 @@ class TestSetupPiInContainer:
         return p
 
     def test_adds_hosts_entry_using_proxy_lan_ip(self, monkeypatch, tmp_path):
-        """The /etc/hosts entry should use proxy.lan_ip (the server's LAN IP), not bridge_ip."""
+        """The /etc/hosts entry should use proxy.lan_ip (the server's LAN IP)."""
         import tomli_w
 
         # Write a minimal config so load_config() works.
@@ -127,9 +127,9 @@ class TestSetupPiInContainer:
 
         from llm.lxd import setup_pi_in_container
 
-        setup_pi_in_container("craft-llm-1", bridge_ip="10.113.167.1")
+        setup_pi_in_container("craft-llm-1")
 
-        # The /etc/hosts command must use proxy.lan_ip, not bridge_ip.
+        # The /etc/hosts command must use proxy.lan_ip.
         hosts_calls = [c for c in calls if any("/etc/hosts" in str(a) for a in c)]
         assert hosts_calls, "Expected an /etc/hosts manipulation command"
         hosts_cmd_str = " ".join(str(a) for a in hosts_calls[0])
@@ -169,7 +169,7 @@ class TestSetupPiInContainer:
 
         from llm.lxd import setup_pi_in_container
 
-        setup_pi_in_container("craft-llm-1", bridge_ip="")
+        setup_pi_in_container("craft-llm-1")
 
         # Should still write the /etc/hosts entry using proxy.lan_ip
         hosts_calls = [c for c in calls if any("/etc/hosts" in str(a) for a in c)]
@@ -212,7 +212,7 @@ class TestSetupPiInContainer:
 
         from llm.lxd import setup_pi_in_container
 
-        setup_pi_in_container("craft-llm-1", bridge_ip="10.113.167.1", cert_pem=fake_cert)
+        setup_pi_in_container("craft-llm-1", cert_pem=fake_cert)
 
         assert fake_cert.encode() in stdin_inputs, (
             "Expected cert PEM to be piped as stdin to a container command"
@@ -257,7 +257,7 @@ class TestSetupPiInContainer:
         from llm.lxd import setup_pi_in_container
 
         # No cert_pem passed - should be read from config cert_path
-        setup_pi_in_container("craft-llm-1", bridge_ip="10.113.167.1", cert_pem=None)
+        setup_pi_in_container("craft-llm-1", cert_pem=None)
 
         assert cert_content.encode() in stdin_inputs, (
             "Expected cert content from config cert_path to be piped into container"
@@ -299,7 +299,7 @@ class TestSetupPiInContainer:
 
         from llm.lxd import setup_pi_in_container
 
-        setup_pi_in_container("craft-llm-1", bridge_ip="10.113.167.1")
+        setup_pi_in_container("craft-llm-1")
 
         # The first stdin input should be the merged models.json
         json_inputs = [b for b in stdin_inputs if b.strip().startswith(b"{")]
