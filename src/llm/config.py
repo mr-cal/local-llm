@@ -924,8 +924,8 @@ def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type
 
 
 # ── Reusable apply helpers ────────────────────────────────────────────────────
-# Extracted from the old config_apply command so they can be called from
-# server.py and client.py setup commands.
+# Extracted from the original config_apply command so they can be called
+# from server.py and client.py setup commands.
 
 
 def apply_client_configs(cfg: Settings) -> None:

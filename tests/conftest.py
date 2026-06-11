@@ -83,7 +83,8 @@ def tmp_config_with_lxd(tmp_path: Path, monkeypatch) -> Path:
 def tmp_config_full(tmp_path: Path, monkeypatch) -> Path:
     """Write a full config.toml with all sections and chdir to parent.
 
-    Suitable for tests that exercise config-init, config-gencert, config-apply.
+    Suitable for tests that exercise config-init, config-gencert, and
+    config-show commands.
     """
     config = tmp_path / "config.toml"
     data = _base_server_config()
