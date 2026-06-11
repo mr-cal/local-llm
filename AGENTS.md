@@ -48,3 +48,4 @@ make lint
     - ci, build, feat, fix, perf, refactor, style, test, docs, chore
 - Always run `make format`, `make lint`, and `make test` before completing your
   work.
+- Commit your changes when complete.

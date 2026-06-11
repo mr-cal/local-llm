@@ -732,18 +732,6 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
     console.print(f"\n[bold][{step}][/bold] Installing pylsp (python-lsp-server) in container...")
 
     run(_cexec(container, uid, gid, "uv", "tool", "install", "python-lsp-server"))
-    # uv tool update-shell can't detect the shell via lxc exec, so append directly.
-    run(
-        _cexec(
-            container,
-            uid,
-            gid,
-            "bash",
-            "-c",
-            r'grep -qxF "export PATH=$HOME/.local/bin:$PATH" ~/.bashrc'
-            r' || echo "export PATH=$HOME/.local/bin:$PATH" >> ~/.bashrc',
-        )
-    )
     # Shorten the prompt to just the current directory - the default includes
     # username and hostname which are too long in a container context.
     run(
@@ -769,6 +757,26 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
         "end\n"
     )
     run(_cexec(container, uid, gid, "mkdir", "-p", fish_conf_dir))
+
+    # Ensure ~/.local/bin is on PATH for both bash and fish.
+    # Fish reads conf.d/*.fish; bash reads .bashrc.
+    path_bash_line = 'export PATH=$HOME/.local/bin:$PATH'
+    path_fish_line = 'set -gx PATH $HOME/.local/bin $PATH'
+    run(
+        _cexec(
+            container, uid, gid, "bash", "-c",
+            f"grep -qxF '{path_bash_line}' ~/.bashrc 2>/dev/null || "
+            f"echo '{path_bash_line}' >> ~/.bashrc",
+        )
+    )
+    run(
+        _cexec(
+            container, uid, gid, "bash", "-c",
+            f"grep -qxF '{path_fish_line}' {fish_conf_dir}/path.fish 2>/dev/null || "
+            f"echo '{path_fish_line}' > {fish_conf_dir}/path.fish",
+        )
+    )
+
     subprocess.run(
         _cexec(container, uid, gid, "bash", "-c", f"cat > {fish_conf_dir}/craft-cwd.fish"),
         input=craft_cwd_fish.encode(),
@@ -1289,6 +1297,26 @@ def run_tests(
         shell = r.stdout.strip().split(":")[-1]
         assert shell == "/usr/bin/fish", f"shell is {shell!r}, expected '/usr/bin/fish'"
 
+    def t_path_in_fish_conf():
+        # ~/.config/fish/conf.d/path.fish should exist and contain the PATH entry
+        fish_conf_dir = f"{CONTAINER_HOME}/.config/fish/conf.d"
+        r = subprocess.run(
+            ["lxc", "exec", container, "--", "cat", f"{fish_conf_dir}/path.fish"],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, f"fish path.fish not found: {r.stderr.strip()}"
+        assert ".local/bin" in r.stdout, f".local/bin not in fish path.fish: {r.stdout}"
+
+    def t_path_in_bashrc():
+        # ~/.bashrc should contain the PATH entry
+        r = subprocess.run(
+            ["lxc", "exec", container, "--", "grep", ".local/bin", "~/.bashrc"],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0, f".local/bin not in ~/.bashrc: {r.stderr.strip()}"
+
     def t_pi_installed():
         r = subprocess.run(
             ["lxc", "exec", container, "--", "pi", "--version"],
@@ -1389,6 +1417,8 @@ def run_tests(
         ("uv installed", t_uv_installed),
         ("fish installed", t_fish_installed),
         ("fish is the default shell", t_fish_default_shell),
+        ("PATH includes ~/.local/bin (fish conf.d)", t_path_in_fish_conf),
+        ("PATH includes ~/.local/bin (.bashrc)", t_path_in_bashrc),
         ("pi installed", t_pi_installed),
         ("omp models.yml exists", t_omp_config),
         ("dev mount readable", t_dev_mount_read),
