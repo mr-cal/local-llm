@@ -47,8 +47,9 @@ _DEFAULT_PROMPT = (
 
 
 def _find_bench_bin() -> Path | None:
-    result = subprocess.run(["which", "llama-bench"], capture_output=True, text=True)
-    return Path(result.stdout.strip()) if result.returncode == 0 else None
+    """Resolve llama-bench via config build profiles, then PATH."""
+    cfg = load_config()
+    return cfg.resolve_llama_bench_bin()
 
 
 def _parse_bench_csv(text: str) -> list[dict[str, str]]:
@@ -434,7 +435,7 @@ def _run_llama_bench_raw(cfg: object) -> None:
     bench_bin = _find_bench_bin()
     if not bench_bin:
         console.print("[yellow]llama-bench not found - skipping raw benchmark.[/yellow]")
-        console.print("  Copy it to ~/.local/bin/llama-bench")
+        console.print("  Run [bold]uv run llm build run[/bold] to build it.")
         return
 
     console.print("\n[bold]Running llama-bench (raw throughput)...[/bold]")
@@ -471,7 +472,7 @@ def tune(
     cfg = load_config()
     bench_bin = _find_bench_bin()
     if not bench_bin:
-        console.print("[red]llama-bench not found.[/red] Copy it to ~/.local/bin/llama-bench")
+        console.print("[red]llama-bench not found.[/red] Run [bold]uv run llm build run[/bold] to build it.")
         raise typer.Exit(1)
 
     model_path = cfg.model_path

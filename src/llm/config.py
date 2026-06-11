@@ -317,6 +317,27 @@ class Settings(BaseModel):
 
         return shutil.which("llama-server") or "llama-server"
 
+    def resolve_llama_bench_bin(self) -> Path | None:
+        """Resolve the llama-bench binary path using the same priority as the server bin:
+
+        1. Profile-resolved: ``<build.install_dir>/<profile>/llama-bench``
+        2. ``llama-bench`` on PATH (shutil.which fallback)
+        """
+        import shutil  # noqa: PLC0415
+
+        profile_name = self.server.profile or (
+            self.build.active_profile.name if self.build.active_profile else None
+        )
+        if profile_name and self.build.profiles:
+            profile = self.build.get_profile(profile_name)
+            if profile:
+                candidate = profile.installed_bench_bin(self.build.install_path)
+                if candidate.exists():
+                    return candidate
+
+        found = shutil.which("llama-bench")
+        return Path(found) if found else None
+
     @property
     def client_url(self) -> str:
         """Base URL (including /v1) for local tools to connect to the LLM.
