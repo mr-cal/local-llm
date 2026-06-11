@@ -1,5 +1,5 @@
 # Local LLM Configuration
-# Edit this file, then run:  uv run llm config apply
+# Edit this file, then run:  uv run llm server restart
 #
 # Machine roles - set enabled per section:
 #   server+client  - both enabled (most common)
