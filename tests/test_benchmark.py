@@ -461,8 +461,16 @@ class TestModuleConstants:
 
     def test_history_headers(self):
         expected = [
-            "timestamp", "model", "backend", "pp_tps", "tg_tps",
-            "ctx", "n_tokens", "n_gpu_layers", "profile", "flags_hash",
+            "timestamp",
+            "model",
+            "backend",
+            "pp_tps",
+            "tg_tps",
+            "ctx",
+            "n_tokens",
+            "n_gpu_layers",
+            "profile",
+            "flags_hash",
         ]
         assert expected == benchmark.HISTORY_HEADERS
 

@@ -84,10 +84,12 @@ class TestBuildConfig:
         return BuildConfig(**kwargs)
 
     def test_active_profile_returns_first(self):
-        bc = self._make(profiles=[
-            BuildProfile(name="a"),
-            BuildProfile(name="b"),
-        ])
+        bc = self._make(
+            profiles=[
+                BuildProfile(name="a"),
+                BuildProfile(name="b"),
+            ]
+        )
         assert bc.active_profile is not None
         assert bc.active_profile.name == "a"
 
@@ -96,10 +98,12 @@ class TestBuildConfig:
         assert bc.active_profile is None
 
     def test_get_profile_by_name(self):
-        bc = self._make(profiles=[
-            BuildProfile(name="x"),
-            BuildProfile(name="y"),
-        ])
+        bc = self._make(
+            profiles=[
+                BuildProfile(name="x"),
+                BuildProfile(name="y"),
+            ]
+        )
         p = bc.get_profile("y")
         assert p is not None
         assert p.name == "y"

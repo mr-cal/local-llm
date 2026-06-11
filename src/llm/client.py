@@ -156,7 +156,8 @@ def setup(
     container: Annotated[
         str | None,
         typer.Option(
-            "--container", "-c",
+            "--container",
+            "-c",
             help="Create an LXD container with this name and set it up as a client.",
         ),
     ] = None,
@@ -302,14 +303,16 @@ def list_containers() -> None:
         # Get version from metadata
         r = subprocess.run(
             ["lxc", "config", "get", name, "user.local-llm-version"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         version = r.stdout.strip() or "unknown"
 
         # Get status
         r2 = subprocess.run(
             ["lxc", "list", name, "--format=json"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         status = "unknown"
         try:

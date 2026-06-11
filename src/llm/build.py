@@ -62,8 +62,10 @@ def _run_build(profile: BuildProfile, install_path: Path, jobs: int, release: bo
     # cmake configure
     cmake_cmd = [
         "cmake",
-        "-B", str(build_dir),
-        "-S", str(_submodule_path()),
+        "-B",
+        str(build_dir),
+        "-S",
+        str(_submodule_path()),
         f"-DCMAKE_BUILD_TYPE={build_type}",
         *flags,
     ]
@@ -93,8 +95,7 @@ def _run_build(profile: BuildProfile, install_path: Path, jobs: int, release: bo
             console.print(f"  [green]Installed[/green] {binary} → {dst}")
         else:
             console.print(
-                f"  [yellow]Warning:[/yellow] {binary} not found after build "
-                f"(checked {candidates})"
+                f"  [yellow]Warning:[/yellow] {binary} not found after build (checked {candidates})"
             )
 
     console.print(f"  [green]✓[/green] Profile '{profile.name}' built and installed")
@@ -165,8 +166,7 @@ def build_run(
 
     if not bc.profiles:
         console.print(
-            "[yellow]No build profiles configured.[/yellow]  "
-            "Add [[build.profiles]] entries to config.toml."
+            "[yellow]No build profiles configured.[/yellow]  Add [[build.profiles]] entries to config.toml."
         )
         raise typer.Exit(1)
 
@@ -176,8 +176,7 @@ def build_run(
         p = bc.get_profile(profile)
         if p is None:
             console.print(
-                f"[red]Unknown profile:[/red] '{profile}'\n"
-                f"Available: {', '.join(bc.profile_names())}"
+                f"[red]Unknown profile:[/red] '{profile}'\nAvailable: {', '.join(bc.profile_names())}"
             )
             raise typer.Exit(1)
         profiles_to_build = [p]
@@ -238,7 +237,9 @@ def update(
 
     actual = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True, text=True, cwd=sm,
+        capture_output=True,
+        text=True,
+        cwd=sm,
     ).stdout.strip()
     console.print(f"  Now at: [bold]{actual}[/bold]")
 
@@ -305,7 +306,9 @@ def info() -> None:
     if sm.exists() and (sm / "CMakeLists.txt").exists():
         commit_result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, cwd=sm,
+            capture_output=True,
+            text=True,
+            cwd=sm,
         )
         commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "[dim]unknown[/dim]"
     else:

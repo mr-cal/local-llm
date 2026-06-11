@@ -395,7 +395,7 @@ def init_catalog() -> None:
         lines.append(f'filename = "{m.filename}"')
         lines.append(f'size = "{m.size}"')
         lines.append(f'description = "{m.description}"')
-        lines.append(f'max_output = {m.max_output}')
+        lines.append(f"max_output = {m.max_output}")
         lines.append("cost.input = 0.0")
         lines.append("cost.output = 0.0")
         lines.append("")  # blank separator

@@ -272,7 +272,8 @@ def _read_pid(port: int | None = None) -> int | None:
     if port is not None:
         result = subprocess.run(
             ["ss", "-tlnp", f"sport = :{port}"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         for line in result.stdout.splitlines()[1:]:  # skip header
             if "llama-server" in line:
@@ -293,7 +294,8 @@ def start(
     profile: Annotated[
         str | None,
         typer.Option(
-            "--profile", "-p",
+            "--profile",
+            "-p",
             help="Build profile to use (overrides config.toml [server] profile).",
         ),
     ] = None,
@@ -323,8 +325,7 @@ def start(
         p = cfg.build.get_profile(profile)
         if p is None:
             console.print(
-                f"[red]Unknown profile:[/red] '{profile}'\n"
-                f"Available: {', '.join(cfg.build.profile_names())}"
+                f"[red]Unknown profile:[/red] '{profile}'\nAvailable: {', '.join(cfg.build.profile_names())}"
             )
             raise typer.Exit(1)
         bin_path = str(p.installed_server_bin(cfg.build.install_path))

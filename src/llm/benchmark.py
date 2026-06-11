@@ -25,8 +25,16 @@ console = Console()
 HISTORY_FILE = Path("logs/benchmark-history.csv")
 # New columns: profile, flags_hash (added after existing columns for backward compat)
 HISTORY_HEADERS = [
-    "timestamp", "model", "backend", "pp_tps", "tg_tps", "ctx", "n_tokens",
-    "n_gpu_layers", "profile", "flags_hash",
+    "timestamp",
+    "model",
+    "backend",
+    "pp_tps",
+    "tg_tps",
+    "ctx",
+    "n_tokens",
+    "n_gpu_layers",
+    "profile",
+    "flags_hash",
 ]
 
 _DEFAULT_PROMPT = (
@@ -378,8 +386,7 @@ def compare(
     """
     if not HISTORY_FILE.exists():
         console.print(
-            "[yellow]No benchmark history found.[/yellow] "
-            "Run [bold]uv run llm benchmark run[/bold] first."
+            "[yellow]No benchmark history found.[/yellow] Run [bold]uv run llm benchmark run[/bold] first."
         )
         raise typer.Exit(1)
 
@@ -393,7 +400,7 @@ def compare(
 
     # Group by profile (or "default" if missing)
     by_profile: dict[str, list[dict]] = {}
-    for row in rows[-last * 10:]:  # avoid reading entire file into memory for comparison
+    for row in rows[-last * 10 :]:  # avoid reading entire file into memory for comparison
         p = row.get("profile", "") or "default"
         by_profile.setdefault(p, []).append(row)
 

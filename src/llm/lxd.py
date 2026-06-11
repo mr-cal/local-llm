@@ -184,8 +184,7 @@ def _list_managed_containers() -> list[str]:
     return [
         inst["name"]
         for inst in instances
-        if inst.get("config", {}).get(_MANAGED_TAG) == "true"
-        and inst.get("status") == "Running"
+        if inst.get("config", {}).get(_MANAGED_TAG) == "true" and inst.get("status") == "Running"
     ]
 
 
@@ -494,16 +493,20 @@ def install_packages(container, step: str = "4/5", uid: int = CONTAINER_UID):
     console.print("  Installing nodejs (for pi)...")
     run(
         [
-            "lxc", "exec", container, "--",
-            "bash", "-c", "set -euo pipefail && "
+            "lxc",
+            "exec",
+            container,
+            "--",
+            "bash",
+            "-c",
+            "set -euo pipefail && "
             "apt-get update -q && "
             "apt-get install -y nodejs npm curl && "
             "curl -fsSL https://deb.nodesource.com/setup_22.x "
             "| bash - && "
-            "apt-get install -y nodejs"
+            "apt-get install -y nodejs",
         ]
     )
-
 
     console.print("  Installing pi (@earendil-works/pi-coding-agent)...")
     run(
@@ -623,8 +626,8 @@ def install_pylsp(container, step: str = "5/5", uid: int = CONTAINER_UID, gid: i
     pif_fish = (
         "function pif\n"
         "    set tmp (mktemp)\n"
-        "    jq '.providers[\"local-llm\"].models[0].contextWindow = 131072"
-        " | .providers[\"local-llm\"].models[0].maxTokens = 16384'"
+        '    jq \'.providers["local-llm"].models[0].contextWindow = 131072'
+        ' | .providers["local-llm"].models[0].maxTokens = 16384\''
         " ~/.pi/agent/models.json > $tmp\n"
         "    and mv $tmp ~/.pi/agent/models.json\n"
         "end\n"
@@ -869,10 +872,7 @@ def setup_pi_in_container(
     # subnet allowlist passes regardless of whether the server is local or remote.
     server_ip = cfg.proxy.lan_ip
     console.print(f"  Adding /etc/hosts entry: {server_ip} local-llm...")
-    hosts_cmd = (
-        f"grep -qxF '{server_ip} local-llm' /etc/hosts || "
-        f"echo '{server_ip} local-llm' >> /etc/hosts"
-    )
+    hosts_cmd = f"grep -qxF '{server_ip} local-llm' /etc/hosts || echo '{server_ip} local-llm' >> /etc/hosts"
     subprocess.run(
         ["lxc", "exec", container, "--", "bash", "-c", hosts_cmd],
         check=True,
@@ -942,9 +942,7 @@ def setup_pi_in_container(
     fish_export = f'set -x NODE_EXTRA_CA_CERTS "{_NODE_CA_CERTS_FILE}"'
 
     # Add to ~/.bashrc if not already present
-    bashrc_cmd = (
-        f"grep -qxF '{bash_export}' ~/.bashrc || echo '{bash_export}' >> ~/.bashrc"
-    )
+    bashrc_cmd = f"grep -qxF '{bash_export}' ~/.bashrc || echo '{bash_export}' >> ~/.bashrc"
     subprocess.run(_cexec(container, uid, gid, "bash", "-c", bashrc_cmd), check=True)
 
     # Add to fish conf.d (fish uses 'set -x', not 'export VAR=val')
@@ -1268,8 +1266,7 @@ def create_and_setup(
     if container_exists(container_name):
         if not recreate:
             raise RuntimeError(
-                f"{kind} '{container_name}' already exists. "
-                "Pass recreate=True to delete and recreate it."
+                f"{kind} '{container_name}' already exists. Pass recreate=True to delete and recreate it."
             )
         console.print(f"Deleting existing {kind}: {container_name}")
         run(["lxc", "delete", "--force", container_name])
@@ -1333,8 +1330,7 @@ def do_setup_crafts(
     """
     if not craft_dirs:
         raise RuntimeError(
-            "No craft_dirs configured. "
-            "Add them to the [lxd] section of config.toml, then re-run."
+            "No craft_dirs configured. Add them to the [lxd] section of config.toml, then re-run."
         )
 
     if not container_exists(container_name):
@@ -1416,14 +1412,9 @@ def refresh_containers(
     else:
         managed = _list_managed_containers()
         if not managed:
-            raise RuntimeError(
-                f"No running containers tagged with {_MANAGED_TAG}=true found."
-            )
+            raise RuntimeError(f"No running containers tagged with {_MANAGED_TAG}=true found.")
 
-        console.print(
-            f"Found [bold]{len(managed)}[/bold] managed container(s): "
-            + ", ".join(managed)
-        )
+        console.print(f"Found [bold]{len(managed)}[/bold] managed container(s): " + ", ".join(managed))
         for container in managed:
             is_vm = container_is_vm(container)
             uid = HOST_UID if is_vm else CONTAINER_UID

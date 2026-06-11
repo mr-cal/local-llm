@@ -16,9 +16,7 @@ class TestHostSetup:
         with pytest.raises(typer.Exit):
             client.setup()
 
-    def test_setup_with_config_applies_configs(
-        self, fake_find_config, fake_console, monkeypatch, mocker
-    ):
+    def test_setup_with_config_applies_configs(self, fake_find_config, fake_console, monkeypatch, mocker):
         """With config.toml, host setup should apply client configs."""
         mocker.patch("llm.config.apply_client_configs")
         mocker.patch("llm.config.configure_shell_env_host", return_value=["action1"])

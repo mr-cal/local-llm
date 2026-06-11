@@ -215,7 +215,9 @@ class TestModelEntry:
 
     def test_cost_field(self):
         m = ModelEntry(
-            alias="test", repo="test/repo", filename="test.gguf",
+            alias="test",
+            repo="test/repo",
+            filename="test.gguf",
             cost=ModelCost(input=0.5, output=1.0),
         )
         assert m.cost.input == 0.5
@@ -481,7 +483,6 @@ class TestSystemctlIsActive:
 # ── config_init ────────────────────────────────────────────────────────────────
 
 
-
 # ── _build_opencode_config / _build_pi_config ──────────────────────────────────
 
 
@@ -736,13 +737,24 @@ class TestConfigShow:
         """config_show should mask the github token like it masks other secrets."""
         config = tmp_path / "config.toml"
         data = {
-            "server": {"enabled": True, "llama_server_bin": "llama-server", "port": 8080,
-                       "n_gpu_layers": 20, "n_ctx": 4096, "n_threads": 12, "extra_args": []},
-            "models": {"dir": "~/models", "active": "test", "hf_token": "",
-                       "list": []},
+            "server": {
+                "enabled": True,
+                "llama_server_bin": "llama-server",
+                "port": 8080,
+                "n_gpu_layers": 20,
+                "n_ctx": 4096,
+                "n_threads": 12,
+                "extra_args": [],
+            },
+            "models": {"dir": "~/models", "active": "test", "hf_token": "", "list": []},
             "auth": {"api_key": "secret"},
-            "proxy": {"enabled": True, "port": 8443, "lan_ip": "192.168.1.100",
-                      "lan_subnet": "192.168.1.0/24", "cert_path": "/etc/ssl/local-llm/cert.pem"},
+            "proxy": {
+                "enabled": True,
+                "port": 8443,
+                "lan_ip": "192.168.1.100",
+                "lan_subnet": "192.168.1.0/24",
+                "cert_path": "/etc/ssl/local-llm/cert.pem",
+            },
             "client": {"enabled": True, "server_url": "", "cert_path": ""},
             "lxd": {"craft_dirs": [], "mounts": []},
             "github": {"token": "ghp_secrettoken"},
