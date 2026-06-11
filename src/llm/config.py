@@ -550,10 +550,10 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
     active = cfg.models.active
-    # First check config catalog, then fall back to KNOWN_MODELS
+    # First check config catalog, then fall back to built-in catalog
     entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
     if entry is None and cfg.models.has_catalog is False:
-        # Dual catalog fallback: search KNOWN_MODELS by filename
+        # Fallback to built-in catalog by filename
         entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
     display_name = entry.alias if entry else active
     max_output = entry.max_output if entry else 8192
@@ -654,10 +654,10 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
     active = cfg.models.active
-    # First check config catalog, then fall back to KNOWN_MODELS
+    # First check config catalog, then fall back to built-in catalog
     entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
     if entry is None and cfg.models.has_catalog is False:
-        # Dual catalog fallback: search KNOWN_MODELS by filename
+        # Fallback to built-in catalog by filename
         entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
     display_name = entry.alias if entry else active
     max_output = entry.max_output if entry else 8192

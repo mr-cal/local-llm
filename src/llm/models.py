@@ -15,9 +15,9 @@ app = typer.Typer(help="Download, list, and switch GGUF models.", no_args_is_hel
 console = Console()
 
 
-# ── KNOWN_MODELS catalog (dual-catalog fallback) ──────────────────────────────
-# Kept as a default fallback during Phase 1 migration. When the user has
-# [[models.list]] entries in config.toml, those take priority.
+# ── KNOWN_MODELS catalog (default fallback) ───────────────────────────────────
+# Used as a fallback when the user has no [[models.list]] entries in
+# config.toml. When [[models.list]] entries are present, those take priority.
 
 KNOWN_MODELS: list[ModelEntry] = [
     # ── Qwen 2.5 Coder ───────────────────────────────────────────────────────
@@ -186,7 +186,7 @@ def _resolve(
         entry = cfg.models.by_alias(target) or cfg.models.by_filename(target)
         if entry:
             return entry
-    # Dual catalog fallback: search KNOWN_MODELS
+    # Fallback to built-in catalog
     return _by_alias(target) or _by_filename(target)
 
 
