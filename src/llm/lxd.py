@@ -332,13 +332,13 @@ def container_is_vm(container):
 
 
 # The custom LXD config key used to mark containers managed by this tool.
-# Containers tagged with this key are discovered by `llm lxd refresh` when
+# Containers tagged with this key are discovered by `llm client refresh` when
 # no explicit container number is given.
 _MANAGED_TAG = "user.local-llm-managed"
 
 
 def _tag_as_managed(container: str) -> None:
-    """Set the managed tag on *container* so it is discovered by `llm lxd refresh`."""
+    """Set the managed tag on *container* so it is discovered by `llm client refresh`."""
     run(["lxc", "config", "set", container, f"{_MANAGED_TAG}=true"])
 
 
@@ -1539,8 +1539,9 @@ def create_and_setup(
 ) -> None:
     """Create and configure an LXD container (or VM) for local LLM development.
 
-    This is the library equivalent of the old ``llm lxd create`` command.
-    Raises ``RuntimeError`` on fatal errors instead of ``typer.Exit``.
+    This is the library equivalent of the ``llm client setup --container``
+    CLI command. Raises ``RuntimeError`` on fatal errors instead of
+    ``typer.Exit``.
     """
     kind = "VM" if lxd_vm else "container"
 
