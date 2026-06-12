@@ -317,6 +317,14 @@ class LxdVmManager:
             ]
         )
 
+        console.print("  Installing pi...")
+        run(
+            _cexec(
+                self.container, uid, CONTAINER_GID,
+                "npm", "install", "-g", "@oh-my-pi/pi-coding-agent",
+            ),
+        )
+
         console.print("  Installing oh-my-pi...")
         run(
             _cexec(
@@ -1060,6 +1068,13 @@ class LxdVmManager:
 
         # 2. pi (oh-my-pi)
         console.print("\n  [bold]pi:[/bold] updating oh-my-pi...")
+        run_with_retry(
+            _cexec(
+                self.container, self.uid, CONTAINER_GID,
+                "npm", "install", "-g", "@oh-my-pi/pi-coding-agent",
+            ),
+            desc="pi install",
+        )
         run_with_retry(
             _cexec(
                 self.container, self.uid, CONTAINER_GID,
