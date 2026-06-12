@@ -15,6 +15,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from llm import omp
 from llm.config import (
     _build_omp_config_for_container,
     _build_pi_config_for_container,
@@ -983,7 +984,7 @@ class LxdVmManager:
         # Step 2.5: Generate models.yml for oh-my-pi
         console.print("  Generating models.yml for oh-my-pi...")
         omp_cfg = _build_omp_config_for_container(cfg, "local-llm")
-        omp_yaml = _build_omp_yaml(omp_cfg)
+        omp_yaml = omp.build_omp_yaml(omp_cfg)
         omp_config_dir = str(Path(_OMP_CONTAINER_CONFIG).parent)
         subprocess.run(
             _cexec(self.container, self.uid, self.gid, "bash", "-c", f"mkdir -p {omp_config_dir}"),
@@ -1204,47 +1205,6 @@ VM_SWAP_SIZE = "4G"
 # ── YAML helpers ─────────────────────────────────────────────────────────────
 
 
-def _build_omp_yaml(cfg: dict) -> str:  # type: ignore[type-arg]
-    """Build the oh-my-pi models.yml string from a config dict."""
-    provider = cfg["providers"]["local-llm"]
-    base_url = provider["baseUrl"]
-    api_key = provider["apiKey"]
-    models = provider["models"]
-
-    lines = [
-        "providers:",
-        "  local-llm:",
-        f"    baseUrl: {base_url}",
-        f"    apiKey: {api_key}",
-        "    api: openai-completions",
-        "    auth: apiKey",
-        "    models:",
-    ]
-
-    for model in models:
-        cost = model.get("cost", {})
-        lines.append("      - id: " + model["id"])
-        lines.append("        name: " + model["name"])
-        lines.append("        reasoning: " + str(model.get("reasoning", False)).lower())
-        lines.append("        input: " + str(model.get("input", ["text"])))
-        lines.append("        contextWindow: " + str(model.get("contextWindow", 4096)))
-        lines.append("        maxTokens: " + str(model.get("maxTokens", 8192)))
-        lines.append(
-            "        cost: "
-            + "{ input: "
-            + str(cost.get("input", 0))
-            + ", output: "
-            + str(cost.get("output", 0))
-            + ", cacheRead: "
-            + str(cost.get("cacheRead", 0))
-            + ", cacheWrite: "
-            + str(cost.get("cacheWrite", 0))
-            + " }"
-        )
-
-    return "\n".join(lines) + "\n"
-
-
 def _refresh_omp_config(container: str, uid: int, gid: int) -> None:
     """Re-apply the oh-my-pi models.yml inside the container."""
     from llm.config import load_config  # noqa: PLC0415
@@ -1254,117 +1214,19 @@ def _refresh_omp_config(container: str, uid: int, gid: int) -> None:
 
     # Read existing config from the container
     r = _run_capture(container, "cat", _OMP_CONTAINER_CONFIG)
-    existing_lines: list[str] = []
-    if r.returncode == 0 and r.stdout.strip():
-        existing_lines = r.stdout.splitlines()
 
     # Parse existing YAML into a dict to preserve other providers
-    existing: dict = {}
-    if existing_lines:
-        existing = _parse_omp_yaml(r.stdout)
+    existing: dict = omp.parse_omp_yaml(r.stdout)
     merged: dict = {**existing}
     merged.setdefault("providers", {})
     merged["providers"].update(omp_cfg.get("providers", {}))
 
-    merged_yaml = _build_omp_yaml(merged)
+    merged_yaml = omp.build_omp_yaml(merged)
     subprocess.run(
         _cexec(container, uid, gid, "bash", "-c", f"cat > {_OMP_CONTAINER_CONFIG}"),
         input=merged_yaml.encode(),
         check=True,
     )
-
-
-def _parse_omp_yaml(text: str) -> dict:  # type: ignore[type-arg]
-    """Simple YAML parser for oh-my-pi models.yml – handles the specific structure we write.
-
-    Returns a dict that can be merged with a fresh config.
-    """
-    result: dict = {"providers": {}}
-    current_provider: str | None = None
-    current_model: dict | None = None
-    in_costs = False
-
-    for line in text.splitlines():
-        stripped = line.rstrip()
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        indent = len(line) - len(line.lstrip())
-
-        if indent == 0 and stripped.endswith(":"):
-            current_provider = stripped[:-1]
-            result["providers"][current_provider] = {}
-            continue
-
-        if current_provider and indent == 2 and stripped.endswith(":"):
-            key = stripped[:-1]
-            result["providers"][current_provider][key] = {}
-            current_model = None
-            in_costs = False
-            continue
-
-        if current_provider and indent == 4 and not in_costs:
-            if ": " in stripped:
-                key, val = stripped.split(": ", 1)
-                result["providers"][current_provider][key] = val
-                if key == "models":
-                    result["providers"][current_provider][key] = []
-                current_model = None
-            continue
-
-        if current_provider and indent == 6 and stripped.startswith("- id:"):
-            model_id = stripped.split(": ", 1)[1].strip()
-            current_model = {"id": model_id}
-            if isinstance(result["providers"][current_provider].get("models"), list):
-                result["providers"][current_provider]["models"].append(current_model)
-            else:
-                result["providers"][current_provider]["models"] = [current_model]
-            in_costs = False
-            continue
-
-        if current_provider and current_model is not None and indent == 8 and not in_costs:
-            if ": " in stripped:
-                key, val = stripped.split(": ", 1)
-                current_model[key] = _parse_yaml_value(val)
-            elif stripped == "{":
-                in_costs = True
-            continue
-
-        if current_provider and current_model is not None and in_costs:
-            if stripped == "}":
-                in_costs = False
-                continue
-            # Parse inline cost dict
-            parts = stripped.strip().split(",")
-            for part in parts:
-                part = part.strip().strip("{} ")
-                if ": " in part:
-                    k, v = part.split(": ", 1)
-                    current_model.setdefault("cost", {})[k.strip()] = _parse_yaml_value(v.strip())
-            continue
-
-    return result
-
-
-def _parse_yaml_value(val: str) -> str | bool | int | float | list:  # type: ignore[type-arg]
-    """Parse a simple YAML scalar value."""
-    if val.lower() == "true":
-        return True
-    if val.lower() == "false":
-        return False
-    try:
-        return int(val)
-    except ValueError:
-        pass
-    try:
-        return float(val)
-    except ValueError:
-        pass
-    # Handle list: [text]
-    if val.startswith("[") and val.endswith("]"):
-        inner = val[1:-1]
-        return [x.strip().strip("'\"") for x in inner.split(",")]
-    return val
 
 
 # ── Load settings ────────────────────────────────────────────────────────────
