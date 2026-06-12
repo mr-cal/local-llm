@@ -400,3 +400,202 @@ class TestManagedTag:
 
         result = _list_managed_containers()
         assert result == []
+
+
+# ── PATH / bin verification tests ────────────────────────────────────────────
+
+
+class TestPathVerification:
+    """Tests that bun, pi, and omp end up on the container's PATH."""
+
+    def _make_completed(self, returncode=0, stdout=""):
+        p = MagicMock()
+        p.returncode = returncode
+        p.stdout = stdout
+        return p
+
+    def test_bun_install_uses_CONTAINER_HOME_not_literal_dollar_home(self, monkeypatch, tmp_path):
+        """bun install must run with HOME=CONTAINER_HOME, not a literal '$HOME' string.
+
+        A literal '$HOME' passed via --env would cause bun to create a directory
+        literally named $HOME instead of installing under the container user's home.
+        """
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, "")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import CONTAINER_HOME, LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        mgr._install_packages(uid=1000)
+
+        bun_calls = [c for c in calls if "bun.sh" in " ".join(str(a) for a in c)]
+        assert bun_calls, "Expected a bun install command"
+        cmd_str = " ".join(str(a) for a in bun_calls[0])
+        assert f"HOME={CONTAINER_HOME}" in cmd_str, (
+            f"Expected HOME={CONTAINER_HOME} in bun install call: {cmd_str}"
+        )
+        assert "BUN_INSTALL" not in cmd_str, (
+            f"BUN_INSTALL env var should not be set (uses HOME instead): {cmd_str}"
+        )
+
+    def test_path_fish_contains_bun_bin(self, monkeypatch, tmp_path):
+        """path.fish must contain ~/.bun/bin on PATH so bun is discoverable."""
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, "")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        mgr._install_pylsp(uid=1000, gid=1000)
+
+        # Check that path.fish content includes .bun/bin
+        path_fish_calls = [c for c in calls if "path.fish" in " ".join(str(a) for a in c)]
+        assert path_fish_calls, "Expected path.fish PATH setup commands"
+        # The echo command that writes path.fish should contain .bun/bin
+        all_path_cmd = " ".join(str(a) for c in path_fish_calls for a in c)
+        assert ".bun/bin" in all_path_cmd, f"Expected '.bun/bin' in path.fish setup: {all_path_cmd[:600]}"
+
+    def test_bashrc_contains_bun_bin(self, monkeypatch, tmp_path):
+        """~/.bashrc must contain ~/.bun/bin on PATH so bun is discoverable."""
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, "")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        mgr._install_pylsp(uid=1000, gid=1000)
+
+        # Check that .bashrc setup includes .bun/bin
+        bashrc_calls = [c for c in calls if ".bashrc" in " ".join(str(a) for a in c)]
+        assert bashrc_calls, "Expected .bashrc PATH setup commands"
+        all_bash_cmd = " ".join(str(a) for c in bashrc_calls for a in c)
+        assert ".bun/bin" in all_bash_cmd, f"Expected '.bun/bin' in .bashrc setup: {all_bash_cmd[:600]}"
+
+    def test_pi_and_omp_npm_runs_as_container_user(self, monkeypatch, tmp_path):
+        """pi and oh-my-pi (omp) npm installs run as container user so they land on PATH."""
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, "")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        mgr._install_packages(uid=1000)
+
+        npm_calls = [c for c in calls if "npm install" in " ".join(str(a) for a in c)]
+        assert len(npm_calls) >= 2, "Expected npm install commands for pi and oh-my-pi"
+        for npm_call in npm_calls:
+            cmd_str = " ".join(str(a) for a in npm_call)
+            # Should run as container user (uid=1000)
+            assert "--user=1000" in cmd_str, f"npm install should run as container user: {cmd_str}"
+
+        # Verify npm config set prefix (for .local) also runs as container user
+        config_calls = [c for c in calls if "npm config set prefix" in " ".join(str(a) for a in c)]
+        assert config_calls, "Expected npm config set prefix command"
+        config_str = " ".join(str(a) for a in config_calls[0])
+        assert "--user=1000" in config_str, (
+            f"npm config set prefix should run as container user: {config_str}"
+        )

@@ -367,7 +367,6 @@ class LxdVmManager:
                 f"--user={uid}",
                 f"--group={CONTAINER_GID}",
                 f"--env=HOME={CONTAINER_HOME}",
-                "--env=BUN_INSTALL=$HOME",
                 "--",
                 "bash",
                 "-c",
