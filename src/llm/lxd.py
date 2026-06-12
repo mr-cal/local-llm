@@ -319,7 +319,10 @@ class LxdVmManager:
 
         console.print("  Installing oh-my-pi...")
         run(
-            ["lxc", "exec", self.container, "--", "bash", "-c", "curl -fsSL https://omp.sh/install | sh"],
+            _cexec(
+                self.container, uid, CONTAINER_GID,
+                "bash", "-c", "curl -fsSL https://omp.sh/install | sh",
+            ),
         )
 
         console.print("  Setting fish as the default shell...")
@@ -760,7 +763,7 @@ class LxdVmManager:
         def t_path_in_bashrc() -> None:
             r = subprocess.run(
                 ["lxc", "exec", self.container, "--",
-                 "bash", "-c", "grep .local/bin ~/.bashrc"],
+                 "grep", ".local/bin", f"{CONTAINER_HOME}/.bashrc"],
                 capture_output=True,
                 text=True,
             )
@@ -1058,7 +1061,10 @@ class LxdVmManager:
         # 2. pi (oh-my-pi)
         console.print("\n  [bold]pi:[/bold] updating oh-my-pi...")
         run_with_retry(
-            ["lxc", "exec", self.container, "--", "bash", "-c", "curl -fsSL https://omp.sh/install | sh"],
+            _cexec(
+                self.container, self.uid, CONTAINER_GID,
+                "bash", "-c", "curl -fsSL https://omp.sh/install | sh",
+            ),
             desc="oh-my-pi install",
         )
 
