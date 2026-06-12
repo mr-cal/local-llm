@@ -30,3 +30,6 @@ dist/
 llama.cpp/build/
 llama.cpp/build-*/
 llama.cpp/ggml/src/ggml*.so
+
+# llm stuff
+plan.md
