@@ -7,10 +7,12 @@ compatibility.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.console import Console
@@ -839,30 +841,21 @@ class LxdVmManager:
             instances = json.loads(r.stdout)
             assert isinstance(instances, list), f"expected JSON list, got: {r.stdout!r}"
 
-        tests = [
-            ("VM running", t_running),
-            ("build-essential installed", t_build_essential),
-            ("gh installed", t_gh_installed),
-            ("passwordless sudo works", t_passwordless_sudo),
-            ("uv installed", t_uv_installed),
-            ("fish installed", t_fish_installed),
-            ("fish is the default shell", t_fish_default_shell),
-            ("PATH includes ~/.local/bin (fish conf.d)", t_path_in_fish_conf),
-            ("PATH includes ~/.local/bin (.bashrc)", t_path_in_bashrc),
-            ("pi installed", t_pi_installed),
-            ("omp models.yml exists", t_omp_config),
-            ("dev mount readable", t_dev_mount_read),
-            ("dev mount ownership transparent", t_dev_ownership),
-            (".github mount works", t_github_mount),
-            ("Write transparency", t_write_transparency),
-            (f"container user is {CONTAINER_USER!r}", t_container_user),
-            ("opencode config mounted", t_opencode_config_mount),
-            ("pi mount exists", t_pi_mount),
-            ("pylsp installed", t_pylsp_installed),
-            ("pylsp registered in lsp-config.json", t_pylsp_lsp_config),
-            ("nested lxd: lxc list works inside VM", t_nested_lxd),
+        # Auto-discover test functions (t_*) defined in this method's local scope.
+        # New tests are discovered automatically; no list to maintain.
+        frame = inspect.currentframe()
+        local_tests: dict[str, Callable] = {
+            k: v
+            for k, v in (frame.f_locals if frame else {}).items()
+            if k.startswith("t_") and callable(v)
+        }
+        assert frame is not None
+        del frame  # avoid reference cycle (PEP 557)
+        # Display names are derived from function names: t_foo_bar → "foo bar"
+        tests: list[tuple[str, Callable]] = [
+            (name.replace("t_", "").replace("_", " "), fn)
+            for name, fn in local_tests.items()
         ]
-
         results = [check(name, fn) for name, fn in tests]
         passed = sum(results)
         total = len(results)
