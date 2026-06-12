@@ -259,6 +259,7 @@ class LxdVmManager:
                 "moreutils",
                 "kitty-terminfo",
                 "fish",
+                "unzip",
             ]
         )
 
@@ -355,6 +356,19 @@ class LxdVmManager:
                 "--ignore-scripts",
                 "@oh-my-pi/pi-coding-agent",
             ),
+        )
+
+        console.print("  Installing bun...")
+        run(
+            [
+                "lxc",
+                "exec",
+                self.container,
+                "--",
+                "bash",
+                "-c",
+                "curl -fsSL https://bun.sh/install | bash",
+            ],
         )
 
         console.print("  Setting fish as the default shell...")
@@ -914,7 +928,7 @@ class LxdVmManager:
                 f"  UID/GID mapping: transparent (host {HOST_UID}:{HOST_GID} <-> container {CONTAINER_USER})"
             )
             console.print(f"  Container user: {CONTAINER_USER}")
-            console.print("  Packages: build-essential, gh, gh-copilot, astral-uv, pi")
+            console.print("  Packages: build-essential, gh, gh-copilot, astral-uv, pi, bun")
             console.print("  sudo: passwordless for container user")
             console.print("  Next: run 'gh auth login', 'gh copilot setup', and '/allow-all'")
             console.print(
