@@ -321,7 +321,8 @@ class LxdVmManager:
         run(
             _cexec(
                 self.container, uid, CONTAINER_GID,
-                "npm", "install", "-g", "@oh-my-pi/pi-coding-agent",
+                "npm", "install", "-g", "--ignore-scripts",
+                "@earendil-works/pi-coding-agent",
             ),
         )
 
@@ -1071,7 +1072,8 @@ class LxdVmManager:
         run_with_retry(
             _cexec(
                 self.container, self.uid, CONTAINER_GID,
-                "npm", "install", "-g", "@oh-my-pi/pi-coding-agent",
+                "npm", "install", "-g", "--ignore-scripts",
+                "@earendil-works/pi-coding-agent",
             ),
             desc="pi install",
         )
