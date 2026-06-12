@@ -13,6 +13,7 @@ import os
 import subprocess
 import time
 from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
 
 from rich.console import Console
@@ -63,6 +64,19 @@ console = Console()
 
 
 # ── LxdVmManager class ──────────────────────────────────────────────────────
+
+
+class SetupStep(Enum):
+    """Ordered steps for LXD VM setup, used in progress labels like '2/4'."""
+
+    MOUNTS = 2
+    PACKAGES = 3
+    PYLSP = 4
+    NESTED_LXD = 4  # shares the same step as pylsp
+
+    def label(self, total: int) -> str:
+        """Return a display label like '2/4'."""
+        return f"{self.value}/{total}"
 
 
 class LxdVmManager:
@@ -181,11 +195,13 @@ class LxdVmManager:
     def _add_mounts(
         self,
         mounts: list[tuple[str, str, str]] | None = None,
-        step: str = "2/4",
+        step: SetupStep = SetupStep.MOUNTS,
+        total_steps: int = 4,
     ) -> None:
         """Add bind mounts to the container."""
         all_mounts = mounts or self.mounts
-        console.print(f"\n[bold][{step}][/bold] Adding bind mounts...")
+        label = step.label(total_steps)
+        console.print(f"\n[bold][{label}][/bold] Adding bind mounts...")
 
         # Pre-create mount-point parent directories as the correct user so LXD
         # doesn't create them as root when it sets up the disk devices on the
@@ -212,9 +228,15 @@ class LxdVmManager:
         run(["lxc", "restart", self.container])
         wait_for_container(self.container)
 
-    def _install_packages(self, step: str = "4/5", uid: int = CONTAINER_UID) -> None:
+    def _install_packages(
+        self,
+        step: SetupStep = SetupStep.PACKAGES,
+        total_steps: int = 4,
+        uid: int = CONTAINER_UID,
+    ) -> None:
         """Install packages in the container."""
-        console.print(f"\n[bold][{step}][/bold] Installing packages...")
+        label = step.label(total_steps)
+        console.print(f"\n[bold][{label}][/bold] Installing packages...")
         run(["lxc", "exec", self.container, "--", "apt-get", "update", "-q"])
         run(
             [
@@ -303,10 +325,18 @@ class LxdVmManager:
         run(["lxc", "exec", self.container, "--", "apt-get", "clean"])
 
     def _install_pylsp(
-        self, step: str = "5/5", uid: int = CONTAINER_UID, gid: int = CONTAINER_GID
+        self,
+        step: SetupStep = SetupStep.PYLSP,
+        total_steps: int = 4,
+        uid: int = CONTAINER_UID,
+        gid: int = CONTAINER_GID,
     ) -> None:
         """Install python-lsp-server via uv tool inside the container."""
-        console.print(f"\n[bold][{step}][/bold] Installing pylsp (python-lsp-server) in container...")
+        label = step.label(total_steps)
+        console.print(
+            f"\n[bold][{label}][/bold] "
+            "Installing pylsp (python-lsp-server) in container..."
+        )
 
         run(_cexec(self.container, uid, gid, "uv", "tool", "install", "python-lsp-server"))
         # Shorten the prompt
@@ -445,10 +475,14 @@ class LxdVmManager:
         )
 
     def _setup_nested_lxd(
-        self, step: str = "5/5", uid: int = HOST_UID
+        self,
+        step: SetupStep = SetupStep.NESTED_LXD,
+        total_steps: int = 4,
+        uid: int = HOST_UID,
     ) -> None:
         """Install and initialise LXD inside the VM so nested containers can run."""
-        console.print(f"\n[bold][{step}][/bold] Setting up nested LXD inside VM...")
+        label = step.label(total_steps)
+        console.print(f"\n[bold][{label}][/bold] Setting up nested LXD inside VM...")
 
         console.print("  Installing lxd snap...")
         run(["lxc", "exec", self.container, "--", "snap", "install", "lxd"])
@@ -532,10 +566,14 @@ class LxdVmManager:
             )
 
         self.create_container()
-        self._add_mounts(all_mounts, step="2/4")
-        self._install_packages(step="3/4", uid=HOST_UID)
-        self._install_pylsp(step="4/4", uid=HOST_UID, gid=HOST_GID)
-        self._setup_nested_lxd(step="4/4", uid=HOST_UID)
+        self._add_mounts(all_mounts, step=SetupStep.MOUNTS, total_steps=4)
+        self._install_packages(step=SetupStep.PACKAGES, total_steps=4, uid=HOST_UID)
+        self._install_pylsp(
+            step=SetupStep.PYLSP, total_steps=4, uid=HOST_UID, gid=HOST_GID
+        )
+        self._setup_nested_lxd(
+            step=SetupStep.NESTED_LXD, total_steps=4, uid=HOST_UID
+        )
 
         self.setup_pi(cert_pem=cert_pem)
         self._tag_as_managed()
