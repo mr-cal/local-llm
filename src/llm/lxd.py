@@ -321,7 +321,13 @@ class LxdVmManager:
         run(
             _cexec(
                 self.container, uid, CONTAINER_GID,
-                "npm", "install", "-g", "--ignore-scripts",
+                "npm", "config", "set", "prefix", f"{CONTAINER_HOME}/.local/bin",
+            ),
+        )
+        run(
+            _cexec(
+                self.container, uid, CONTAINER_GID,
+                "npm", "install", "--ignore-scripts",
                 "@earendil-works/pi-coding-agent",
             ),
         )
@@ -330,7 +336,8 @@ class LxdVmManager:
         run(
             _cexec(
                 self.container, uid, CONTAINER_GID,
-                "bun", "install", "-g", "@oh-my-pi/pi-coding-agent",
+                "npm", "install", "--ignore-scripts",
+                "@oh-my-pi/pi-coding-agent",
             ),
         )
 
@@ -1072,7 +1079,15 @@ class LxdVmManager:
         run_with_retry(
             _cexec(
                 self.container, self.uid, CONTAINER_GID,
-                "npm", "install", "-g", "--ignore-scripts",
+                "npm", "config", "set", "prefix",
+                f"{CONTAINER_HOME}/.local/bin",
+            ),
+            desc="npm prefix",
+        )
+        run_with_retry(
+            _cexec(
+                self.container, self.uid, CONTAINER_GID,
+                "npm", "install", "--ignore-scripts",
                 "@earendil-works/pi-coding-agent",
             ),
             desc="pi install",
@@ -1080,7 +1095,8 @@ class LxdVmManager:
         run_with_retry(
             _cexec(
                 self.container, self.uid, CONTAINER_GID,
-                "bun", "install", "-g", "@oh-my-pi/pi-coding-agent",
+                "npm", "install", "--ignore-scripts",
+                "@oh-my-pi/pi-coding-agent",
             ),
             desc="oh-my-pi install",
         )
