@@ -1465,12 +1465,6 @@ def do_setup_crafts(container_name: str, craft_dirs: list[str]) -> None:
     mgr.do_setup_crafts()
 
 
-def _refresh_one(container: str, cert_pem: str | None, uid: int, gid: int) -> None:
-    """Run all refresh steps for a single managed container."""
-    mgr = LxdVmManager(container, uid=uid, gid=gid)
-    mgr._refresh(cert_pem=cert_pem)
-
-
 def refresh_containers(
     container_name: str | None = None,
     *,
@@ -1487,9 +1481,8 @@ def refresh_containers(
     if container_name is not None:
         if not container_exists(container_name):
             raise RuntimeError(f"'{container_name}' does not exist.")
-        _refresh_one(
-            container_name, cert_pem=cert_pem, uid=HOST_UID, gid=HOST_GID
-        )
+        mgr = LxdVmManager(container_name, uid=HOST_UID, gid=HOST_GID)
+        mgr._refresh(cert_pem=cert_pem)
     else:
         managed = _list_managed_containers()
         if not managed:
@@ -1502,8 +1495,7 @@ def refresh_containers(
             + ", ".join(managed)
         )
         for container in managed:
-            _refresh_one(
-                container, cert_pem=cert_pem, uid=HOST_UID, gid=HOST_GID
-            )
+            mgr = LxdVmManager(container, uid=HOST_UID, gid=HOST_GID)
+            mgr._refresh(cert_pem=cert_pem)
 
         console.print(f"\n[green]✓[/green] All {len(managed)} VM(s) refreshed.")
