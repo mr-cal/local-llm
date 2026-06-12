@@ -288,6 +288,22 @@ def _read_pid(port: int | None = None) -> int | None:
     return None
 
 
+def _server_is_ready(port: int) -> bool:
+    """Check if llama-server is ready to accept requests via /health.
+
+    Returns True if the server responds with 200 OK on the /health
+    endpoint, False otherwise (still loading, crashed, etc.).
+    """
+    import httpx  # noqa: PLC0415
+
+    url = f"http://127.0.0.1:{port}/health"
+    try:
+        resp = httpx.get(url, timeout=2)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 @app.command("start")
 def start(
     wait: Annotated[int, typer.Option("--wait", help="Seconds to wait for server to be ready.")] = 5,
@@ -459,7 +475,9 @@ def status() -> None:
         if entry is None and cfg.models.has_catalog is False:
             entry = next((m for m in KNOWN_MODELS if m.filename == cfg.models.active), None)
         display = entry.alias if entry else cfg.models.active
-        console.print(f"[green]● llama-server[/green] PID {pid} port {cfg.server.port}")
+        ready = _server_is_ready(cfg.server.port)
+        status_icon = "[green]●[/green]" if ready else "[yellow]●[/yellow] loading"
+        console.print(f"{status_icon} llama-server  PID {pid} port {cfg.server.port}")
         console.print(f"  Model  : {display}  [dim]({cfg.models.active})[/dim]")
         console.print(f"  Layers : {cfg.server.n_gpu_layers}")
         if cfg.server.extra_args:
