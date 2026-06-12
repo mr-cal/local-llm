@@ -123,9 +123,7 @@ class LxdVmManager:
 
     def create_container(self) -> None:
         """Launch an LXD VM (ubuntu:24.04) with default resources."""
-        console.print(
-            f"\n[bold][1/4][/bold] Launching {self.container} (ubuntu:24.04) as VM..."
-        )
+        console.print(f"\n[bold][1/4][/bold] Launching {self.container} (ubuntu:24.04) as VM...")
         launch_cmd = [
             "lxc",
             "launch",
@@ -258,7 +256,7 @@ class LxdVmManager:
                 "-y",
                 "build-essential",
                 "jq",
-                "sponge",
+                "moreutils",
                 "kitty-terminfo",
                 "fish",
             ]
@@ -342,10 +340,7 @@ class LxdVmManager:
     ) -> None:
         """Install python-lsp-server via uv tool inside the container."""
         label = step.label(total_steps)
-        console.print(
-            f"\n[bold][{label}][/bold] "
-            "Installing pylsp (python-lsp-server) in container..."
-        )
+        console.print(f"\n[bold][{label}][/bold] Installing pylsp (python-lsp-server) in container...")
 
         run(_cexec(self.container, uid, gid, "uv", "tool", "install", "python-lsp-server"))
         # Shorten the prompt
@@ -382,8 +377,7 @@ class LxdVmManager:
                 gid,
                 "bash",
                 "-c",
-                f"grep -qxF '{path_bash_line}' ~/.bashrc 2>/dev/null || "
-                f"echo '{path_bash_line}' >> ~/.bashrc",
+                f"grep -qxF '{path_bash_line}' ~/.bashrc 2>/dev/null || echo '{path_bash_line}' >> ~/.bashrc",
             )
         )
         run(
@@ -543,9 +537,7 @@ class LxdVmManager:
 
     # ── Setup workflows ───────────────────────────────────────────────────
 
-    def create_and_setup(
-        self, recreate: bool = False, cert_pem: str | None = None
-    ) -> None:
+    def create_and_setup(self, recreate: bool = False, cert_pem: str | None = None) -> None:
         """Create and configure an LXD VM for local LLM development.
 
         This is the full setup workflow: create the VM, add mounts, install
@@ -554,8 +546,7 @@ class LxdVmManager:
         if container_exists(self.container):
             if not recreate:
                 raise RuntimeError(
-                    f"VM '{self.container}' already exists. "
-                    "Pass recreate=True to delete and recreate it."
+                    f"VM '{self.container}' already exists. Pass recreate=True to delete and recreate it."
                 )
             console.print(f"Deleting existing VM: {self.container}")
             run(["lxc", "delete", "--force", self.container])
@@ -569,20 +560,13 @@ class LxdVmManager:
         if os.path.isdir(helix_host):
             all_mounts = [("helix-config", helix_host, helix_container), *all_mounts]
         else:
-            console.print(
-                "  [dim]~/.config/helix not found on host - "
-                "skipping helix config mount[/dim]"
-            )
+            console.print("  [dim]~/.config/helix not found on host - skipping helix config mount[/dim]")
 
         self.create_container()
         self._add_mounts(all_mounts, step=SetupStep.MOUNTS, total_steps=4)
         self._install_packages(step=SetupStep.PACKAGES, total_steps=4, uid=HOST_UID)
-        self._install_pylsp(
-            step=SetupStep.PYLSP, total_steps=4, uid=HOST_UID, gid=HOST_GID
-        )
-        self._setup_nested_lxd(
-            step=SetupStep.NESTED_LXD, total_steps=4, uid=HOST_UID
-        )
+        self._install_pylsp(step=SetupStep.PYLSP, total_steps=4, uid=HOST_UID, gid=HOST_GID)
+        self._setup_nested_lxd(step=SetupStep.NESTED_LXD, total_steps=4, uid=HOST_UID)
 
         self.setup_pi(cert_pem=cert_pem)
         self._tag_as_managed()
@@ -596,8 +580,7 @@ class LxdVmManager:
         """
         if not self.craft_dirs:
             raise RuntimeError(
-                "No craft_dirs configured. Add them to the [lxd] section of "
-                "config.toml, then re-run."
+                "No craft_dirs configured. Add them to the [lxd] section of config.toml, then re-run."
             )
 
         if not container_exists(self.container):
@@ -614,8 +597,7 @@ class LxdVmManager:
         for directory in self.craft_dirs:
             if not os.path.isdir(directory):
                 console.print(
-                    f"  [yellow]WARNING:[/yellow] directory not found on host, "
-                    f"skipping: {directory}"
+                    f"  [yellow]WARNING:[/yellow] directory not found on host, skipping: {directory}"
                 )
                 continue
             console.print(f"  Running make setup in {directory}...")
@@ -644,9 +626,7 @@ class LxdVmManager:
         console.print("\n-- Verification tests ----------------------------------------------------------")
 
         def t_running() -> None:
-            data = json.loads(
-                run_capture(["lxc", "list", self.container, "--format=json"]).stdout
-            )
+            data = json.loads(run_capture(["lxc", "list", self.container, "--format=json"]).stdout)
             matches = [c for c in data if c["name"] == self.container]
             assert matches and matches[0]["status"] == "Running", (
                 f"status={matches[0]['status'] if matches else 'not found'}"
@@ -717,13 +697,9 @@ class LxdVmManager:
                 capture_output=True,
                 text=True,
             )
-            assert r.returncode == 0, (
-                f"opencode config not found in container: {r.stderr.strip()}"
-            )
+            assert r.returncode == 0, f"opencode config not found in container: {r.stderr.strip()}"
             config = json.loads(r.stdout)
-            assert "provider" in config, (
-                f"'provider' key missing from opencode config: {config}"
-            )
+            assert "provider" in config, f"'provider' key missing from opencode config: {config}"
 
         def t_write_transparency() -> None:
             test_file = f"{HOST_HOME}/dev/.{self.container}_test_file"
@@ -783,7 +759,8 @@ class LxdVmManager:
 
         def t_path_in_bashrc() -> None:
             r = subprocess.run(
-                ["lxc", "exec", self.container, "--", "grep", ".local/bin", "~/.bashrc"],
+                ["lxc", "exec", self.container, "--",
+                 "bash", "-c", "grep .local/bin ~/.bashrc"],
                 capture_output=True,
                 text=True,
             )
@@ -791,7 +768,8 @@ class LxdVmManager:
 
         def t_pi_installed() -> None:
             r = subprocess.run(
-                ["lxc", "exec", self.container, "--", "pi", "--version"],
+                ["lxc", "exec", self.container, "--",
+                 f"{CONTAINER_HOME}/.local/bin/pi", "--version"],
                 capture_output=True,
                 text=True,
             )
@@ -804,9 +782,7 @@ class LxdVmManager:
                 text=True,
             )
             assert r.returncode == 0, f"models.yml not found in container: {r.stderr.strip()}"
-            assert "local-llm" in r.stdout, (
-                f"local-llm provider missing in models.yml: {r.stdout}"
-            )
+            assert "local-llm" in r.stdout, f"local-llm provider missing in models.yml: {r.stdout}"
             assert "baseUrl" in r.stdout, f"baseUrl missing in models.yml: {r.stdout}"
 
         def t_pi_mount() -> None:
@@ -830,9 +806,7 @@ class LxdVmManager:
                 check=True,
             )
             name = r.stdout.strip()
-            assert name == CONTAINER_USER, (
-                f"uid {self.uid} maps to {name!r}, expected {CONTAINER_USER!r}"
-            )
+            assert name == CONTAINER_USER, f"uid {self.uid} maps to {name!r}, expected {CONTAINER_USER!r}"
 
         def t_venv_interpreter_valid() -> None:
             _t_venv_interpreter_valid(self.craft_dirs)
@@ -844,9 +818,7 @@ class LxdVmManager:
                 capture_output=True,
                 text=True,
             )
-            assert r.returncode == 0, (
-                f"pylsp not found in container at {pylsp_bin}: {r.stderr.strip()}"
-            )
+            assert r.returncode == 0, f"pylsp not found in container at {pylsp_bin}: {r.stderr.strip()}"
 
         def t_pylsp_lsp_config() -> None:
             container_config = f"{CONTAINER_HOME}/.copilot/lsp-config.json"
@@ -855,14 +827,10 @@ class LxdVmManager:
                 capture_output=True,
                 text=True,
             )
-            assert r.returncode == 0, (
-                f"lsp-config.json not found in container at {container_config}"
-            )
+            assert r.returncode == 0, f"lsp-config.json not found in container at {container_config}"
             config = json.loads(r.stdout)
             servers = config.get("lspServers", {})
-            assert "python" in servers, (
-                f"'python' server missing from lspServers: {servers}"
-            )
+            assert "python" in servers, f"'python' server missing from lspServers: {servers}"
             assert servers["python"]["command"] == "pylsp", (
                 f"unexpected command: {servers['python']['command']!r}"
             )
@@ -892,16 +860,13 @@ class LxdVmManager:
         # New tests are discovered automatically; no list to maintain.
         frame = inspect.currentframe()
         local_tests: dict[str, Callable] = {
-            k: v
-            for k, v in (frame.f_locals if frame else {}).items()
-            if k.startswith("t_") and callable(v)
+            k: v for k, v in (frame.f_locals if frame else {}).items() if k.startswith("t_") and callable(v)
         }
         assert frame is not None
         del frame  # avoid reference cycle (PEP 557)
         # Display names are derived from function names: t_foo_bar → "foo bar"
         tests: list[tuple[str, Callable]] = [
-            (name.replace("t_", "").replace("_", " "), fn)
-            for name, fn in local_tests.items()
+            (name.replace("t_", "").replace("_", " "), fn) for name, fn in local_tests.items()
         ]
         results = [check(name, fn) for name, fn in tests]
         passed = sum(results)
@@ -911,34 +876,23 @@ class LxdVmManager:
         if all(results):
             console.print("=" * 60)
             console.print("craft-llm container is ready!")
+            console.print(f"  Mounts: ~/.github, ~/dev, ~/.config/opencode  ->  {CONTAINER_HOME}/{{...}}")
             console.print(
-                f"  Mounts: ~/.github, ~/dev, ~/.config/opencode  ->  {CONTAINER_HOME}/{{...}}"
-            )
-            console.print(
-                f"  UID/GID mapping: transparent (host {HOST_UID}:{HOST_GID} "
-                f"<-> container {CONTAINER_USER})"
+                f"  UID/GID mapping: transparent (host {HOST_UID}:{HOST_GID} <-> container {CONTAINER_USER})"
             )
             console.print(f"  Container user: {CONTAINER_USER}")
-            console.print(
-                "  Packages: build-essential, gh, gh-copilot, astral-uv, pi"
-            )
+            console.print("  Packages: build-essential, gh, gh-copilot, astral-uv, pi")
             console.print("  sudo: passwordless for container user")
-            console.print(
-                "  Next: run 'gh auth login', 'gh copilot setup', and '/allow-all'"
-            )
+            console.print("  Next: run 'gh auth login', 'gh copilot setup', and '/allow-all'")
             console.print(
                 " PAT token perms: all repos, actions, issues, merge queues, metadata, pull requests"
             )
             console.print("            user: copilot, gists")
-            console.print(
-                f"  pylsp: installed in container (~/.local/bin), config at {LSP_CONFIG_PATH}"
-            )
+            console.print(f"  pylsp: installed in container (~/.local/bin), config at {LSP_CONFIG_PATH}")
             console.print(f"  All {total} tests passed.")
             console.print("=" * 60)
         else:
-            console.print(
-                f"[red]{passed}/{total} tests passed. See failures above.[/red]"
-            )
+            console.print(f"[red]{passed}/{total} tests passed. See failures above.[/red]")
             raise RuntimeError(f"{passed}/{total} tests passed.")
 
     def run_craft_setup_tests(self) -> None:
@@ -980,8 +934,7 @@ class LxdVmManager:
             server_ip = cfg.proxy.lan_ip
         console.print(f"  Adding /etc/hosts entry: {server_ip} local-llm...")
         hosts_cmd = (
-            f"grep -qxF '{server_ip} local-llm' /etc/hosts || "
-            f"echo '{server_ip} local-llm' >> /etc/hosts"
+            f"grep -qxF '{server_ip} local-llm' /etc/hosts || echo '{server_ip} local-llm' >> /etc/hosts"
         )
         subprocess.run(
             ["lxc", "exec", self.container, "--", "bash", "-c", hosts_cmd],
@@ -1003,9 +956,7 @@ class LxdVmManager:
             try:
                 existing = json.loads(r.stdout)
                 if not isinstance(existing, dict):
-                    console.print(
-                        "    [yellow]WARNING:[/yellow] existing config is not a JSON object"
-                    )
+                    console.print("    [yellow]WARNING:[/yellow] existing config is not a JSON object")
                     existing = {}
             except json.JSONDecodeError:
                 existing = {}
@@ -1017,9 +968,7 @@ class LxdVmManager:
             input=merged_json.encode(),
             check=True,
         )
-        console.print(
-            f"    Written to {Path(_PI_CONTAINER_CONFIG).relative_to(CONTAINER_HOME)}"
-        )
+        console.print(f"    Written to {Path(_PI_CONTAINER_CONFIG).relative_to(CONTAINER_HOME)}")
 
         # Step 2.5: Generate models.yml for oh-my-pi
         console.print("  Generating models.yml for oh-my-pi...")
@@ -1035,9 +984,7 @@ class LxdVmManager:
             input=omp_yaml.encode(),
             check=True,
         )
-        console.print(
-            f"    Written to {Path(_OMP_CONTAINER_CONFIG).relative_to(CONTAINER_HOME)}"
-        )
+        console.print(f"    Written to {Path(_OMP_CONTAINER_CONFIG).relative_to(CONTAINER_HOME)}")
 
         # Step 3: Install TLS certificate
         console.print("  Installing TLS certificate...")
@@ -1056,9 +1003,7 @@ class LxdVmManager:
                 input=cert_pem.encode(),
                 check=True,
             )
-            console.print(
-                f"    Written to {Path(_NODE_CA_CERTS_FILE).relative_to(CONTAINER_HOME)}"
-            )
+            console.print(f"    Written to {Path(_NODE_CA_CERTS_FILE).relative_to(CONTAINER_HOME)}")
         else:
             console.print(
                 f"    [yellow]Warning:[/yellow] cert not found at {cfg.proxy.cert_path}. "
@@ -1070,10 +1015,7 @@ class LxdVmManager:
         bash_export = f'export NODE_EXTRA_CA_CERTS="{_NODE_CA_CERTS_FILE}"'
         fish_export = f'set -x NODE_EXTRA_CA_CERTS "{_NODE_CA_CERTS_FILE}"'
 
-        bashrc_cmd = (
-            f"grep -qxF '{bash_export}' ~/.bashrc || "
-            f"echo '{bash_export}' >> ~/.bashrc"
-        )
+        bashrc_cmd = f"grep -qxF '{bash_export}' ~/.bashrc || echo '{bash_export}' >> ~/.bashrc"
         subprocess.run(
             _cexec(self.container, self.uid, self.gid, "bash", "-c", bashrc_cmd),
             check=True,
@@ -1091,12 +1033,8 @@ class LxdVmManager:
             check=True,
         )
 
-        console.print(
-            "    Added to ~/.bashrc and ~/.config/fish/conf.d/node-ca-certs.fish"
-        )
-        console.print(
-            "  [green]✓[/green] Pi harness configured - it can now reach the LLM server"
-        )
+        console.print("    Added to ~/.bashrc and ~/.config/fish/conf.d/node-ca-certs.fish")
+        console.print("  [green]✓[/green] Pi harness configured - it can now reach the LLM server")
 
     # ── Refresh ───────────────────────────────────────────────────────────
 
@@ -1120,8 +1058,7 @@ class LxdVmManager:
         # 2. pi (oh-my-pi)
         console.print("\n  [bold]pi:[/bold] updating oh-my-pi...")
         run_with_retry(
-            ["lxc", "exec", self.container, "--", "bash", "-c",
-             "curl -fsSL https://omp.sh/install | sh"],
+            ["lxc", "exec", self.container, "--", "bash", "-c", "curl -fsSL https://omp.sh/install | sh"],
             desc="oh-my-pi install",
         )
 
@@ -1188,12 +1125,8 @@ class LxdVmManager:
     def _fix_vm_user_uid(self) -> None:
         """Change the in-VM user's UID/GID to HOST_UID/HOST_GID."""
         if HOST_GID != CONTAINER_GID:
-            console.print(
-                f"  Changing in-VM group GID {CONTAINER_GID} → {HOST_GID} to match host..."
-            )
-            run(
-                ["lxc", "exec", self.container, "--", "groupmod", "-g", str(HOST_GID), CONTAINER_USER]
-            )
+            console.print(f"  Changing in-VM group GID {CONTAINER_GID} → {HOST_GID} to match host...")
+            run(["lxc", "exec", self.container, "--", "groupmod", "-g", str(HOST_GID), CONTAINER_USER])
             r = subprocess.run(
                 [
                     "lxc",
@@ -1212,12 +1145,8 @@ class LxdVmManager:
                     f"[yellow]  Warning:[/yellow] chgrp may have missed some files: {r.stderr.strip()}"
                 )
         if HOST_UID != CONTAINER_UID:
-            console.print(
-                f"  Changing in-VM user UID {CONTAINER_UID} → {HOST_UID} to match host..."
-            )
-            run(
-                ["lxc", "exec", self.container, "--", "usermod", "-u", str(HOST_UID), CONTAINER_USER]
-            )
+            console.print(f"  Changing in-VM user UID {CONTAINER_UID} → {HOST_UID} to match host...")
+            run(["lxc", "exec", self.container, "--", "usermod", "-u", str(HOST_UID), CONTAINER_USER])
             r = subprocess.run(
                 [
                     "lxc",
@@ -1286,10 +1215,7 @@ def load_lxd_settings() -> tuple[list[tuple[str, str, str]], list[str]]:
     if lxd is None:
         return _DEFAULT_MOUNTS, []
     mounts = (
-        [
-            (m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser()))
-            for m in lxd.mounts
-        ]
+        [(m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser())) for m in lxd.mounts]
         if lxd.mounts
         else _DEFAULT_MOUNTS
     )
@@ -1319,9 +1245,9 @@ def run(cmd, desc: str | None = None, **kwargs):
         subprocess.run(cmd, check=True, **kwargs)
     except subprocess.CalledProcessError as e:
         label = desc or " ".join(str(a) for a in cmd[:3])
-        raise subprocess.CalledProcessError(
-            e.returncode, e.cmd, e.output, e.stderr
-        ) from Exception(f"Command failed ({label}): exit {e.returncode}")
+        raise subprocess.CalledProcessError(e.returncode, e.cmd, e.output, e.stderr) from Exception(
+            f"Command failed ({label}): exit {e.returncode}"
+        )
 
 
 @retry(
@@ -1409,8 +1335,7 @@ def _list_managed_containers() -> list[str]:
     return [
         inst["name"]
         for inst in instances
-        if inst.get("config", {}).get(_MANAGED_TAG) == "true"
-        and inst.get("status") == "Running"
+        if inst.get("config", {}).get(_MANAGED_TAG) == "true" and inst.get("status") == "Running"
     ]
 
 
@@ -1558,14 +1483,9 @@ def refresh_containers(
     else:
         managed = _list_managed_containers()
         if not managed:
-            raise RuntimeError(
-                f"No running VMs tagged with {_MANAGED_TAG}=true found."
-            )
+            raise RuntimeError(f"No running VMs tagged with {_MANAGED_TAG}=true found.")
 
-        console.print(
-            f"Found [bold]{len(managed)}[/bold] managed VM(s): "
-            + ", ".join(managed)
-        )
+        console.print(f"Found [bold]{len(managed)}[/bold] managed VM(s): " + ", ".join(managed))
         for container in managed:
             mgr = LxdVmManager(container, uid=HOST_UID, gid=HOST_GID)
             mgr._refresh(cert_pem=cert_pem)
