@@ -17,6 +17,12 @@ from enum import Enum
 from pathlib import Path
 
 from rich.console import Console
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from llm import omp
 from llm.config import (
@@ -131,7 +137,7 @@ class LxdVmManager:
             "--device",
             f"root,size={VM_ROOT_DISK_SIZE}",
         ]
-        run(launch_cmd)
+        run_with_retry(launch_cmd, desc="lxc launch")
         wait_for_container(self.container)
         self._setup_vm_swap()
         # Rename the default ubuntu user/group to match the host user, and move
@@ -237,7 +243,10 @@ class LxdVmManager:
         """Install packages in the container."""
         label = step.label(total_steps)
         console.print(f"\n[bold][{label}][/bold] Installing packages...")
-        run(["lxc", "exec", self.container, "--", "apt-get", "update", "-q"])
+        run_with_retry(
+            ["lxc", "exec", self.container, "--", "apt-get", "update", "-q"],
+            desc="apt-get update",
+        )
         run(
             [
                 "lxc",
@@ -1097,15 +1106,23 @@ class LxdVmManager:
 
         # 1. apt
         console.print("\n  [bold]apt:[/bold] update + upgrade + autoremove...")
-        run(["lxc", "exec", self.container, "--", "apt-get", "update", "-q"])
-        run(["lxc", "exec", self.container, "--", "apt-get", "upgrade", "-y"])
+        run_with_retry(
+            ["lxc", "exec", self.container, "--", "apt-get", "update", "-q"],
+            desc="apt-get update",
+        )
+        run_with_retry(
+            ["lxc", "exec", self.container, "--", "apt-get", "upgrade", "-y"],
+            desc="apt-get upgrade",
+        )
         run(["lxc", "exec", self.container, "--", "apt-get", "autoremove", "-y"])
         run(["lxc", "exec", self.container, "--", "apt-get", "clean"])
 
         # 2. pi (oh-my-pi)
         console.print("\n  [bold]pi:[/bold] updating oh-my-pi...")
-        run(
-            ["lxc", "exec", self.container, "--", "bash", "-c", "curl -fsSL https://omp.sh/install | sh"],
+        run_with_retry(
+            ["lxc", "exec", self.container, "--", "bash", "-c",
+             "curl -fsSL https://omp.sh/install | sh"],
+            desc="oh-my-pi install",
         )
 
         # 3. copilot
@@ -1305,6 +1322,23 @@ def run(cmd, desc: str | None = None, **kwargs):
         raise subprocess.CalledProcessError(
             e.returncode, e.cmd, e.output, e.stderr
         ) from Exception(f"Command failed ({label}): exit {e.returncode}")
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type((subprocess.CalledProcessError, OSError)),
+    reraise=True,
+)
+def run_with_retry(cmd, desc: str | None = None, **kwargs):
+    """Run a command with automatic retry on transient failures.
+
+    Retries up to 3 times with exponential backoff (2s → 4s → 8s) on
+    ``subprocess.CalledProcessError`` or ``OSError`` (network timeout,
+    LXD daemon busy, etc.). Intended for network-dependent operations
+    like ``apt-get`` updates, ``curl``-based installs, and ``lxc launch``.
+    """
+    run(cmd, desc=desc, **kwargs)
 
 
 def run_capture(cmd):
