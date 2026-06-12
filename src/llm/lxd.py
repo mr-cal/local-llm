@@ -330,7 +330,7 @@ class LxdVmManager:
         run(
             _cexec(
                 self.container, uid, CONTAINER_GID,
-                "bash", "-c", "curl -fsSL https://omp.sh/install | sh",
+                "bun", "install", "-g", "@oh-my-pi/pi-coding-agent",
             ),
         )
 
@@ -1080,7 +1080,7 @@ class LxdVmManager:
         run_with_retry(
             _cexec(
                 self.container, self.uid, CONTAINER_GID,
-                "bash", "-c", "curl -fsSL https://omp.sh/install | sh",
+                "bun", "install", "-g", "@oh-my-pi/pi-coding-agent",
             ),
             desc="oh-my-pi install",
         )
