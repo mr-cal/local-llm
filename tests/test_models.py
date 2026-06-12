@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import MagicMock
+
 from llm.config import ModelEntry
 from llm.models import (
     KNOWN_MODELS,
@@ -166,16 +169,22 @@ class TestModelsDir:
 
 
 class TestFmtSize:
-    def test_formats_small_file(self, fake_file):
-        result = _fmt_size(fake_file("small.gguf", b"x" * 1_000_000))
+    def test_formats_small_file(self, monkeypatch):
+        fake_stat = MagicMock(st_size=1_000_000)
+        monkeypatch.setattr(Path, "stat", lambda self: fake_stat)
+        result = _fmt_size(Path("small.gguf"))
         assert "0.0 GB" in result
 
-    def test_formats_large_file(self, fake_file):
-        result = _fmt_size(fake_file("large.gguf", b"x" * (2 * 1_073_741_824)))
+    def test_formats_large_file(self, monkeypatch):
+        fake_stat = MagicMock(st_size=2 * 1_073_741_824)
+        monkeypatch.setattr(Path, "stat", lambda self: fake_stat)
+        result = _fmt_size(Path("large.gguf"))
         assert "2.0 GB" in result
 
-    def test_format_contains_gb(self, fake_file):
-        result = _fmt_size(fake_file("medium.gguf", b"x" * 536_870_912))
+    def test_format_contains_gb(self, monkeypatch):
+        fake_stat = MagicMock(st_size=536_870_912)
+        monkeypatch.setattr(Path, "stat", lambda self: fake_stat)
+        result = _fmt_size(Path("medium.gguf"))
         assert "GB" in result
         assert "0.5" in result
 
