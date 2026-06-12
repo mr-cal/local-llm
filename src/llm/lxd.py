@@ -320,14 +320,25 @@ class LxdVmManager:
         console.print("  Installing pi...")
         run(
             _cexec(
-                self.container, uid, CONTAINER_GID,
-                "npm", "config", "set", "prefix", f"{CONTAINER_HOME}/.local/bin",
+                self.container,
+                uid,
+                CONTAINER_GID,
+                "npm",
+                "config",
+                "set",
+                "prefix",
+                f"{CONTAINER_HOME}/.local",
             ),
         )
         run(
             _cexec(
-                self.container, uid, CONTAINER_GID,
-                "npm", "install", "--ignore-scripts",
+                self.container,
+                uid,
+                CONTAINER_GID,
+                "npm",
+                "install",
+                "-g",
+                "--ignore-scripts",
                 "@earendil-works/pi-coding-agent",
             ),
         )
@@ -335,8 +346,13 @@ class LxdVmManager:
         console.print("  Installing oh-my-pi...")
         run(
             _cexec(
-                self.container, uid, CONTAINER_GID,
-                "npm", "install", "--ignore-scripts",
+                self.container,
+                uid,
+                CONTAINER_GID,
+                "npm",
+                "install",
+                "-g",
+                "--ignore-scripts",
                 "@oh-my-pi/pi-coding-agent",
             ),
         )
@@ -778,8 +794,7 @@ class LxdVmManager:
 
         def t_path_in_bashrc() -> None:
             r = subprocess.run(
-                ["lxc", "exec", self.container, "--",
-                 "grep", ".local/bin", f"{CONTAINER_HOME}/.bashrc"],
+                ["lxc", "exec", self.container, "--", "grep", ".local/bin", f"{CONTAINER_HOME}/.bashrc"],
                 capture_output=True,
                 text=True,
             )
@@ -787,8 +802,7 @@ class LxdVmManager:
 
         def t_pi_installed() -> None:
             r = subprocess.run(
-                ["lxc", "exec", self.container, "--",
-                 f"{CONTAINER_HOME}/.local/bin/pi", "--version"],
+                ["lxc", "exec", self.container, "--", f"{CONTAINER_HOME}/.local/bin/pi", "--version"],
                 capture_output=True,
                 text=True,
             )
@@ -1078,24 +1092,39 @@ class LxdVmManager:
         console.print("\n  [bold]pi:[/bold] updating oh-my-pi...")
         run_with_retry(
             _cexec(
-                self.container, self.uid, CONTAINER_GID,
-                "npm", "config", "set", "prefix",
-                f"{CONTAINER_HOME}/.local/bin",
+                self.container,
+                self.uid,
+                CONTAINER_GID,
+                "npm",
+                "config",
+                "set",
+                "prefix",
+                f"{CONTAINER_HOME}/.local",
             ),
             desc="npm prefix",
         )
         run_with_retry(
             _cexec(
-                self.container, self.uid, CONTAINER_GID,
-                "npm", "install", "--ignore-scripts",
+                self.container,
+                self.uid,
+                CONTAINER_GID,
+                "npm",
+                "install",
+                "-g",
+                "--ignore-scripts",
                 "@earendil-works/pi-coding-agent",
             ),
             desc="pi install",
         )
         run_with_retry(
             _cexec(
-                self.container, self.uid, CONTAINER_GID,
-                "npm", "install", "--ignore-scripts",
+                self.container,
+                self.uid,
+                CONTAINER_GID,
+                "npm",
+                "install",
+                "-g",
+                "--ignore-scripts",
                 "@oh-my-pi/pi-coding-agent",
             ),
             desc="oh-my-pi install",

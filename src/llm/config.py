@@ -598,9 +598,7 @@ class _OpencodeProviderLocalLlm(BaseModel):
 class _OpencodeConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_field: str = Field(
-        default="https://opencode.ai/config.json", alias="$schema"
-    )
+    schema_field: str = Field(default="https://opencode.ai/config.json", alias="$schema")
     snapshot: bool = True
     watcher: _OpencodeWatcher = Field(default_factory=_OpencodeWatcher)
     permission: str = "allow"
