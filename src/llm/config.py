@@ -545,6 +545,139 @@ def _systemctl_is_active(unit: str) -> bool:
     return result.stdout.strip() == "active"
 
 
+# ── Pydantic models for config builders ──────────────────────────────────────
+# These models provide runtime validation at construction time and
+# self-document the config schema. The builder functions construct instances
+# and serialize with model_dump(mode="json", by_alias=True).
+
+
+class _OpencodeWatcher(BaseModel):
+    ignore: list[str] = [
+        ".venv",
+        "**/*.pyc",
+        "**/__pycache__",
+        "**/node_modules",
+    ]
+
+
+class _OpencodeAgentBuild(BaseModel):
+    temperature: float = 0.3
+    steps: int = 50
+
+
+class _OpencodeAgentPlan(BaseModel):
+    temperature: float = 0.1
+
+
+class _OpencodeAgent(BaseModel):
+    build: _OpencodeAgentBuild = Field(default_factory=_OpencodeAgentBuild)
+    plan: _OpencodeAgentPlan = Field(default_factory=_OpencodeAgentPlan)
+
+
+class _OpencodeModelLimit(BaseModel):
+    context: int
+    input: int
+    output: int
+
+
+class _OpencodeModel(BaseModel):
+    name: str
+    limit: _OpencodeModelLimit
+    tool_call: bool = True
+    options: dict = Field(default_factory=lambda: {"repeat_penalty": 1.2})
+
+
+class _OpencodeProviderLocalLlm(BaseModel):
+    name: str = "Local LLM"
+    npm: str = "@ai-sdk/openai-compatible"
+    api: str
+    options: dict = Field(default_factory=lambda: {"apiKey": "local"})
+    models: dict[str, _OpencodeModel] = Field(default_factory=dict)
+
+
+class _OpencodeConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_field: str = Field(
+        default="https://opencode.ai/config.json", alias="$schema"
+    )
+    snapshot: bool = True
+    watcher: _OpencodeWatcher = Field(default_factory=_OpencodeWatcher)
+    permission: str = "allow"
+    model: str
+    agent: _OpencodeAgent = Field(default_factory=_OpencodeAgent)
+    compaction: dict = Field(
+        default_factory=lambda: {
+            "reserved": 8192,
+            "tail_turns": 10,
+            "preserve_recent_tokens": 20000,
+        }
+    )
+    provider: dict[str, _OpencodeProviderLocalLlm] = Field(default_factory=dict)
+
+
+class _PiModelCompat(BaseModel):
+    supportsDeveloperRole: bool = False
+    supportsReasoningEffort: bool = False
+    maxTokensField: str = "max_tokens"
+
+
+class _PiModel(BaseModel):
+    id: str = "local"
+    name: str
+    contextWindow: int
+    maxTokens: int
+    cost: dict[str, float] = Field(
+        default_factory=lambda: {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheWrite": 0.0,
+            "cacheRead": 0.0,
+        }
+    )
+
+
+class _PiProviderLocalLlm(BaseModel):
+    baseUrl: str
+    api: str = "openai-completions"
+    apiKey: str
+    compat: _PiModelCompat = Field(default_factory=_PiModelCompat)
+    models: list[_PiModel] = Field(default_factory=list)
+
+
+class _PiConfig(BaseModel):
+    providers: dict[str, _PiProviderLocalLlm] = Field(default_factory=dict)
+
+
+class _OmpModelCost(BaseModel):
+    input: float = 0.0
+    output: float = 0.0
+    cacheRead: float = 0.0
+    cacheWrite: float = 0.0
+
+
+class _OmpModel(BaseModel):
+    id: str = "local"
+    name: str
+    reasoning: bool = True
+    input: list[str] = Field(default_factory=lambda: ["text"])
+    contextWindow: int = 4096
+    maxTokens: int = 8192
+    cost: _OmpModelCost = Field(default_factory=_OmpModelCost)
+
+
+class _OmpProviderLocalLlm(BaseModel):
+    baseUrl: str
+    apiKey: str
+    api: str = "openai-completions"
+    auth: str = "apiKey"
+    models: list[_OmpModel] = Field(default_factory=list)
+
+
+class _OmpConfig(BaseModel):
+    providers: dict[str, _OmpProviderLocalLlm] = Field(default_factory=dict)
+
+
 def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     """Build the opencode provider config dict from current settings."""
     from llm.models import KNOWN_MODELS  # noqa: PLC0415
@@ -562,61 +695,30 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     # switching models. llama-server ignores the model name in chat completion
     # requests and serves whatever is currently loaded.
     model_key = "local"
+    api_key = cfg.client_api_key or "local"
 
     # Without limit.input set, opencode ignores compaction.reserved and fires at
     # context - max_output (= 32K for Qwen3). Setting limit.input = n_ctx unlocks
     # the reserved path: usable = n_ctx - reserved, so compaction fires at ~57K.
-    _compaction_reserved = 8192
-
-    return {
-        "$schema": "https://opencode.ai/config.json",
-        "snapshot": True,
-        "watcher": {
-            "ignore": [".venv", "**/*.pyc", "**/__pycache__", "**/node_modules"],
-        },
-        "permission": "allow",
-        "model": f"local-llm/{model_key}",
-        "agent": {
-            "build": {
-                "temperature": 0.3,
-                "steps": 50,
-            },
-            "plan": {
-                "temperature": 0.1,
-            },
-        },
-        # Compaction: fire late, keep lots of recent context verbatim so the
-        # model doesn't forget what it was doing mid-task.
-        "compaction": {
-            "reserved": _compaction_reserved,
-            "tail_turns": 10,
-            "preserve_recent_tokens": 20000,
-        },
-        "provider": {
-            "local-llm": {
-                "name": "Local LLM",
-                "npm": "@ai-sdk/openai-compatible",
-                "api": cfg.client_url,
-                "options": {"apiKey": cfg.client_api_key or "local"},
-                "models": {
-                    model_key: {
-                        "name": display_name,
-                        "limit": {
-                            "context": cfg.server.n_ctx,
-                            # Setting input = context activates the reserved path in
-                            # opencode's overflow calc: usable = input - reserved.
-                            # Without this, reserved is ignored and compaction fires
-                            # at context - max_output (half the window for Qwen3).
-                            "input": cfg.server.n_ctx,
-                            "output": max_output,
-                        },
-                        "tool_call": True,
-                        "options": {"repeat_penalty": 1.2},
-                    }
+    return _OpencodeConfig(
+        model=f"local-llm/{model_key}",
+        provider={
+            "local-llm": _OpencodeProviderLocalLlm(
+                api=cfg.client_url,
+                options={"apiKey": api_key},
+                models={
+                    model_key: _OpencodeModel(
+                        name=display_name,
+                        limit=_OpencodeModelLimit(
+                            context=cfg.server.n_ctx,
+                            input=cfg.server.n_ctx,
+                            output=max_output,
+                        ),
+                    )
                 },
-            }
+            )
         },
-    }
+    ).model_dump(mode="json", by_alias=True)
 
 
 _OPENCODE_SCHEMA_URL = "https://opencode.ai/config.json"
@@ -666,26 +768,17 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     # Fall back to "local" so the field is always present.
     api_key = cfg.client_api_key or "local"
 
-    return {
-        "providers": {
-            "local-llm": {
-                "baseUrl": cfg.client_url,
-                "api": "openai-completions",
-                "apiKey": api_key,
-                # llama-server capabilities: no developer role, no reasoning_effort,
-                # uses max_tokens (not max_completion_tokens).
-                "compat": {
-                    "supportsDeveloperRole": False,
-                    "supportsReasoningEffort": False,
-                    "maxTokensField": "max_tokens",
-                },
-                "models": [
-                    {
-                        "id": "local",
-                        "name": display_name,
-                        "contextWindow": cfg.server.n_ctx,
-                        "maxTokens": max_output,
-                        "cost": (
+    return _PiConfig(
+        providers={
+            "local-llm": _PiProviderLocalLlm(
+                baseUrl=cfg.client_url,
+                apiKey=api_key,
+                models=[
+                    _PiModel(
+                        name=display_name,
+                        contextWindow=cfg.server.n_ctx,
+                        maxTokens=max_output,
+                        cost=(
                             entry.cost.to_cost_dict()
                             if entry
                             else {
@@ -695,11 +788,11 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                                 "cacheRead": 0.0,
                             }
                         ),
-                    }
+                    )
                 ],
-            }
-        }
-    }
+            )
+        },
+    ).model_dump(mode="json", by_alias=True)
 
 
 def _build_omp_config_for_container(cfg: Settings, server_host: str) -> dict:  # type: ignore[type-arg]
@@ -721,48 +814,27 @@ def _build_omp_config_for_container(cfg: Settings, server_host: str) -> dict:  #
 
     base_url = f"https://{server_host}:{cfg.proxy.port}/v1"
 
-    return {
-        "providers": {
-            "local-llm": {
-                "baseUrl": base_url,
-                "apiKey": api_key,
-                "api": "openai-completions",
-                "auth": "apiKey",
-                "models": [
-                    {
-                        "id": "local",
-                        "name": display_name,
-                        "reasoning": True,
-                        "input": ["text"],
-                        "contextWindow": cfg.server.n_ctx,
-                        "maxTokens": max_output,
-                        "cost": {
-                            "input": (
-                                entry.cost.input
-                                if entry
-                                else 0.0
-                            ),
-                            "output": (
-                                entry.cost.output
-                                if entry
-                                else 0.0
-                            ),
-                            "cacheRead": (
-                                entry.cost.cache_read
-                                if entry
-                                else 0.0
-                            ),
-                            "cacheWrite": (
-                                entry.cost.cache_write
-                                if entry
-                                else 0.0
-                            ),
-                        },
-                    }
+    return _OmpConfig(
+        providers={
+            "local-llm": _OmpProviderLocalLlm(
+                baseUrl=base_url,
+                apiKey=api_key,
+                models=[
+                    _OmpModel(
+                        name=display_name,
+                        contextWindow=cfg.server.n_ctx,
+                        maxTokens=max_output,
+                        cost=_OmpModelCost(
+                            input=entry.cost.input if entry else 0.0,
+                            output=entry.cost.output if entry else 0.0,
+                            cacheRead=entry.cost.cache_read if entry else 0.0,
+                            cacheWrite=entry.cost.cache_write if entry else 0.0,
+                        ),
+                    )
                 ],
-            }
-        }
-    }
+            )
+        },
+    ).model_dump(mode="json", by_alias=True)
 
 
 def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # type: ignore[type-arg]
@@ -787,24 +859,17 @@ def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # 
     # TLS verification failures that would occur with a raw IP address.
     base_url = f"https://{server_host}:{cfg.proxy.port}/v1"
 
-    return {
-        "providers": {
-            "local-llm": {
-                "baseUrl": base_url,
-                "api": "openai-completions",
-                "apiKey": api_key,
-                "compat": {
-                    "supportsDeveloperRole": False,
-                    "supportsReasoningEffort": False,
-                    "maxTokensField": "max_tokens",
-                },
-                "models": [
-                    {
-                        "id": "local",
-                        "name": display_name,
-                        "contextWindow": cfg.server.n_ctx,
-                        "maxTokens": max_output,
-                        "cost": (
+    return _PiConfig(
+        providers={
+            "local-llm": _PiProviderLocalLlm(
+                baseUrl=base_url,
+                apiKey=api_key,
+                models=[
+                    _PiModel(
+                        name=display_name,
+                        contextWindow=cfg.server.n_ctx,
+                        maxTokens=max_output,
+                        cost=(
                             entry.cost.to_cost_dict()
                             if entry
                             else {
@@ -814,11 +879,11 @@ def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # 
                                 "cacheRead": 0.0,
                             }
                         ),
-                    }
+                    )
                 ],
-            }
-        }
-    }
+            )
+        },
+    ).model_dump(mode="json", by_alias=True)
 
 
 def _build_opencode_config_for_container(cfg: Settings, server_host: str) -> dict:  # type: ignore[type-arg]
@@ -837,53 +902,28 @@ def _build_opencode_config_for_container(cfg: Settings, server_host: str) -> dic
     max_output = entry.max_output if entry else 8192
 
     model_key = "local"
-    _compaction_reserved = 8192
     api_key = cfg.client_api_key or "local"
     base_url = f"https://{server_host}:{cfg.proxy.port}/v1"
 
-    return {
-        "$schema": "https://opencode.ai/config.json",
-        "snapshot": True,
-        "watcher": {
-            "ignore": [".venv", "**/*.pyc", "**/__pycache__", "**/node_modules"],
-        },
-        "permission": "allow",
-        "model": f"local-llm/{model_key}",
-        "agent": {
-            "build": {
-                "temperature": 0.3,
-                "steps": 50,
-            },
-            "plan": {
-                "temperature": 0.1,
-            },
-        },
-        "compaction": {
-            "reserved": _compaction_reserved,
-            "tail_turns": 10,
-            "preserve_recent_tokens": 20000,
-        },
-        "provider": {
-            "local-llm": {
-                "name": "Local LLM",
-                "npm": "@ai-sdk/openai-compatible",
-                "api": base_url,
-                "options": {"apiKey": api_key},
-                "models": {
-                    model_key: {
-                        "name": display_name,
-                        "limit": {
-                            "context": cfg.server.n_ctx,
-                            "input": cfg.server.n_ctx,
-                            "output": max_output,
-                        },
-                        "tool_call": True,
-                        "options": {"repeat_penalty": 1.2},
-                    }
+    return _OpencodeConfig(
+        model=f"local-llm/{model_key}",
+        provider={
+            "local-llm": _OpencodeProviderLocalLlm(
+                api=base_url,
+                options={"apiKey": api_key},
+                models={
+                    model_key: _OpencodeModel(
+                        name=display_name,
+                        limit=_OpencodeModelLimit(
+                            context=cfg.server.n_ctx,
+                            input=cfg.server.n_ctx,
+                            output=max_output,
+                        ),
+                    )
                 },
-            }
+            )
         },
-    }
+    ).model_dump(mode="json", by_alias=True)
 
 
 def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type-arg]
