@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 import tomli_w
 import typer
@@ -22,6 +23,7 @@ from llm.config import (
     ProxySettings,
     ServerSettings,
     Settings,
+    _build_omp_config_for_container,
     _build_opencode_config,
     _build_pi_config,
     _build_pi_config_for_container,
@@ -764,6 +766,458 @@ class TestConfigShow:
         mocker.patch("urllib.request.urlopen", side_effect=Exception("no network"))
         # config_show should not raise - it should mask the github token
         config_show()
+
+
+# ── _get_server_model_info / _resolve_model_info ────────────────────────────
+
+
+class TestGetServerModelInfo:
+    """Tests for the server model_info endpoint query."""
+
+    def test_returns_parsed_json_on_success(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+            "ctx_size": 131072,
+            "n_embd": 5120,
+            "n_layers": 40,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(server=ServerSettings(port=8080))
+        from llm.config import _get_server_model_info
+
+        result = _get_server_model_info(cfg)
+        assert result is not None
+        assert result["model_name"] == "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"
+        assert result["ctx_size"] == 131072
+
+    def test_returns_none_on_http_error(self, mocker):
+        import httpx
+
+        mocker.patch("httpx.get", side_effect=httpx.HTTPStatusError(
+            "404 Not Found",
+            request=MagicMock(),
+            response=MagicMock(status_code=404),
+        ))
+
+        cfg = Settings(server=ServerSettings(port=8080))
+        from llm.config import _get_server_model_info
+
+        result = _get_server_model_info(cfg)
+        assert result is None
+
+    def test_returns_none_on_connection_error(self, mocker):
+        import httpx
+
+        mocker.patch("httpx.get", side_effect=httpx.ConnectError("connection refused"))
+
+        cfg = Settings(server=ServerSettings(port=8080))
+        from llm.config import _get_server_model_info
+
+        result = _get_server_model_info(cfg)
+        assert result is None
+
+    def test_returns_none_on_timeout(self, mocker):
+        import httpx
+
+        mocker.patch("httpx.get", side_effect=httpx.TimeoutException("timeout"))
+
+        cfg = Settings(server=ServerSettings(port=8080))
+        from llm.config import _get_server_model_info
+
+        result = _get_server_model_info(cfg)
+        assert result is None
+
+    def test_uses_internal_url(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {}
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(server=ServerSettings(port=9999))
+        from llm.config import _get_server_model_info
+
+        _get_server_model_info(cfg)
+        httpx.get.assert_called_once()
+        call_url = httpx.get.call_args[0][0]
+        assert call_url == "http://127.0.0.1:9999/model_info"
+
+    def test_uses_2s_timeout(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {}
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(server=ServerSettings(port=8080))
+        from llm.config import _get_server_model_info
+
+        _get_server_model_info(cfg)
+        httpx.get.assert_called_once()
+        assert httpx.get.call_args[1].get("timeout") == 2
+
+
+class TestResolveModelInfo:
+    """Tests for the model info resolution with fallback chain."""
+
+    def test_server_reported_values(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "my-model.gguf",
+            "ctx_size": 65536,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=4096),
+            models=ModelsSettings(active="my-model.gguf"),
+        )
+        from llm.config import _resolve_model_info
+
+        name, ctx, max_out = _resolve_model_info(cfg)
+        assert name == "my-model.gguf"
+        assert ctx == 65536
+        assert max_out == 8192  # server n_ctx // 8 = 8192
+
+    def test_server_ctx_size_zero_uses_cfg_default(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "test.gguf",
+            "ctx_size": 0,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=32768),
+            models=ModelsSettings(active="test.gguf"),
+        )
+        from llm.config import _resolve_model_info
+
+        name, ctx, max_out = _resolve_model_info(cfg)
+        assert ctx == 32768  # falls back to cfg.server.n_ctx
+
+    def test_server_without_ctx_size_uses_cfg_default(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "test.gguf",
+            # no ctx_size key
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=8192),
+            models=ModelsSettings(active="test.gguf"),
+        )
+        from llm.config import _resolve_model_info
+
+        name, ctx, max_out = _resolve_model_info(cfg)
+        assert ctx == 8192
+
+    def test_server_small_max_output_defaults_to_8192(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "tiny.gguf",
+            "ctx_size": 2048,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            models=ModelsSettings(active="tiny.gguf"),
+        )
+        from llm.config import _resolve_model_info
+
+        name, ctx, max_out = _resolve_model_info(cfg)
+        assert max_out == 8192  # server n_ctx // 8 = 256 < 512 → default
+
+    def test_server_not_reachable_uses_catalog(self, mocker):
+        import httpx
+
+        mocker.patch("httpx.get", side_effect=httpx.ConnectError("no server"))
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=16384),
+            models=ModelsSettings(
+                active="qwen2.5-coder-14b-q4",
+                entries=[
+                    ModelEntry(alias="qwen2.5-coder-14b-q4", repo="x/y", filename="x.gguf", max_output=16384),
+                ],
+            ),
+        )
+        from llm.config import _resolve_model_info
+
+        name, ctx, max_out = _resolve_model_info(cfg)
+        assert name == "qwen2.5-coder-14b-q4"
+        assert ctx == 16384
+        assert max_out == 16384
+
+    def test_server_not_reachable_uses_known_models(self, mocker):
+        import httpx
+
+        mocker.patch("httpx.get", side_effect=httpx.ConnectError("no server"))
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=65536),
+            models=ModelsSettings(
+                active="qwen2.5-coder-14b-q4",
+                has_catalog=False,  # no config catalog → falls to KNOWN_MODELS
+            ),
+        )
+        from llm.config import _resolve_model_info
+
+        name, ctx, max_out = _resolve_model_info(cfg)
+        assert name == "qwen2.5-coder-14b-q4"  # from KNOWN_MODELS
+        assert ctx == 65536  # from cfg
+        assert max_out == 8192  # from KNOWN_MODELS default
+
+    def test_server_not_reachable_uses_default_max_output(self, mocker):
+        import httpx
+
+        mocker.patch("httpx.get", side_effect=httpx.ConnectError("no server"))
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=4096),
+            models=ModelsSettings(active="custom.gguf"),  # not in any catalog
+        )
+        from llm.config import _resolve_model_info
+
+        name, ctx, max_out = _resolve_model_info(cfg)
+        assert name == "custom.gguf"
+        assert ctx == 4096
+        assert max_out == 8192  # hard default
+
+    def test_server_n_ctx_used_for_max_output_heuristic(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "big.gguf",
+            "ctx_size": 131072,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=131072),
+            models=ModelsSettings(active="big.gguf"),
+        )
+        from llm.config import _resolve_model_info
+
+        name, ctx, max_out = _resolve_model_info(cfg)
+        assert ctx == 131072
+        assert max_out == 16384  # 131072 // 8
+
+
+class TestBuildOpencodeConfigUsesServerInfo:
+    """Verify that _build_opencode_config uses server-reported model info."""
+
+    def test_uses_server_reported_context(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "server-model.gguf",
+            "ctx_size": 131072,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=4096),
+            models=ModelsSettings(active="server-model.gguf"),
+        )
+        result = _build_opencode_config(cfg)
+        model_cfg = provider_config(result)["models"]["local"]
+        assert model_cfg["limit"]["context"] == 131072
+        assert model_cfg["limit"]["input"] == 131072
+
+    def test_uses_server_reported_max_output(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "big-model.gguf",
+            "ctx_size": 262144,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            models=ModelsSettings(active="big-model.gguf"),
+        )
+        result = _build_opencode_config(cfg)
+        model_cfg = provider_config(result)["models"]["local"]
+        assert model_cfg["limit"]["output"] == 32768  # 262144 // 8
+
+    def test_uses_server_model_name(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "my-custom-model.gguf",
+            "ctx_size": 8192,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            models=ModelsSettings(active="my-custom-model.gguf"),
+        )
+        result = _build_opencode_config(cfg)
+        model_cfg = provider_config(result)["models"]["local"]
+        assert model_cfg["name"] == "my-custom-model.gguf"
+
+
+class TestBuildPiConfigUsesServerInfo:
+    """Verify that _build_pi_config uses server-reported model info."""
+
+    def test_uses_server_reported_context(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "server-model.gguf",
+            "ctx_size": 131072,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=4096),
+            models=ModelsSettings(active="server-model.gguf"),
+        )
+        result = _build_pi_config(cfg)
+        model_entry = result["providers"]["local-llm"]["models"][0]
+        assert model_entry["contextWindow"] == 131072
+
+    def test_uses_server_reported_max_output(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "big-model.gguf",
+            "ctx_size": 262144,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            models=ModelsSettings(active="big-model.gguf"),
+        )
+        result = _build_pi_config(cfg)
+        model_entry = result["providers"]["local-llm"]["models"][0]
+        assert model_entry["maxTokens"] == 32768  # 262144 // 8
+
+    def test_uses_server_model_name(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "custom-model.gguf",
+            "ctx_size": 8192,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            models=ModelsSettings(active="custom-model.gguf"),
+        )
+        result = _build_pi_config(cfg)
+        model_entry = result["providers"]["local-llm"]["models"][0]
+        assert model_entry["name"] == "custom-model.gguf"
+
+
+class TestBuildPiConfigForContainerUsesServerInfo:
+    """Verify that _build_pi_config_for_container uses server-reported model info."""
+
+    def test_uses_server_reported_context(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "server-model.gguf",
+            "ctx_size": 131072,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=4096),
+            proxy=ProxySettings(lan_ip="192.168.1.100", port=8443),
+            models=ModelsSettings(active="server-model.gguf"),
+        )
+        result = _build_pi_config_for_container(cfg, "local-llm")
+        model_entry = result["providers"]["local-llm"]["models"][0]
+        assert model_entry["contextWindow"] == 131072
+
+    def test_uses_server_reported_max_output(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "big-model.gguf",
+            "ctx_size": 262144,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            proxy=ProxySettings(lan_ip="192.168.1.100", port=8443),
+            models=ModelsSettings(active="big-model.gguf"),
+        )
+        result = _build_pi_config_for_container(cfg, "local-llm")
+        model_entry = result["providers"]["local-llm"]["models"][0]
+        assert model_entry["maxTokens"] == 32768
+
+
+class TestBuildOmpConfigForContainerUsesServerInfo:
+    """Verify that _build_omp_config_for_container uses server-reported model info."""
+
+    def test_uses_server_reported_context(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "server-model.gguf",
+            "ctx_size": 131072,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080, n_ctx=4096),
+            proxy=ProxySettings(lan_ip="192.168.1.100", port=8443),
+            models=ModelsSettings(active="server-model.gguf"),
+        )
+        result = _build_omp_config_for_container(cfg, "local-llm")
+        model_entry = result["providers"]["local-llm"]["models"][0]
+        assert model_entry["contextWindow"] == 131072
+
+    def test_uses_server_reported_max_output(self, mocker):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "model_name": "big-model.gguf",
+            "ctx_size": 262144,
+        }
+        mocker.patch("httpx.get", return_value=mock_resp)
+
+        cfg = Settings(
+            server=ServerSettings(port=8080),
+            proxy=ProxySettings(lan_ip="192.168.1.100", port=8443),
+            models=ModelsSettings(active="big-model.gguf"),
+        )
+        result = _build_omp_config_for_container(cfg, "local-llm")
+        model_entry = result["providers"]["local-llm"]["models"][0]
+        assert model_entry["maxTokens"] == 32768
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

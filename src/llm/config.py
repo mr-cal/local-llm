@@ -678,16 +678,8 @@ class _OmpConfig(BaseModel):
 
 def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     """Build the opencode provider config dict from current settings."""
-    from llm.models import KNOWN_MODELS  # noqa: PLC0415
-
-    active = cfg.models.active
-    # First check config catalog, then fall back to built-in catalog
-    entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
-    if entry is None and cfg.models.has_catalog is False:
-        # Fallback to built-in catalog by filename
-        entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
-    display_name = entry.alias if entry else active
-    max_output = entry.max_output if entry else 8192
+    # Resolve model info: server-reported → catalog → config defaults
+    display_name, context_window, max_output = _resolve_model_info(cfg)
 
     # Use a stable generic key so the opencode config never needs updating when
     # switching models. llama-server ignores the model name in chat completion
@@ -708,8 +700,8 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                     model_key: _OpencodeModel(
                         name=display_name,
                         limit=_OpencodeModelLimit(
-                            context=cfg.server.n_ctx,
-                            input=cfg.server.n_ctx,
+                            context=context_window,
+                            input=context_window,
                             output=max_output,
                         ),
                     )
@@ -722,6 +714,65 @@ def _build_opencode_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
 _OPENCODE_SCHEMA_URL = "https://opencode.ai/config.json"
 _OPENCODE_CONFIG_PATH = Path("~/.config/opencode/config.json")
 _PI_CONFIG_PATH = Path("~/.pi/agent/models.json")
+
+
+def _get_server_model_info(cfg: Settings) -> dict | None:
+    """Query llama.cpp's /model_info endpoint for server-reported model metadata.
+
+    Returns a dict with keys like ``model_name``, ``ctx_size``, ``n_embd``, etc.
+    Returns ``None`` if the server is unreachable or the endpoint is unavailable
+    (e.g. old llama.cpp version without this endpoint).
+    """
+    import httpx  # noqa: PLC0415
+
+    url = f"{cfg.internal_url}/model_info"
+    try:
+        resp = httpx.get(url, timeout=2)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return None
+
+
+def _resolve_model_info(
+    cfg: Settings,
+) -> tuple[str, int, int]:
+    """Resolve model name, context window, and max output using server-reported values.
+
+    Resolution priority:
+    1. Query the live server via ``/model_info``
+    2. Look up in the local catalog (``KNOWN_MODELS`` or ``[[models.list]]``)
+    3. Fall back to config values and defaults
+
+    Returns ``(display_name, context_window, max_output)``.
+    """
+    from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
+    # ── 1. Server-reported (most accurate) ─────────────────────────────────
+    server_info = _get_server_model_info(cfg)
+
+    if server_info:
+        model_name = server_info.get("model_name", "")
+        ctx_size = server_info.get("ctx_size", 0) or server_info.get("n_ctx", 0)
+        # Try to get n_ctx from the server info as well
+        if not ctx_size:
+            ctx_size = cfg.server.n_ctx
+        # Use ctx_size for max output heuristic (server reports ctx_size, not n_ctx)
+        server_ctx = ctx_size or server_info.get("n_ctx", 0)
+        max_output = (server_ctx // 8) if server_ctx >= 4096 else 8192
+        if max_output < 512:
+            max_output = 8192
+        return model_name, ctx_size, max_output
+
+    # ── 2. Local catalog ──────────────────────────────────────────────────
+    active = cfg.models.active
+    entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
+    if entry is None and cfg.models.has_catalog is False:
+        entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
+
+    display_name = entry.alias if entry else active
+    max_output = entry.max_output if entry else 8192
+    return display_name, cfg.server.n_ctx, max_output
 
 
 def _get_lxd_bridge_info() -> tuple[str, str]:
@@ -751,16 +802,16 @@ def _get_lxd_bridge_info() -> tuple[str, str]:
 
 def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
     """Build the pi-harness models.json config dict from current settings."""
-    from llm.models import KNOWN_MODELS  # noqa: PLC0415
+    # Resolve model info: server-reported → catalog → config defaults
+    display_name, context_window, max_output = _resolve_model_info(cfg)
 
+    # Resolve catalog entry for cost lookup (server_info may not have costs)
     active = cfg.models.active
-    # First check config catalog, then fall back to built-in catalog
     entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
     if entry is None and cfg.models.has_catalog is False:
-        # Fallback to built-in catalog by filename
+        from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
         entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
-    display_name = entry.alias if entry else active
-    max_output = entry.max_output if entry else 8192
 
     # apiKey is required by pi even for unauthenticated local servers.
     # Fall back to "local" so the field is always present.
@@ -774,7 +825,7 @@ def _build_pi_config(cfg: Settings) -> dict:  # type: ignore[type-arg]
                 models=[
                     _PiModel(
                         name=display_name,
-                        contextWindow=cfg.server.n_ctx,
+                        contextWindow=context_window,
                         maxTokens=max_output,
                         cost=(
                             entry.cost.to_cost_dict()
@@ -800,14 +851,17 @@ def _build_omp_config_for_container(cfg: Settings, server_host: str) -> dict:  #
     connects via the nginx TLS proxy using *server_host* (typically the
     ``local-llm`` hostname, which is already in the cert's SubjectAltName).
     """
-    from llm.models import KNOWN_MODELS  # noqa: PLC0415
+    # Resolve model info: server-reported → catalog → config defaults
+    display_name, context_window, max_output = _resolve_model_info(cfg)
 
+    # Resolve catalog entry for cost lookup (server_info may not have costs)
     active = cfg.models.active
     entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
     if entry is None and cfg.models.has_catalog is False:
+        from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
         entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
-    display_name = entry.alias if entry else active
-    max_output = entry.max_output if entry else 8192
+
     api_key = cfg.client_api_key or "local"
 
     base_url = f"https://{server_host}:{cfg.proxy.port}/v1"
@@ -820,7 +874,7 @@ def _build_omp_config_for_container(cfg: Settings, server_host: str) -> dict:  #
                 models=[
                     _OmpModel(
                         name=display_name,
-                        contextWindow=cfg.server.n_ctx,
+                        contextWindow=context_window,
                         maxTokens=max_output,
                         cost=_OmpModelCost(
                             input=entry.cost.input if entry else 0.0,
@@ -842,14 +896,17 @@ def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # 
     connects via the nginx TLS proxy using *server_host* (typically the
     ``local-llm`` hostname, which is already in the cert's SubjectAltName).
     """
-    from llm.models import KNOWN_MODELS  # noqa: PLC0415
+    # Resolve model info: server-reported → catalog → config defaults
+    display_name, context_window, max_output = _resolve_model_info(cfg)
 
+    # Resolve catalog entry for cost lookup (server_info may not have costs)
     active = cfg.models.active
     entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
     if entry is None and cfg.models.has_catalog is False:
+        from llm.models import KNOWN_MODELS  # noqa: PLC0415
+
         entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
-    display_name = entry.alias if entry else active
-    max_output = entry.max_output if entry else 8192
+
     api_key = cfg.client_api_key or "local"
 
     # Container connects via the nginx TLS proxy using the provided host.
@@ -865,7 +922,7 @@ def _build_pi_config_for_container(cfg: Settings, server_host: str) -> dict:  # 
                 models=[
                     _PiModel(
                         name=display_name,
-                        contextWindow=cfg.server.n_ctx,
+                        contextWindow=context_window,
                         maxTokens=max_output,
                         cost=(
                             entry.cost.to_cost_dict()
@@ -890,14 +947,8 @@ def _build_opencode_config_for_container(cfg: Settings, server_host: str) -> dic
     Like :func:`_build_opencode_config`, but connects via the nginx TLS proxy
     at ``https://<server_host>:<port>/v1`` instead of localhost.
     """
-    from llm.models import KNOWN_MODELS  # noqa: PLC0415
-
-    active = cfg.models.active
-    entry = cfg.models.by_alias(active) or cfg.models.by_filename(active)
-    if entry is None and cfg.models.has_catalog is False:
-        entry = next((m for m in KNOWN_MODELS if m.filename == active), None)
-    display_name = entry.alias if entry else active
-    max_output = entry.max_output if entry else 8192
+    # Resolve model info: server-reported → catalog → config defaults
+    display_name, context_window, max_output = _resolve_model_info(cfg)
 
     model_key = "local"
     api_key = cfg.client_api_key or "local"
@@ -913,8 +964,8 @@ def _build_opencode_config_for_container(cfg: Settings, server_host: str) -> dic
                     model_key: _OpencodeModel(
                         name=display_name,
                         limit=_OpencodeModelLimit(
-                            context=cfg.server.n_ctx,
-                            input=cfg.server.n_ctx,
+                            context=context_window,
+                            input=context_window,
                             output=max_output,
                         ),
                     )
