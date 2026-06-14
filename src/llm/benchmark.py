@@ -49,19 +49,25 @@ _DEFAULT_PROMPT = (
 
 
 def _read_gpu_gtt_mb() -> float | None:
-    """Return AMD GPU GTT (shared RAM) used in MiB, or None if unavailable.
+    """Return AMD GPU memory used in MiB, or None if unavailable.
 
-    On AMD iGPUs using Vulkan, model weights are placed in GTT (system RAM
-    mapped to the GPU) rather than the small dedicated VRAM slice.
-    Reads from the amdgpu sysfs interface.
+    Checks both VRAM (dedicated, when iGPU is allocated a large slice in BIOS)
+    and GTT (system RAM mapped to GPU, used when VRAM slice is small).
+    Reports whichever is larger, since the model weights will live in one or
+    the other depending on BIOS UMA buffer size.
     """
     for card in sorted(Path("/sys/class/drm").glob("card*")):
-        gtt_used = card / "device" / "mem_info_gtt_used"
-        if gtt_used.exists():
-            try:
-                return int(gtt_used.read_text().strip()) / (1024 * 1024)
-            except (ValueError, OSError):
-                pass
+        dev = card / "device"
+        vram_used = dev / "mem_info_vram_used"
+        gtt_used = dev / "mem_info_gtt_used"
+        if not vram_used.exists():
+            continue
+        try:
+            vram_mb = int(vram_used.read_text().strip()) / (1024 * 1024)
+            gtt_mb = int(gtt_used.read_text().strip()) / (1024 * 1024) if gtt_used.exists() else 0.0
+            return max(vram_mb, gtt_mb)
+        except (ValueError, OSError):
+            pass
     return None
 
 
@@ -361,7 +367,7 @@ def _run_single_benchmark(
     t.add_row("Token generation", f"{tg_tps:.1f} tok/s")
     t.add_row("GPU layers offloaded", str(cfg.server.n_gpu_layers))
     if gtt_mb is not None:
-        t.add_row("GPU memory (GTT)", f"{gtt_mb:.0f} MiB")
+        t.add_row("GPU memory (VRAM/GTT)", f"{gtt_mb:.0f} MiB")
 
     console.print(t)
 
