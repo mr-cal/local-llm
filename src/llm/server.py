@@ -13,7 +13,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from llm.config import CONFIG_FILENAME, load_config
+from llm.config import CONFIG_FILENAME, find_config, load_config
 
 app = typer.Typer(help="Manage the llama-server process.", no_args_is_help=True)
 console = Console()
@@ -236,6 +236,38 @@ def _nginx_ensure_running() -> None:
             console.print("[yellow]nginx[/yellow]       failed to start - check: sudo systemctl status nginx")
 
 
+def _project_root() -> Path:
+    """Return the project root directory (parent of config.toml)."""
+    return find_config().parent
+
+
+def _configs_are_stale() -> bool:
+    """Return True if config.toml is newer than the last-rendered nginx/systemd files.
+
+    Rendered files are only produced by ``server apply`` (or ``server setup``).
+    Missing rendered files are treated as stale.
+    """
+    root = _project_root()
+    config_file = root / CONFIG_FILENAME
+    if not config_file.exists():
+        return False
+    config_mtime = config_file.stat().st_mtime
+    rendered = [
+        root / "nginx" / "llm-proxy.conf",
+        root / "systemd" / "llm-server.service",
+    ]
+    return any(not f.exists() or config_mtime > f.stat().st_mtime for f in rendered)
+
+
+def _warn_if_stale() -> None:
+    """Print a warning if rendered configs are older than config.toml."""
+    if _configs_are_stale():
+        console.print(
+            "[yellow]⚠  config.toml has changed since configs were last applied.[/yellow]\n"
+            "   Run [bold]uv run llm server apply[/bold] to update nginx/systemd configs.\n"
+        )
+
+
 # Runtime files live alongside the config in the project directory.
 # Both are gitignored.
 _PID_FILE = Path(".server.pid")
@@ -376,6 +408,7 @@ def start(
     ] = None,
 ) -> None:
     """Start llama-server (and embedding server if enabled) using settings from config.toml."""
+    _warn_if_stale()
     cfg = load_config()
 
     if not cfg.has_local_server:
@@ -519,6 +552,7 @@ def stop() -> None:
 @app.command("restart")
 def restart() -> None:
     """Restart llama-server (stop then start)."""
+    _warn_if_stale()
     cfg = load_config()
     pid = _read_pid(cfg.server.port)
     if pid:
@@ -529,8 +563,7 @@ def restart() -> None:
 @app.command("status")
 def status() -> None:
     """Show whether llama-server and nginx are running."""
-    from llm.config import load_config  # noqa: PLC0415 (already imported at top)
-
+    _warn_if_stale()
     cfg = load_config()
 
     if not cfg.has_local_server:
@@ -605,3 +638,17 @@ def logs(
     if follow:
         cmd.insert(1, "-f")
     subprocess.run(cmd, check=False)
+
+
+@app.command("apply")
+def apply() -> None:
+    """Render nginx/systemd templates from config.toml and install them.
+
+    Re-runs template rendering and installs the resulting files to
+    /etc/nginx/sites-available/llm and /etc/systemd/system/llm-server.service.
+    Reloads nginx if it is already running.
+    """
+    from llm.config import apply_server_configs  # noqa: PLC0415
+
+    cfg = load_config()
+    apply_server_configs(cfg, _project_root())
