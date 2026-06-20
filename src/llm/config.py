@@ -9,7 +9,7 @@ from importlib import resources
 from pathlib import Path
 
 import typer
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from rich.console import Console
 from rich.syntax import Syntax
 
@@ -274,6 +274,27 @@ class MountEntry(BaseModel):
         return self
 
 
+class EmbedSettings(BaseModel):
+    """Configuration for the optional embedding llama-server instance."""
+
+    enabled: bool = False
+    port: int = 8081
+    # Active embedding model alias (from [[models.list]]).
+    active: str = "mxbai-embed-large"
+    extra_args: list[str] = Field(default_factory=list)
+
+    @field_validator("extra_args", mode="before")
+    @classmethod
+    def split_extra_args(cls, v: object) -> list[str]:
+        """Split space-containing entries so ``["--flag value"]`` and ``["--flag", "value"]`` both work."""
+        if not isinstance(v, list):
+            raise ValueError(f"extra_args must be a list, got {type(v).__name__}")
+        result: list[str] = []
+        for item in v:
+            result.extend(str(item).split())
+        return result
+
+
 class LxdSettings(BaseModel):
     craft_dirs: list[str] = Field(default_factory=list)
     mounts: list[MountEntry] = Field(default_factory=list)
@@ -281,6 +302,7 @@ class LxdSettings(BaseModel):
 
 class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
+    embed: EmbedSettings = Field(default_factory=EmbedSettings)
     models: ModelsSettings = Field(default_factory=ModelsSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     proxy: ProxySettings = Field(default_factory=ProxySettings)
@@ -365,6 +387,10 @@ class Settings(BaseModel):
     @property
     def internal_url(self) -> str:
         return f"http://127.0.0.1:{self.server.port}"
+
+    @property
+    def embed_url(self) -> str:
+        return f"http://127.0.0.1:{self.embed.port}"
 
     @property
     def proxy_url(self) -> str:
@@ -1090,6 +1116,7 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
         "%%LAN_SUBNET%%": cfg.proxy.lan_subnet,
         "%%PROXY_PORT%%": str(cfg.proxy.port),
         "%%SERVER_PORT%%": str(cfg.server.port),
+        "%%EMBED_PORT%%": str(cfg.embed.port),
         "%%API_KEY%%": cfg.auth.api_key,
         "%%LLAMA_SERVER_BIN%%": cfg.server.llama_server_bin,
         "%%MODELS_DIR%%": str(cfg.models_path),

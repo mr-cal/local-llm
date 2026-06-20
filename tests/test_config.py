@@ -14,6 +14,7 @@ import typer
 from llm.config import (
     AuthSettings,
     ClientSettings,
+    EmbedSettings,
     GitHubSettings,
     LxdSettings,
     ModelCost,
@@ -797,11 +798,14 @@ class TestGetServerModelInfo:
     def test_returns_none_on_http_error(self, mocker):
         import httpx
 
-        mocker.patch("httpx.get", side_effect=httpx.HTTPStatusError(
-            "404 Not Found",
-            request=MagicMock(),
-            response=MagicMock(status_code=404),
-        ))
+        mocker.patch(
+            "httpx.get",
+            side_effect=httpx.HTTPStatusError(
+                "404 Not Found",
+                request=MagicMock(),
+                response=MagicMock(status_code=404),
+            ),
+        )
 
         cfg = Settings(server=ServerSettings(port=8080))
         from llm.config import _get_server_model_info
@@ -1232,3 +1236,77 @@ def load_config_from_path(config_path: Path):
 
 def provider_config(opencode_cfg: dict) -> dict:
     return opencode_cfg["provider"]["local-llm"]
+
+
+# ── EmbedSettings ─────────────────────────────────────────────────────────────
+
+
+class TestEmbedSettingsDefaults:
+    def test_disabled_by_default(self):
+        s = EmbedSettings()
+        assert s.enabled is False
+
+    def test_default_port(self):
+        assert EmbedSettings().port == 8081
+
+    def test_default_active_model(self):
+        assert EmbedSettings().active == "mxbai-embed-large"
+
+    def test_default_extra_args(self):
+        assert EmbedSettings().extra_args == []
+
+    def test_extra_args_split(self):
+        s = EmbedSettings(extra_args=["--embedding --pooling cls"])
+        assert s.extra_args == ["--embedding", "--pooling", "cls"]
+
+    def test_extra_args_already_split(self):
+        s = EmbedSettings(extra_args=["--embedding", "--pooling", "cls"])
+        assert s.extra_args == ["--embedding", "--pooling", "cls"]
+
+    def test_extra_args_invalid_type(self):
+        with pytest.raises(ValueError):
+            EmbedSettings(extra_args="--embedding")  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+
+class TestEmbedSettingsInSettings:
+    def test_settings_has_embed(self):
+        s = Settings()
+        assert hasattr(s, "embed")
+        assert isinstance(s.embed, EmbedSettings)
+
+    def test_embed_url(self):
+        s = Settings(embed=EmbedSettings(port=8081))
+        assert s.embed_url == "http://127.0.0.1:8081"
+
+    def test_embed_toml_roundtrip(self, tmp_path):
+        toml_text = """
+[server]
+port = 8080
+n_gpu_layers = 20
+n_ctx = 4096
+n_threads = 4
+
+[embed]
+enabled = true
+port = 8081
+active = "mxbai-embed-large"
+extra_args = ["--embedding", "--pooling", "cls"]
+
+[models]
+dir = "~/models"
+active = "qwen2.5"
+
+[proxy]
+lan_ip = "192.168.1.1"
+
+[auth]
+api_key = "abc"
+"""
+        import tomllib
+
+        raw = tomllib.loads(toml_text)
+        s = Settings.model_validate(raw)
+        assert s.embed.enabled is True
+        assert s.embed.port == 8081
+        assert s.embed.active == "mxbai-embed-large"
+        assert s.embed.extra_args == ["--embedding", "--pooling", "cls"]
