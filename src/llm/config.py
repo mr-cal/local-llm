@@ -204,16 +204,16 @@ class ModelsSettings(BaseModel):
         """Path to the active model file, resolving alias→filename when possible."""
         # If active is already a filename (custom model without a catalog entry)
         if self.active.endswith(".gguf"):
-            return self.models_path / self.active
+            return self.models_path / Path(self.active).name
         # Try to resolve via catalog
         entry = self.by_alias(self.active)
         if entry:
-            return self.models_path / entry.filename
+            return self.models_path / Path(entry.filename).name
         entry = self.by_filename(self.active)
         if entry:
-            return self.models_path / entry.filename
+            return self.models_path / Path(entry.filename).name
         # Fallback: treat active as a filename
-        return self.models_path / self.active
+        return self.models_path / Path(self.active).name
 
     def by_alias(self, alias: str) -> ModelEntry | None:
         return next((m for m in self.entries if m.alias == alias), None)

@@ -157,10 +157,19 @@ def _by_alias(alias: str, model_list: list[ModelEntry] | None = None) -> ModelEn
 
 
 def _by_filename(filename: str, model_list: list[ModelEntry] | None = None) -> ModelEntry | None:
-    """Resolve filename → ModelEntry from a specific list (or KNOWN_MODELS)."""
+    """Resolve filename → ModelEntry from a specific list (or KNOWN_MODELS).
+
+    Matches on both the full catalog filename (which may include a subfolder
+    like ``gguf/model.gguf``) and the basename, so lookups work after the file
+    has been flattened into the models directory.
+    """
     if not model_list:
         model_list = KNOWN_MODELS
-    return next((m for m in model_list if m.filename == filename), None)
+    basename = Path(filename).name
+    return next(
+        (m for m in model_list if m.filename == filename or Path(m.filename).name == basename),
+        None,
+    )
 
 
 def _resolve(
@@ -303,22 +312,45 @@ def download(
         raise typer.Exit(1) from None
 
     token = cfg.models.hf_token or None
+
+    # When the catalog filename includes a subfolder (e.g. "gguf/model.gguf"),
+    # split it so hf_hub_download fetches from the right repo path but saves
+    # the file flat into models_path (where llama-server expects it).
+    dl_path = Path(dl_filename)
+    if len(dl_path.parts) > 1:
+        hf_subfolder: str | None = str(dl_path.parent)
+        hf_filename = dl_path.name
+    else:
+        hf_subfolder = None
+        hf_filename = dl_filename
+
     console.print(f"Downloading [bold]{dl_filename}[/bold] from [cyan]{repo_id}[/cyan] ...")
 
-    local_path = hf_hub_download(
-        repo_id=repo_id,
-        filename=dl_filename,
-        local_dir=str(dest_dir),
-        token=token,
-    )
+    import tempfile
+
+    # Download to a temp dir first, then move flat into dest_dir.
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=hf_filename,
+            subfolder=hf_subfolder,
+            local_dir=tmp,
+            token=token,
+        )
+        dest_file = dest_dir / hf_filename
+        import shutil
+
+        shutil.move(tmp_path, dest_file)
+
+    local_path = dest_file
     console.print(f"[green]Saved[/green] → {local_path}")
 
     # Show the alias to use for switching, if known
     cfg = load_config()
-    resolved = _by_filename(dl_filename, cfg.models.entries if cfg.models.has_catalog else None)
+    resolved = _by_filename(hf_filename, cfg.models.entries if cfg.models.has_catalog else None)
     if not resolved and cfg.models.has_catalog is False:
-        resolved = _by_filename(dl_filename, KNOWN_MODELS)
-    switch_target = resolved.alias if resolved else dl_filename
+        resolved = _by_filename(hf_filename, KNOWN_MODELS)
+    switch_target = resolved.alias if resolved else hf_filename
     console.print(f"Switch to it with: [bold]uv run llm model switch {switch_target}[/bold]")
 
 

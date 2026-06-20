@@ -167,8 +167,8 @@ cost.cache_read = 0.30
 
 [[models.list]]
 alias = "mxbai-embed-large"
-repo  = "mixedbread-ai/mxbai-embed-large-v1-GGUF"
-filename = "mxbai-embed-large-v1-q8_0.gguf"
+repo  = "mixedbread-ai/mxbai-embed-large-v1"
+filename = "gguf/mxbai-embed-large-v1-f16.gguf"
 size = "~670 MB"
 description = "mxbai-embed-large v1 — high-quality general-purpose embeddings, 512 dim"
 max_output = 512

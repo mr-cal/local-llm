@@ -330,7 +330,7 @@ def _start_embed_server(cfg: object, bin_path: str) -> None:
         console.print(f"[yellow]Embed model not found in catalog:[/yellow] {cfg.embed.active!r} — skipping")
         return
 
-    embed_model_path = cfg.models_path / embed_model_entry.filename
+    embed_model_path = cfg.models_path / Path(embed_model_entry.filename).name
     if not embed_model_path.exists():
         console.print(f"[yellow]Embed model file not found:[/yellow] {embed_model_path} — skipping")
         console.print(f"  Download it: [bold]uv run llm model download {cfg.embed.active}[/bold]")
