@@ -8,6 +8,8 @@ systemd/llm-server.service
 # Runtime state
 .server.pid
 .server.log
+.embed.pid
+.embed.log
 logs/
 !logs/.gitkeep
 
