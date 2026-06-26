@@ -140,6 +140,7 @@ def _setup_container_client(
         container_name,
         cfg.github.git_username,
         cfg.github.git_email,
+        cfg.github.git_pat,
         uid=effective_uid,
         gid=effective_gid,
     )
@@ -349,6 +350,7 @@ def refresh(
     gh_token = ""
     git_username = ""
     git_email = ""
+    git_pat = ""
     config_path = find_config()
     if config_path.exists():
         cfg = load_config()
@@ -358,6 +360,7 @@ def refresh(
         gh_token = cfg.github.token
         git_username = cfg.github.git_username
         git_email = cfg.github.git_email
+        git_pat = cfg.github.git_pat
 
     try:
         refresh_containers(
@@ -366,6 +369,7 @@ def refresh(
             gh_token=gh_token,
             git_username=git_username,
             git_email=git_email,
+            git_pat=git_pat,
         )
     except RuntimeError as e:
         console.print(f"[red]ERROR:[/red] {escape(str(e))}")

@@ -1075,6 +1075,7 @@ class LxdVmManager:
         gh_token: str = "",
         git_username: str = "",
         git_email: str = "",
+        git_pat: str = "",
     ) -> None:
         """Run all refresh steps for this container."""
         console.print(f"\n[bold cyan]── Refreshing {self.container} ──[/bold cyan]")
@@ -1146,7 +1147,7 @@ class LxdVmManager:
 
         # 5. gh auth + git identity
         self.setup_gh_auth(gh_token, effective_uid=self.uid, effective_gid=self.gid)
-        self.setup_git_config(git_username, git_email)
+        self.setup_git_config(git_username, git_email, git_pat)
 
         console.print(f"\n  [green]✓[/green] {self.container} refresh complete")
 
@@ -1177,17 +1178,64 @@ class LxdVmManager:
         )
         console.print("  [green]✓[/green] gh authenticated - can access GitHub APIs")
 
-    def setup_git_config(self, git_username: str, git_email: str) -> None:
-        """Configure git identity (user.name, user.email) inside the container."""
-        if not git_username and not git_email:
+    def setup_git_config(
+        self,
+        git_username: str,
+        git_email: str,
+        git_pat: str = "",
+    ) -> None:
+        """Configure git identity and push credentials inside the container.
+
+        Runs as the container user so config lands in the user's ~/.gitconfig.
+        When git_pat is set, configures git credential store and writes
+        ~/.git-credentials so HTTPS pushes use the dedicated push token rather
+        than the gh CLI credential helper.
+        """
+        if not git_username and not git_email and not git_pat:
             return
 
-        console.print(f"  [bold]Configuring git identity in {self.container}...[/bold]")
+        console.print(f"  [bold]Configuring git in {self.container}...[/bold]")
         if git_username:
-            run(["lxc", "exec", self.container, "--", "git", "config", "--global", "user.name", git_username])
+            run(
+                _cexec(
+                    self.container, self.uid, self.gid, "git", "config", "--global", "user.name", git_username
+                )
+            )
         if git_email:
-            run(["lxc", "exec", self.container, "--", "git", "config", "--global", "user.email", git_email])
+            run(
+                _cexec(
+                    self.container, self.uid, self.gid, "git", "config", "--global", "user.email", git_email
+                )
+            )
+        if git_pat:
+            run(
+                _cexec(
+                    self.container,
+                    self.uid,
+                    self.gid,
+                    "git",
+                    "config",
+                    "--global",
+                    "credential.https://github.com.helper",
+                    "store",
+                )
+            )
+            creds = f"https://{git_username}:{git_pat}@github.com\n"
+            subprocess.run(
+                _cexec(
+                    self.container,
+                    self.uid,
+                    self.gid,
+                    "bash",
+                    "-c",
+                    f"cat > {CONTAINER_HOME}/.git-credentials && chmod 600 {CONTAINER_HOME}/.git-credentials",
+                ),
+                input=creds.encode(),
+                check=True,
+            )
         console.print(f"  [green]✓[/green] git identity: {git_username} <{git_email}>")
+        if git_pat:
+            console.print("  [green]✓[/green] git push credentials configured for github.com")
 
     # ── Internal helpers ──────────────────────────────────────────────────
 
@@ -1446,13 +1494,14 @@ def setup_git_config_in_container(
     container: str,
     git_username: str,
     git_email: str,
+    git_pat: str = "",
     *,
     uid: int = CONTAINER_UID,
     gid: int = CONTAINER_GID,
 ) -> None:
-    """Configure git identity (user.name, user.email) inside the container."""
+    """Configure git identity and push credentials inside the container."""
     mgr = LxdVmManager(container, uid=uid, gid=gid)
-    mgr.setup_git_config(git_username, git_email)
+    mgr.setup_git_config(git_username, git_email, git_pat)
 
 
 # ── Pi harness helper (standalone wrapper) ──────────────────────────────────
@@ -1570,6 +1619,7 @@ def refresh_containers(
     gh_token: str = "",
     git_username: str = "",
     git_email: str = "",
+    git_pat: str = "",
 ) -> None:
     """Update packages and re-apply config in managed LXD VM(s).
 
@@ -1583,7 +1633,13 @@ def refresh_containers(
         if not container_exists(container_name):
             raise RuntimeError(f"'{container_name}' does not exist.")
         mgr = LxdVmManager(container_name, uid=HOST_UID, gid=HOST_GID)
-        mgr._refresh(cert_pem=cert_pem, gh_token=gh_token, git_username=git_username, git_email=git_email)
+        mgr._refresh(
+            cert_pem=cert_pem,
+            gh_token=gh_token,
+            git_username=git_username,
+            git_email=git_email,
+            git_pat=git_pat,
+        )
     else:
         managed = _list_managed_containers()
         if not managed:
@@ -1592,6 +1648,12 @@ def refresh_containers(
         console.print(f"Found [bold]{len(managed)}[/bold] managed VM(s): " + ", ".join(managed))
         for container in managed:
             mgr = LxdVmManager(container, uid=HOST_UID, gid=HOST_GID)
-            mgr._refresh(cert_pem=cert_pem, gh_token=gh_token, git_username=git_username, git_email=git_email)
+            mgr._refresh(
+                cert_pem=cert_pem,
+                gh_token=gh_token,
+                git_username=git_username,
+                git_email=git_email,
+                git_pat=git_pat,
+            )
 
         console.print(f"\n[green]✓[/green] All {len(managed)} VM(s) refreshed.")

@@ -280,10 +280,18 @@ class TestGitHubSettings:
         g = GitHubSettings()
         assert g.git_email == "callahanlovesshopping@gmail.com"
 
+    def test_git_pat_default_empty(self):
+        g = GitHubSettings()
+        assert g.git_pat == ""
+
     def test_custom_git_identity(self):
         g = GitHubSettings(git_username="other-bot", git_email="other@example.com")
         assert g.git_username == "other-bot"
         assert g.git_email == "other@example.com"
+
+    def test_custom_git_pat(self):
+        g = GitHubSettings(git_pat="github_pat_abc123")
+        assert g.git_pat == "github_pat_abc123"
 
 
 class TestMountEntry:
@@ -962,17 +970,19 @@ class TestResolveModelInfo:
 
         cfg = Settings(
             server=ServerSettings(port=8080, n_ctx=16384),
-            models=ModelsSettings.model_validate({
-                "active": "qwen2.5-coder-14b-q4",
-                "list": [
-                    {
-                        "alias": "qwen2.5-coder-14b-q4",
-                        "repo": "x/y",
-                        "filename": "x.gguf",
-                        "max_output": 16384,
-                    }
-                ],
-            }),
+            models=ModelsSettings.model_validate(
+                {
+                    "active": "qwen2.5-coder-14b-q4",
+                    "list": [
+                        {
+                            "alias": "qwen2.5-coder-14b-q4",
+                            "repo": "x/y",
+                            "filename": "x.gguf",
+                            "max_output": 16384,
+                        }
+                    ],
+                }
+            ),
         )
         from llm.config import _resolve_model_info
 

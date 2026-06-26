@@ -238,6 +238,7 @@ class GitHubSettings(BaseModel):
     """GitHub CLI (gh) authentication and git identity settings."""
 
     token: str = ""  # GitHub personal access token for gh CLI auth
+    git_pat: str = ""  # Separate PAT used for git push (HTTPS credential)
     git_username: str = "mr-cal-bot"
     git_email: str = "callahanlovesshopping@gmail.com"
 

@@ -242,8 +242,12 @@ api_key = ""
 [github]
 # GitHub personal access token for authenticating the gh CLI tool.
 # Generate at: https://github.com/settings/tokens
-# Required for gh CLI operations that need auth (e.g. private repos).
+# Required for gh CLI operations that need auth (e.g. private repos, copilot).
 token = ""
+
+# Separate PAT used for HTTPS git push inside LXD containers.
+# Needs 'repo' scope. Can be the same token or a more narrowly-scoped one.
+git_pat = ""
 
 # Git identity used inside LXD containers to author and push commits.
 git_username = "mr-cal-bot"
