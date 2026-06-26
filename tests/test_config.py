@@ -809,7 +809,6 @@ class TestGetServerModelInfo:
         assert result["ctx_size"] == 131072
 
     def test_returns_none_on_http_error(self, mocker):
-        import httpx
 
         mocker.patch(
             "httpx.get",
@@ -827,7 +826,6 @@ class TestGetServerModelInfo:
         assert result is None
 
     def test_returns_none_on_connection_error(self, mocker):
-        import httpx
 
         mocker.patch("httpx.get", side_effect=httpx.ConnectError("connection refused"))
 
@@ -838,7 +836,6 @@ class TestGetServerModelInfo:
         assert result is None
 
     def test_returns_none_on_timeout(self, mocker):
-        import httpx
 
         mocker.patch("httpx.get", side_effect=httpx.TimeoutException("timeout"))
 
@@ -853,14 +850,14 @@ class TestGetServerModelInfo:
         mock_resp.status_code = 200
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = {}
-        mocker.patch("httpx.get", return_value=mock_resp)
+        mock_get = mocker.patch("httpx.get", return_value=mock_resp)
 
         cfg = Settings(server=ServerSettings(port=9999))
         from llm.config import _get_server_model_info
 
         _get_server_model_info(cfg)
-        httpx.get.assert_called_once()
-        call_url = httpx.get.call_args[0][0]
+        mock_get.assert_called_once()
+        call_url = mock_get.call_args[0][0]
         assert call_url == "http://127.0.0.1:9999/model_info"
 
     def test_uses_2s_timeout(self, mocker):
@@ -868,14 +865,14 @@ class TestGetServerModelInfo:
         mock_resp.status_code = 200
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = {}
-        mocker.patch("httpx.get", return_value=mock_resp)
+        mock_get = mocker.patch("httpx.get", return_value=mock_resp)
 
         cfg = Settings(server=ServerSettings(port=8080))
         from llm.config import _get_server_model_info
 
         _get_server_model_info(cfg)
-        httpx.get.assert_called_once()
-        assert httpx.get.call_args[1].get("timeout") == 2
+        mock_get.assert_called_once()
+        assert mock_get.call_args[1].get("timeout") == 2
 
 
 class TestResolveModelInfo:
@@ -960,18 +957,22 @@ class TestResolveModelInfo:
         assert max_out == 8192  # server n_ctx // 8 = 256 < 512 → default
 
     def test_server_not_reachable_uses_catalog(self, mocker):
-        import httpx
 
         mocker.patch("httpx.get", side_effect=httpx.ConnectError("no server"))
 
         cfg = Settings(
             server=ServerSettings(port=8080, n_ctx=16384),
-            models=ModelsSettings(
-                active="qwen2.5-coder-14b-q4",
-                entries=[
-                    ModelEntry(alias="qwen2.5-coder-14b-q4", repo="x/y", filename="x.gguf", max_output=16384),
+            models=ModelsSettings.model_validate({
+                "active": "qwen2.5-coder-14b-q4",
+                "list": [
+                    {
+                        "alias": "qwen2.5-coder-14b-q4",
+                        "repo": "x/y",
+                        "filename": "x.gguf",
+                        "max_output": 16384,
+                    }
                 ],
-            ),
+            }),
         )
         from llm.config import _resolve_model_info
 
@@ -981,7 +982,6 @@ class TestResolveModelInfo:
         assert max_out == 16384
 
     def test_server_not_reachable_uses_known_models(self, mocker):
-        import httpx
 
         mocker.patch("httpx.get", side_effect=httpx.ConnectError("no server"))
 
@@ -989,7 +989,7 @@ class TestResolveModelInfo:
             server=ServerSettings(port=8080, n_ctx=65536),
             models=ModelsSettings(
                 active="qwen2.5-coder-14b-q4",
-                has_catalog=False,  # no config catalog → falls to KNOWN_MODELS
+                # has_catalog is a computed property; no entries → has_catalog == False
             ),
         )
         from llm.config import _resolve_model_info
@@ -1000,7 +1000,6 @@ class TestResolveModelInfo:
         assert max_out == 8192  # from KNOWN_MODELS default
 
     def test_server_not_reachable_uses_default_max_output(self, mocker):
-        import httpx
 
         mocker.patch("httpx.get", side_effect=httpx.ConnectError("no server"))
 
