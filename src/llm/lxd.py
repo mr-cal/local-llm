@@ -85,22 +85,14 @@ class SetupStep(Enum):
         return f"{self.value}/{total}"
 
 
-class LxdVmManager:
-    """Encapsulates all LXD VM operations for local LLM development.
+class _BaseVmManager:
+    """Shared LXD VM lifecycle: create, configure user, swap, sudo, and tag.
 
-    All container creation, configuration, verification, and refresh logic
-    is managed through this class. Module-level functions at the bottom of
-    this file delegate to this class for backward compatibility.
-
-    Example::
-
-        mgr = LxdVmManager("craft-llm-1", mounts=mounts)
-        mgr.create_and_setup()
+    Subclasses add workload-specific package installs and configuration.
+    Do not instantiate directly — use ``LxdVmManager`` or ``HermesVmManager``.
 
     Attributes:
         container: Name of the LXD container/VM.
-        mounts: List of (name, host_path, container_path) tuples.
-        craft_dirs: List of craft project directories.
         uid: UID for running commands inside the container.
         gid: GID for running commands inside the container.
     """
@@ -108,18 +100,14 @@ class LxdVmManager:
     def __init__(
         self,
         container: str,
-        mounts: list[tuple[str, str, str]] | None = None,
-        craft_dirs: list[str] | None = None,
         uid: int = HOST_UID,
         gid: int = HOST_GID,
     ) -> None:
         self.container = container
-        self.mounts = mounts or list(_DEFAULT_MOUNTS)
-        self.craft_dirs = craft_dirs or []
         self.uid = uid
         self.gid = gid
 
-    # ── Container lifecycle ───────────────────────────────────────────────
+    # ── VM lifecycle ─────────────────────────────────────────────────────
 
     def create_container(self) -> None:
         """Launch an LXD VM (ubuntu:24.04) with default resources."""
@@ -169,6 +157,125 @@ class LxdVmManager:
             ]
         )
         self._fix_vm_user_uid()
+
+    def _configure_sudo(self) -> None:
+        """Configure passwordless sudo for the container user."""
+        console.print("  Configuring passwordless sudo...")
+        run(
+            [
+                "lxc",
+                "exec",
+                self.container,
+                "--",
+                "bash",
+                "-c",
+                f"printf 'User_Alias CONTAINERUSER = #{self.uid}\\n"
+                f"CONTAINERUSER ALL=(ALL) NOPASSWD:ALL\\n'"
+                f" > /etc/sudoers.d/nopasswd-user"
+                f" && chmod 440 /etc/sudoers.d/nopasswd-user",
+            ]
+        )
+
+    def _tag_as_managed(self) -> None:
+        """Set the managed tag on this container."""
+        run(["lxc", "config", "set", self.container, f"{_MANAGED_TAG}=true"])
+
+    def _setup_vm_swap(self) -> None:
+        """Create a persistent swapfile inside the VM and enable it on boot."""
+        run(
+            [
+                "lxc",
+                "exec",
+                self.container,
+                "--",
+                "bash",
+                "-c",
+                f"fallocate -l {VM_SWAP_SIZE} /swapfile"
+                f" && chmod 600 /swapfile"
+                f" && mkswap /swapfile"
+                f" && swapon /swapfile"
+                f" && echo '/swapfile none swap sw 0 0' >> /etc/fstab",
+            ],
+            desc="create swapfile",
+        )
+
+    def _fix_vm_user_uid(self) -> None:
+        """Change the in-VM user's UID/GID to HOST_UID/HOST_GID."""
+        if HOST_GID != CONTAINER_GID:
+            console.print(f"  Changing in-VM group GID {CONTAINER_GID} → {HOST_GID} to match host...")
+            run(["lxc", "exec", self.container, "--", "groupmod", "-g", str(HOST_GID), CONTAINER_USER])
+            r = subprocess.run(
+                [
+                    "lxc",
+                    "exec",
+                    self.container,
+                    "--",
+                    "bash",
+                    "-c",
+                    f"find / -xdev -group {CONTAINER_GID} -exec chgrp {HOST_GID} {{}} + 2>&1",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode != 0:
+                console.print(
+                    f"[yellow]  Warning:[/yellow] chgrp may have missed some files: {r.stderr.strip()}"
+                )
+        if HOST_UID != CONTAINER_UID:
+            console.print(f"  Changing in-VM user UID {CONTAINER_UID} → {HOST_UID} to match host...")
+            run(["lxc", "exec", self.container, "--", "usermod", "-u", str(HOST_UID), CONTAINER_USER])
+            r = subprocess.run(
+                [
+                    "lxc",
+                    "exec",
+                    self.container,
+                    "--",
+                    "bash",
+                    "-c",
+                    f"find / -xdev -user {CONTAINER_UID} -exec chown {HOST_UID} {{}} + 2>&1",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode != 0:
+                console.print(
+                    f"[yellow]  Warning:[/yellow] chown may have missed some files: {r.stderr.strip()}"
+                )
+
+
+class LxdVmManager(_BaseVmManager):
+    """Encapsulates all LXD VM operations for local LLM development.
+
+    All container creation, configuration, verification, and refresh logic
+    is managed through this class. Module-level functions at the bottom of
+    this file delegate to this class for backward compatibility.
+
+    Example::
+
+        mgr = LxdVmManager("craft-llm-1", mounts=mounts)
+        mgr.create_and_setup()
+
+    Attributes:
+        container: Name of the LXD container/VM.
+        mounts: List of (name, host_path, container_path) tuples.
+        craft_dirs: List of craft project directories.
+        uid: UID for running commands inside the container.
+        gid: GID for running commands inside the container.
+    """
+
+    def __init__(
+        self,
+        container: str,
+        mounts: list[tuple[str, str, str]] | None = None,
+        craft_dirs: list[str] | None = None,
+        uid: int = HOST_UID,
+        gid: int = HOST_GID,
+    ) -> None:
+        super().__init__(container, uid=uid, gid=gid)
+        self.mounts = mounts or list(_DEFAULT_MOUNTS)
+        self.craft_dirs = craft_dirs or []
+
+    # ── Container lifecycle ───────────────────────────────────────────────
 
     def _add_mounts(
         self,
@@ -252,21 +359,7 @@ class LxdVmManager:
         )
         run(["lxc", "exec", self.container, "--", "bash", "-c", gh_setup])
 
-        console.print("  Configuring passwordless sudo...")
-        run(
-            [
-                "lxc",
-                "exec",
-                self.container,
-                "--",
-                "bash",
-                "-c",
-                f"printf 'User_Alias CONTAINERUSER = #{uid}\\n"
-                f"CONTAINERUSER ALL=(ALL) NOPASSWD:ALL\\n'"
-                f" > /etc/sudoers.d/nopasswd-user"
-                f" && chmod 440 /etc/sudoers.d/nopasswd-user",
-            ]
-        )
+        self._configure_sudo()
 
         console.print("  Installing astral-uv...")
         run(["lxc", "exec", self.container, "--", "snap", "install", "astral-uv", "--classic"])
@@ -1151,10 +1244,6 @@ class LxdVmManager:
 
         console.print(f"\n  [green]✓[/green] {self.container} refresh complete")
 
-    def _tag_as_managed(self) -> None:
-        """Set the managed tag on this container."""
-        run(["lxc", "config", "set", self.container, f"{_MANAGED_TAG}=true"])
-
     # ── GH auth ───────────────────────────────────────────────────────────
 
     def setup_gh_auth(
@@ -1236,70 +1325,6 @@ class LxdVmManager:
         console.print(f"  [green]✓[/green] git identity: {git_username} <{git_email}>")
         if git_pat:
             console.print("  [green]✓[/green] git push credentials configured for github.com")
-
-    # ── Internal helpers ──────────────────────────────────────────────────
-
-    def _setup_vm_swap(self) -> None:
-        """Create a persistent swapfile inside the VM and enable it on boot."""
-        run(
-            [
-                "lxc",
-                "exec",
-                self.container,
-                "--",
-                "bash",
-                "-c",
-                f"fallocate -l {VM_SWAP_SIZE} /swapfile"
-                f" && chmod 600 /swapfile"
-                f" && mkswap /swapfile"
-                f" && swapon /swapfile"
-                f" && echo '/swapfile none swap sw 0 0' >> /etc/fstab",
-            ],
-            desc="create swapfile",
-        )
-
-    def _fix_vm_user_uid(self) -> None:
-        """Change the in-VM user's UID/GID to HOST_UID/HOST_GID."""
-        if HOST_GID != CONTAINER_GID:
-            console.print(f"  Changing in-VM group GID {CONTAINER_GID} → {HOST_GID} to match host...")
-            run(["lxc", "exec", self.container, "--", "groupmod", "-g", str(HOST_GID), CONTAINER_USER])
-            r = subprocess.run(
-                [
-                    "lxc",
-                    "exec",
-                    self.container,
-                    "--",
-                    "bash",
-                    "-c",
-                    f"find / -xdev -group {CONTAINER_GID} -exec chgrp {HOST_GID} {{}} + 2>&1",
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if r.returncode != 0:
-                console.print(
-                    f"[yellow]  Warning:[/yellow] chgrp may have missed some files: {r.stderr.strip()}"
-                )
-        if HOST_UID != CONTAINER_UID:
-            console.print(f"  Changing in-VM user UID {CONTAINER_UID} → {HOST_UID} to match host...")
-            run(["lxc", "exec", self.container, "--", "usermod", "-u", str(HOST_UID), CONTAINER_USER])
-            r = subprocess.run(
-                [
-                    "lxc",
-                    "exec",
-                    self.container,
-                    "--",
-                    "bash",
-                    "-c",
-                    f"find / -xdev -user {CONTAINER_UID} -exec chown {HOST_UID} {{}} + 2>&1",
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if r.returncode != 0:
-                console.print(
-                    f"[yellow]  Warning:[/yellow] chown may have missed some files: {r.stderr.strip()}"
-                )
 
 
 # ── Constants (paths inside the container) ────────────────────────────────────

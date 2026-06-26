@@ -303,6 +303,32 @@ class LxdSettings(BaseModel):
     mounts: list[MountEntry] = Field(default_factory=list)
 
 
+class HermesSettings(BaseModel):
+    """Configuration for the Hermes agent LXD VM."""
+
+    # OpenRouter API key — LLM backend for Hermes.
+    # https://openrouter.ai/keys
+    openrouter_key: str = ""
+
+    # Telegram bot token from @BotFather.
+    telegram_token: str = ""
+
+    # Comma-separated numeric Telegram user IDs allowed to talk to the bot.
+    # Get your ID from @userinfobot on Telegram.
+    telegram_allowed_users: str = ""
+
+    # GitHub PAT for Hermes GitHub MCP tool (needs repo + read:org scope).
+    github_token: str = ""
+
+    def has_openrouter(self) -> bool:
+        """True when an OpenRouter API key is configured."""
+        return bool(self.openrouter_key.strip())
+
+    def has_telegram(self) -> bool:
+        """True when both a bot token and at least one allowed user are configured."""
+        return bool(self.telegram_token.strip()) and bool(self.telegram_allowed_users.strip())
+
+
 class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
     embed: EmbedSettings = Field(default_factory=EmbedSettings)
@@ -313,6 +339,7 @@ class Settings(BaseModel):
     lxd: LxdSettings = Field(default_factory=LxdSettings)
     build: BuildConfig = Field(default_factory=BuildConfig)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
+    hermes: HermesSettings = Field(default_factory=HermesSettings)
 
     @property
     def has_local_server(self) -> bool:

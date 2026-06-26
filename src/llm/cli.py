@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import typer
 
-from llm import benchmark, build, client, config, models, server
+from llm import benchmark, build, client, config, hermes, models, server
 
 app = typer.Typer(
     name="llm",
@@ -18,6 +18,7 @@ app.add_typer(benchmark.app, name="benchmark")
 app.add_typer(build.app, name="build")
 app.add_typer(client.app, name="client")
 app.add_typer(config.app, name="config")
+app.add_typer(hermes.app, name="hermes")
 
 
 def main() -> None:

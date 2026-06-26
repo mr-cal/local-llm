@@ -275,3 +275,28 @@ host = "~/dev"
 [[lxd.mounts]]
 name = "opencode-config"
 host = "~/.config/opencode"
+
+
+
+# ── HERMES ────────────────────────────────────────────────────────────────────
+# Nous Research Hermes agent VM — a persistent AI agent with messaging gateway,
+# memory, and tool use. Managed with: uv run llm hermes setup|refresh|status
+#
+# Set tokens here; run `uv run llm hermes setup` to create and configure the VM.
+
+[hermes]
+# OpenRouter API key — LLM backend for Hermes.
+# https://openrouter.ai/keys
+openrouter_key = ""
+
+# Telegram bot token (from @BotFather on Telegram).
+# https://core.telegram.org/bots#botfather
+telegram_token = ""
+
+# Comma-separated numeric Telegram user IDs allowed to talk to the bot.
+# Get your ID by messaging @userinfobot on Telegram.
+telegram_allowed_users = ""
+
+# GitHub PAT for Hermes GitHub MCP tool (needs repo + read:org scope).
+# Can be the same as [github].token or a separate narrowly-scoped token.
+github_token = ""
