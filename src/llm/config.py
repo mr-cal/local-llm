@@ -235,9 +235,11 @@ class ProxySettings(BaseModel):
 
 
 class GitHubSettings(BaseModel):
-    """GitHub CLI (gh) authentication token."""
+    """GitHub CLI (gh) authentication and git identity settings."""
 
     token: str = ""  # GitHub personal access token for gh CLI auth
+    git_username: str = "mr-cal-bot"
+    git_email: str = "callahanlovesshopping@gmail.com"
 
     def is_authenticated(self) -> bool:
         """True when a non-empty token is configured."""

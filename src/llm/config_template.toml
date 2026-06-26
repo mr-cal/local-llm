@@ -245,6 +245,10 @@ api_key = ""
 # Required for gh CLI operations that need auth (e.g. private repos).
 token = ""
 
+# Git identity used inside LXD containers to author and push commits.
+git_username = "mr-cal-bot"
+git_email = "callahanlovesshopping@gmail.com"
+
 
 
 # ── LXD ───────────────────────────────────────────────────────────────────────

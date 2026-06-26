@@ -168,32 +168,6 @@ class LxdVmManager:
                 "ubuntu",
             ]
         )
-        run(
-            [
-                "lxc",
-                "exec",
-                self.container,
-                "--",
-                "git",
-                "config",
-                "--global",
-                "user.email",
-                "mr-cal-bot@users.no-reply.github.com",
-            ]
-        )
-        run(
-            [
-                "lxc",
-                "exec",
-                self.container,
-                "--",
-                "git",
-                "config",
-                "--global",
-                "user.name",
-                "mr-cal-bot",
-            ]
-        )
         self._fix_vm_user_uid()
 
     def _add_mounts(
@@ -1095,7 +1069,13 @@ class LxdVmManager:
 
     # ── Refresh ───────────────────────────────────────────────────────────
 
-    def _refresh(self, cert_pem: str | None = None) -> None:
+    def _refresh(
+        self,
+        cert_pem: str | None = None,
+        gh_token: str = "",
+        git_username: str = "",
+        git_email: str = "",
+    ) -> None:
         """Run all refresh steps for this container."""
         console.print(f"\n[bold cyan]── Refreshing {self.container} ──[/bold cyan]")
 
@@ -1164,6 +1144,10 @@ class LxdVmManager:
         self.setup_pi(cert_pem=cert_pem)
         _refresh_omp_config(self.container, self.uid, self.gid)
 
+        # 5. gh auth + git identity
+        self.setup_gh_auth(gh_token, effective_uid=self.uid, effective_gid=self.gid)
+        self.setup_git_config(git_username, git_email)
+
         console.print(f"\n  [green]✓[/green] {self.container} refresh complete")
 
     def _tag_as_managed(self) -> None:
@@ -1192,6 +1176,18 @@ class LxdVmManager:
             check=True,
         )
         console.print("  [green]✓[/green] gh authenticated - can access GitHub APIs")
+
+    def setup_git_config(self, git_username: str, git_email: str) -> None:
+        """Configure git identity (user.name, user.email) inside the container."""
+        if not git_username and not git_email:
+            return
+
+        console.print(f"  [bold]Configuring git identity in {self.container}...[/bold]")
+        if git_username:
+            run(["lxc", "exec", self.container, "--", "git", "config", "--global", "user.name", git_username])
+        if git_email:
+            run(["lxc", "exec", self.container, "--", "git", "config", "--global", "user.email", git_email])
+        console.print(f"  [green]✓[/green] git identity: {git_username} <{git_email}>")
 
     # ── Internal helpers ──────────────────────────────────────────────────
 
@@ -1446,6 +1442,19 @@ def setup_gh_auth_in_container(
     mgr.setup_gh_auth(gh_token, effective_uid=effective_uid, effective_gid=effective_gid)
 
 
+def setup_git_config_in_container(
+    container: str,
+    git_username: str,
+    git_email: str,
+    *,
+    uid: int = CONTAINER_UID,
+    gid: int = CONTAINER_GID,
+) -> None:
+    """Configure git identity (user.name, user.email) inside the container."""
+    mgr = LxdVmManager(container, uid=uid, gid=gid)
+    mgr.setup_git_config(git_username, git_email)
+
+
 # ── Pi harness helper (standalone wrapper) ──────────────────────────────────
 
 
@@ -1558,6 +1567,9 @@ def refresh_containers(
     container_name: str | None = None,
     *,
     cert_pem: str | None = None,
+    gh_token: str = "",
+    git_username: str = "",
+    git_email: str = "",
 ) -> None:
     """Update packages and re-apply config in managed LXD VM(s).
 
@@ -1571,7 +1583,7 @@ def refresh_containers(
         if not container_exists(container_name):
             raise RuntimeError(f"'{container_name}' does not exist.")
         mgr = LxdVmManager(container_name, uid=HOST_UID, gid=HOST_GID)
-        mgr._refresh(cert_pem=cert_pem)
+        mgr._refresh(cert_pem=cert_pem, gh_token=gh_token, git_username=git_username, git_email=git_email)
     else:
         managed = _list_managed_containers()
         if not managed:
@@ -1580,6 +1592,6 @@ def refresh_containers(
         console.print(f"Found [bold]{len(managed)}[/bold] managed VM(s): " + ", ".join(managed))
         for container in managed:
             mgr = LxdVmManager(container, uid=HOST_UID, gid=HOST_GID)
-            mgr._refresh(cert_pem=cert_pem)
+            mgr._refresh(cert_pem=cert_pem, gh_token=gh_token, git_username=git_username, git_email=git_email)
 
         console.print(f"\n[green]✓[/green] All {len(managed)} VM(s) refreshed.")

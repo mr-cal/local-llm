@@ -73,6 +73,7 @@ def _setup_container_client(
         _cexec,
         create_and_setup,
         load_lxd_settings,
+        setup_git_config_in_container,
     )
 
     config_path = find_config()
@@ -132,6 +133,15 @@ def _setup_container_client(
         gh_token,
         effective_uid=effective_uid,
         effective_gid=effective_gid,
+    )
+
+    # Configure git identity for authoring and pushing commits
+    setup_git_config_in_container(
+        container_name,
+        cfg.github.git_username,
+        cfg.github.git_email,
+        uid=effective_uid,
+        gid=effective_gid,
     )
 
     # Tag with version
@@ -334,17 +344,29 @@ def refresh(
     """
     from llm.lxd import refresh_containers  # noqa: PLC0415
 
-    # Read cert from host
+    # Read cert and github config from config.toml
     cert_pem: str | None = None
+    gh_token = ""
+    git_username = ""
+    git_email = ""
     config_path = find_config()
     if config_path.exists():
         cfg = load_config()
         cert_file = Path(cfg.proxy.cert_path)
         if cert_file.exists():
             cert_pem = cert_file.read_text()
+        gh_token = cfg.github.token
+        git_username = cfg.github.git_username
+        git_email = cfg.github.git_email
 
     try:
-        refresh_containers(container, cert_pem=cert_pem)
+        refresh_containers(
+            container,
+            cert_pem=cert_pem,
+            gh_token=gh_token,
+            git_username=git_username,
+            git_email=git_email,
+        )
     except RuntimeError as e:
         console.print(f"[red]ERROR:[/red] {escape(str(e))}")
         raise typer.Exit(1) from None

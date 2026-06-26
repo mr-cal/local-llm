@@ -272,6 +272,19 @@ class TestGitHubSettings:
         g = GitHubSettings(token="   ")
         assert g.is_authenticated() is False
 
+    def test_git_username_default(self):
+        g = GitHubSettings()
+        assert g.git_username == "mr-cal-bot"
+
+    def test_git_email_default(self):
+        g = GitHubSettings()
+        assert g.git_email == "callahanlovesshopping@gmail.com"
+
+    def test_custom_git_identity(self):
+        g = GitHubSettings(git_username="other-bot", git_email="other@example.com")
+        assert g.git_username == "other-bot"
+        assert g.git_email == "other@example.com"
+
 
 class TestMountEntry:
     def test_derives_name_from_host_path(self):
