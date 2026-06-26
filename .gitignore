@@ -35,3 +35,5 @@ llama.cpp/ggml/src/ggml*.so
 
 # llm stuff
 plans/
+
+.env*
