@@ -506,6 +506,7 @@ class TestPathVerification:
         # The echo command that writes path.fish should contain .bun/bin
         all_path_cmd = " ".join(str(a) for c in path_fish_calls for a in c)
         assert ".bun/bin" in all_path_cmd, f"Expected '.bun/bin' in path.fish setup: {all_path_cmd[:600]}"
+        assert ".cargo/bin" in all_path_cmd, f"Expected '.cargo/bin' in path.fish setup: {all_path_cmd[:600]}"
 
     def test_bashrc_contains_bun_bin(self, monkeypatch, tmp_path):
         """~/.bashrc must contain ~/.bun/bin on PATH so bun is discoverable."""
@@ -548,6 +549,7 @@ class TestPathVerification:
         assert bashrc_calls, "Expected .bashrc PATH setup commands"
         all_bash_cmd = " ".join(str(a) for c in bashrc_calls for a in c)
         assert ".bun/bin" in all_bash_cmd, f"Expected '.bun/bin' in .bashrc setup: {all_bash_cmd[:600]}"
+        assert ".cargo/bin" in all_bash_cmd, f"Expected '.cargo/bin' in .bashrc setup: {all_bash_cmd[:600]}"
 
     def test_pi_and_omp_npm_runs_as_container_user(self, monkeypatch, tmp_path):
         """pi and oh-my-pi (omp) npm installs run as container user so they land on PATH."""

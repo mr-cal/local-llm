@@ -500,9 +500,9 @@ class LxdVmManager(_BaseVmManager):
         )
         run(_cexec(self.container, uid, gid, "mkdir", "-p", fish_conf_dir))
 
-        # Ensure ~/.local/bin and ~/.bun/bin are on PATH for both bash and fish.
-        path_bash_line = "export PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH"
-        path_fish_line = "set -gx PATH $HOME/.local/bin $HOME/.bun/bin $PATH"
+        # Ensure ~/.local/bin, ~/.bun/bin, and ~/.cargo/bin are on PATH for both bash and fish.
+        path_bash_line = "export PATH=$HOME/.local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$PATH"
+        path_fish_line = "set -gx PATH $HOME/.local/bin $HOME/.bun/bin $HOME/.cargo/bin $PATH"
         run(
             _cexec(
                 self.container,
@@ -745,7 +745,7 @@ class LxdVmManager(_BaseVmManager):
                     f"--env=USER={CONTAINER_USER}",
                     f"--env=LOGNAME={CONTAINER_USER}",
                     f"--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:"
-                    f"/usr/bin:/sbin:/bin:/snap/bin:{CONTAINER_HOME}/.local/bin:{CONTAINER_HOME}/.bun/bin",
+                    f"/usr/bin:/sbin:/bin:/snap/bin:{CONTAINER_HOME}/.local/bin:{CONTAINER_HOME}/.bun/bin:{CONTAINER_HOME}/.cargo/bin",
                     "--env=CI=1",
                     "--",
                     "bash",
@@ -921,6 +921,7 @@ class LxdVmManager(_BaseVmManager):
             assert r.returncode == 0, f"fish path.fish not found: {r.stderr.strip()}"
             assert ".local/bin" in r.stdout, f".local/bin not in fish path.fish: {r.stdout}"
             assert ".bun/bin" in r.stdout, f".bun/bin not in fish path.fish: {r.stdout}"
+            assert ".cargo/bin" in r.stdout, f".cargo/bin not in fish path.fish: {r.stdout}"
 
         def t_path_in_bashrc() -> None:
             r = subprocess.run(
@@ -935,6 +936,12 @@ class LxdVmManager(_BaseVmManager):
                 text=True,
             )
             assert r2.returncode == 0, f".bun/bin not in ~/.bashrc: {r2.stderr.strip()}"
+            r3 = subprocess.run(
+                ["lxc", "exec", self.container, "--", "grep", ".cargo/bin", f"{CONTAINER_HOME}/.bashrc"],
+                capture_output=True,
+                text=True,
+            )
+            assert r3.returncode == 0, f".cargo/bin not in ~/.bashrc: {r3.stderr.strip()}"
 
         def t_pi_installed() -> None:
             r = subprocess.run(
