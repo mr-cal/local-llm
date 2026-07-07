@@ -484,13 +484,18 @@ class LxdVmManager(_BaseVmManager):
             )
         )
 
-        # Write a fish conf.d snippet so `llm <n>` can pass CRAFT_CWD via the
-        # environment and have the login shell cd there automatically.
+        # Write a fish conf.d snippet so `llm <n>` can pass the target CWD via
+        # /tmp/llm-cwd, which the login shell reads and removes on startup.
+        # File-based handoff works reliably regardless of how su propagates env.
         fish_conf_dir = f"{CONTAINER_HOME}/.config/fish/conf.d"
         craft_cwd_fish = (
-            "# cd to CRAFT_CWD when set (passed by the host `llm` fish function)\n"
-            "if set -q CRAFT_CWD; and test -d $CRAFT_CWD\n"
-            "    cd $CRAFT_CWD\n"
+            "# cd to the directory pushed by the host `llm` function via /tmp/llm-cwd\n"
+            "if test -f /tmp/llm-cwd\n"
+            "    set -l cwd (string trim (cat /tmp/llm-cwd))\n"
+            "    rm -f /tmp/llm-cwd\n"
+            "    if test -d $cwd\n"
+            "        cd $cwd\n"
+            "    end\n"
             "end\n"
         )
         run(_cexec(self.container, uid, gid, "mkdir", "-p", fish_conf_dir))
