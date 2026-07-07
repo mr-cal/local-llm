@@ -120,6 +120,9 @@ class _BaseVmManager:
             "--vm",
             "--config",
             f"limits.memory={VM_MEMORY}",
+            # Passes KVM capabilities through so nested VMs (e.g. snapcraft --vm) work.
+            "--config",
+            "security.nesting=true",
             "--device",
             f"root,size={VM_ROOT_DISK_SIZE}",
         ]
@@ -179,6 +182,15 @@ class _BaseVmManager:
     def _tag_as_managed(self) -> None:
         """Set the managed tag on this container."""
         run(["lxc", "config", "set", self.container, f"{_MANAGED_TAG}=true"])
+
+    def _snap_install(self, *args: str) -> None:
+        """Install a snap inside the VM via systemd-run to avoid lxd-agent cgroup errors.
+
+        Running snap directly under lxc exec puts the process in the
+        lxd-agent.service cgroup, which snapd rejects. systemd-run creates a
+        transient scope with its own cgroup that snapd accepts.
+        """
+        run(["lxc", "exec", self.container, "--", "systemd-run", "--wait", "snap", "install", *args])
 
     def _setup_vm_swap(self) -> None:
         """Create a persistent swapfile inside the VM and enable it on boot."""
@@ -362,10 +374,10 @@ class LxdVmManager(_BaseVmManager):
         self._configure_sudo()
 
         console.print("  Installing astral-uv...")
-        run(["lxc", "exec", self.container, "--", "snap", "install", "astral-uv", "--classic"])
+        self._snap_install("astral-uv", "--classic")
 
         console.print("  Installing helix...")
-        run(["lxc", "exec", self.container, "--", "snap", "install", "helix", "--classic"])
+        self._snap_install("helix", "--classic")
 
         console.print("  Installing nodejs (for pi)...")
         run(
@@ -607,7 +619,7 @@ class LxdVmManager(_BaseVmManager):
         console.print(f"\n[bold][{label}][/bold] Setting up nested LXD inside VM...")
 
         console.print("  Installing lxd snap...")
-        run(["lxc", "exec", self.container, "--", "snap", "install", "lxd"])
+        self._snap_install("lxd")
 
         console.print("  Initialising LXD (lxd init --auto)...")
         run(["lxc", "exec", self.container, "--", "lxd", "init", "--auto"])
@@ -751,6 +763,15 @@ class LxdVmManager(_BaseVmManager):
                 f"status={matches[0]['status'] if matches else 'not found'}"
             )
 
+        def t_nesting_enabled() -> None:
+            r = subprocess.run(
+                ["lxc", "config", "get", self.container, "security.nesting"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            assert r.stdout.strip() == "true", f"security.nesting={r.stdout.strip()!r}, expected 'true'"
+
         def t_build_essential() -> None:
             subprocess.run(
                 ["lxc", "exec", self.container, "--", "dpkg", "-l", "build-essential"],
@@ -848,6 +869,19 @@ class LxdVmManager(_BaseVmManager):
                 capture_output=True,
                 check=True,
             )
+
+        def t_snap_runs() -> None:
+            # Verifies snaps execute without the lxd-agent cgroup rejection error.
+            # systemd-run creates a transient cgroup scope that snapd accepts.
+            r = subprocess.run(
+                ["lxc", "exec", self.container, "--", "systemd-run", "--wait", "snap", "list"],
+                capture_output=True,
+                text=True,
+            )
+            assert r.returncode == 0, (
+                f"snap command failed via systemd-run (cgroup issue?): {r.stderr.strip()}"
+            )
+            assert "astral-uv" in r.stdout, f"astral-uv snap not in snap list: {r.stdout.strip()}"
 
         def t_fish_installed() -> None:
             subprocess.run(
@@ -1335,7 +1369,7 @@ _NODE_CA_CERTS_DIR = f"{CONTAINER_HOME}/.config/local-llm"
 _NODE_CA_CERTS_FILE = f"{_NODE_CA_CERTS_DIR}/cert.pem"
 _MANAGED_TAG = "user.local-llm-managed"
 
-VM_ROOT_DISK_SIZE = "50GB"
+VM_ROOT_DISK_SIZE = "90GB"
 VM_MEMORY = "4GiB"
 VM_SWAP_SIZE = "4G"
 

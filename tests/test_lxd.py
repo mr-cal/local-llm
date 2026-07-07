@@ -599,3 +599,203 @@ class TestPathVerification:
         assert "--user=1000" in config_str, (
             f"npm config set prefix should run as container user: {config_str}"
         )
+
+
+# ── Snap cgroup and nested VM tests ──────────────────────────────────────────
+
+
+class TestSnapInstall:
+    """Tests that snap installs use systemd-run to avoid lxd-agent cgroup errors."""
+
+    def _make_completed(self, returncode=0, stdout=""):
+        p = MagicMock()
+        p.returncode = returncode
+        p.stdout = stdout
+        return p
+
+    def test_snap_install_uses_systemd_run(self, monkeypatch, tmp_path):
+        """_snap_install must wrap snap with systemd-run --wait to avoid cgroup rejection."""
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, "")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        mgr._snap_install("astral-uv", "--classic")
+
+        assert len(calls) == 1
+        cmd = calls[0]
+        cmd_str = " ".join(cmd)
+        assert "systemd-run" in cmd_str, f"snap install should use systemd-run: {cmd_str}"
+        assert "--wait" in cmd_str, f"systemd-run should pass --wait: {cmd_str}"
+        assert "snap" in cmd_str, f"snap command should be present: {cmd_str}"
+        assert "astral-uv" in cmd_str, f"snap name should be present: {cmd_str}"
+        assert "--classic" in cmd_str, f"--classic flag should be present: {cmd_str}"
+
+    def test_install_packages_snaps_use_systemd_run(self, monkeypatch, tmp_path):
+        """astral-uv and helix snap installs in _install_packages must use systemd-run."""
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, "")
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        mgr._install_packages(uid=1000)
+
+        snap_install_calls = [c for c in calls if "snap" in c and "install" in c]
+        assert snap_install_calls, "Expected snap install commands in _install_packages"
+        for call in snap_install_calls:
+            cmd_str = " ".join(str(a) for a in call)
+            assert "systemd-run" in cmd_str, (
+                f"snap install should use systemd-run to avoid cgroup errors: {cmd_str}"
+            )
+            assert "--wait" in cmd_str, f"systemd-run should pass --wait: {cmd_str}"
+
+    def test_setup_nested_lxd_snap_uses_systemd_run(self, monkeypatch, tmp_path):
+        """lxd snap install in _setup_nested_lxd must use systemd-run."""
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, '{"status":"done"}')
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        mgr._setup_nested_lxd()
+
+        lxd_install_calls = [c for c in calls if "snap" in c and "install" in c and "lxd" in c]
+        assert lxd_install_calls, "Expected 'snap install lxd' in _setup_nested_lxd"
+        cmd_str = " ".join(str(a) for a in lxd_install_calls[0])
+        assert "systemd-run" in cmd_str, (
+            f"lxd snap install should use systemd-run to avoid cgroup errors: {cmd_str}"
+        )
+        assert "--wait" in cmd_str, f"systemd-run should pass --wait: {cmd_str}"
+
+
+class TestNestedVmSupport:
+    """Tests that VMs are created with security.nesting=true for nested VM support."""
+
+    def _make_completed(self, returncode=0, stdout=""):
+        p = MagicMock()
+        p.returncode = returncode
+        p.stdout = stdout
+        return p
+
+    def test_create_container_enables_security_nesting(self, monkeypatch, tmp_path):
+        """lxc launch must include security.nesting=true so nested VMs work."""
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        calls: list[list] = []
+
+        def _run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return self._make_completed(0, '{"status":"done"}')
+
+        monkeypatch.setattr(subprocess, "run", _run)
+
+        from llm.lxd import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        mgr.create_container()
+
+        launch_calls = [c for c in calls if "lxc" in c and "launch" in c]
+        assert launch_calls, "Expected an lxc launch command"
+        cmd_str = " ".join(str(a) for a in launch_calls[0])
+        assert "security.nesting=true" in cmd_str, (
+            f"lxc launch should set security.nesting=true for nested VM support: {cmd_str}"
+        )
