@@ -749,7 +749,7 @@ class TestSnapInstall:
 
 
 class TestNestedVmSupport:
-    """Tests that VMs are created with security.nesting=true for nested VM support."""
+    """Tests for nested VM support (KVM passthrough via the host's nested KVM)."""
 
     def _make_completed(self, returncode=0, stdout=""):
         p = MagicMock()
@@ -757,8 +757,8 @@ class TestNestedVmSupport:
         p.stdout = stdout
         return p
 
-    def test_create_container_enables_security_nesting(self, monkeypatch, tmp_path):
-        """lxc launch must include security.nesting=true so nested VMs work."""
+    def test_create_container_is_a_vm(self, monkeypatch, tmp_path):
+        """lxc launch must use --vm so the instance is a full VM with KVM passthrough."""
         import tomli_w
 
         config = tmp_path / "config.toml"
@@ -795,7 +795,7 @@ class TestNestedVmSupport:
 
         launch_calls = [c for c in calls if "lxc" in c and "launch" in c]
         assert launch_calls, "Expected an lxc launch command"
-        cmd_str = " ".join(str(a) for a in launch_calls[0])
-        assert "security.nesting=true" in cmd_str, (
-            f"lxc launch should set security.nesting=true for nested VM support: {cmd_str}"
+        assert "--vm" in launch_calls[0], (
+            "lxc launch should use --vm; LXD VMs automatically pass through CPU "
+            "virtualisation flags so nested VMs work when the host has nested KVM enabled"
         )

@@ -120,9 +120,6 @@ class _BaseVmManager:
             "--vm",
             "--config",
             f"limits.memory={VM_MEMORY}",
-            # Passes KVM capabilities through so nested VMs (e.g. snapcraft --vm) work.
-            "--config",
-            "security.nesting=true",
             "--device",
             f"root,size={VM_ROOT_DISK_SIZE}",
         ]
@@ -763,14 +760,18 @@ class LxdVmManager(_BaseVmManager):
                 f"status={matches[0]['status'] if matches else 'not found'}"
             )
 
-        def t_nesting_enabled() -> None:
+        def t_nested_kvm_available() -> None:
+            # LXD VMs automatically pass through CPU virtualisation flags when the
+            # host has nested KVM enabled, so nested VMs (e.g. snapcraft --vm builds)
+            # work without any extra VM config.
             r = subprocess.run(
-                ["lxc", "config", "get", self.container, "security.nesting"],
+                ["lxc", "exec", self.container, "--", "grep", "-c", r"vmx\|svm", "/proc/cpuinfo"],
                 capture_output=True,
                 text=True,
-                check=True,
             )
-            assert r.stdout.strip() == "true", f"security.nesting={r.stdout.strip()!r}, expected 'true'"
+            assert r.returncode == 0 and int(r.stdout.strip() or 0) > 0, (
+                "No VMX/SVM CPU flags in VM — host nested KVM may not be enabled"
+            )
 
         def t_build_essential() -> None:
             subprocess.run(
@@ -871,17 +872,22 @@ class LxdVmManager(_BaseVmManager):
             )
 
         def t_snap_runs() -> None:
-            # Verifies snaps execute without the lxd-agent cgroup rejection error.
-            # systemd-run creates a transient cgroup scope that snapd accepts.
+            # Verifies that systemd-run (used by _snap_install) works in the VM.
+            # systemd-run creates a transient cgroup scope that snapd accepts,
+            # avoiding the lxd-agent.service cgroup rejection error.
             r = subprocess.run(
-                ["lxc", "exec", self.container, "--", "systemd-run", "--wait", "snap", "list"],
+                ["lxc", "exec", self.container, "--", "systemd-run", "--wait", "true"],
                 capture_output=True,
                 text=True,
             )
-            assert r.returncode == 0, (
-                f"snap command failed via systemd-run (cgroup issue?): {r.stderr.strip()}"
+            assert r.returncode == 0, f"systemd-run failed in VM (cgroup issue?): {r.stderr.strip()}"
+            # Confirm astral-uv snap is installed and accessible.
+            r2 = subprocess.run(
+                ["lxc", "exec", self.container, "--", "snap", "list", "astral-uv"],
+                capture_output=True,
+                text=True,
             )
-            assert "astral-uv" in r.stdout, f"astral-uv snap not in snap list: {r.stdout.strip()}"
+            assert r2.returncode == 0, f"astral-uv snap not installed or not accessible: {r2.stderr.strip()}"
 
         def t_fish_installed() -> None:
             subprocess.run(
