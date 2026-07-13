@@ -309,8 +309,19 @@ class TestStartCommand:
 class TestStopCommand:
     def test_stop_not_running(self, tmp_config_server, fake_console, mocker):
         mocker.patch.object(server, "_read_pid", return_value=None)
+        mocker.patch.object(server, "_nginx_is_active", return_value=False)
         with pytest.raises(typer.Exit):
             server.stop()
+
+    def test_stop_nginx_when_server_already_stopped(
+        self, tmp_config_server, fake_console, mocker, _make_proc
+    ):
+        """nginx is still running after a previous failed stop; should stop it."""
+        mocker.patch.object(server, "_read_pid", return_value=None)
+        mocker.patch.object(server, "_nginx_is_active", return_value=True)
+        nginx_stop = mocker.patch.object(server, "_nginx_stop", return_value=True)
+        server.stop()
+        nginx_stop.assert_called_once()
 
     def test_stop_success(self, tmp_config_server, fake_console, mocker, monkeypatch, _make_proc):
         _, tmp_path = tmp_config_server

@@ -513,24 +513,25 @@ def stop() -> None:
     """Stop the running llama-server, embedding server, and nginx."""
     cfg = load_config()
     pid = _read_pid(cfg.server.port)
-    if pid is None:
+    embed_pid = _read_pid(cfg.embed.port, _embed_pid_file())
+    nginx_active = _nginx_is_active()
+
+    if pid is None and embed_pid is None and not nginx_active:
         console.print("[yellow]Server is not running[/yellow]")
         raise typer.Exit(1)
 
-    os.kill(pid, signal.SIGTERM)
-    # Wait briefly for clean shutdown
-    for _ in range(20):
-        time.sleep(0.25)
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            break
+    if pid is not None:
+        os.kill(pid, signal.SIGTERM)
+        # Wait briefly for clean shutdown
+        for _ in range(20):
+            time.sleep(0.25)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+        _pid_file().unlink(missing_ok=True)
+        console.print(f"[green]Stopped[/green] llama-server (PID {pid})")
 
-    _pid_file().unlink(missing_ok=True)
-    console.print(f"[green]Stopped[/green] llama-server (PID {pid})")
-
-    # Stop embed server if running
-    embed_pid = _read_pid(cfg.embed.port, _embed_pid_file())
     if embed_pid is not None:
         os.kill(embed_pid, signal.SIGTERM)
         for _ in range(20):
@@ -542,7 +543,7 @@ def stop() -> None:
         _embed_pid_file().unlink(missing_ok=True)
         console.print(f"[green]Stopped[/green] embed-server  (PID {embed_pid})")
 
-    if _nginx_is_active():
+    if nginx_active:
         if _nginx_stop():
             console.print("[green]Stopped[/green] nginx")
         else:
