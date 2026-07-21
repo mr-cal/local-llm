@@ -405,6 +405,7 @@ class TestRestartCommand:
         mocker.patch.object(server, "_read_pid", return_value=12345)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         mocker.patch.object(server, "_nginx_start", return_value=True)
+        mocker.patch.object(server, "_ensure_sudo")
         mocker.patch.object(server, "stop", fake_stop)
         mocker.patch.object(server, "start", fake_start)
         mocker.patch("subprocess.Popen", fake_popen)

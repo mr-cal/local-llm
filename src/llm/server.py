@@ -202,21 +202,52 @@ def _nginx_is_active() -> bool:
     return result.stdout.strip() == "active"
 
 
+def _run_sudo(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a sudo command, restoring the terminal if interrupted mid-prompt.
+
+    sudo disables terminal echo while reading the password; if this process
+    is killed (e.g. via Ctrl+C) before sudo restores it, the terminal is
+    left unusable until ``stty sane`` is run. Do that ourselves so an
+    interrupted prompt doesn't leave the shell in a broken state.
+    """
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    except KeyboardInterrupt:
+        subprocess.run(["stty", "sane"], check=False)
+        raise
+
+
+def _ensure_sudo() -> None:
+    """Prompt for the sudo password up front, before any other work.
+
+    Without this, the password prompt only appears once nginx actually
+    needs to be started/stopped/reloaded - e.g. after already waiting for
+    the server to become ready - which is surprising. Authenticating first
+    caches the credential so later sudo calls in the same command don't
+    prompt again.
+    """
+    try:
+        subprocess.run(["sudo", "-v"], check=False)
+    except KeyboardInterrupt:
+        subprocess.run(["stty", "sane"], check=False)
+        raise
+
+
 def _nginx_start() -> bool:
     """Start nginx via systemctl. Returns True on success."""
-    result = subprocess.run(["sudo", "systemctl", "start", "nginx"], capture_output=True, text=True)
+    result = _run_sudo(["sudo", "systemctl", "start", "nginx"])
     return result.returncode == 0
 
 
 def _nginx_reload() -> bool:
     """Reload nginx config. Returns True on success."""
-    result = subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
+    result = _run_sudo(["sudo", "systemctl", "reload", "nginx"])
     return result.returncode == 0
 
 
 def _nginx_stop() -> bool:
     """Stop nginx via systemctl. Returns True on success."""
-    result = subprocess.run(["sudo", "systemctl", "stop", "nginx"], capture_output=True, text=True)
+    result = _run_sudo(["sudo", "systemctl", "stop", "nginx"])
     return result.returncode == 0
 
 
@@ -408,6 +439,7 @@ def start(
     ] = None,
 ) -> None:
     """Start llama-server (and embedding server if enabled) using settings from config.toml."""
+    _ensure_sudo()
     _warn_if_stale()
     cfg = load_config()
 
@@ -511,6 +543,7 @@ def start(
 @app.command("stop")
 def stop() -> None:
     """Stop the running llama-server, embedding server, and nginx."""
+    _ensure_sudo()
     cfg = load_config()
     pid = _read_pid(cfg.server.port)
     embed_pid = _read_pid(cfg.embed.port, _embed_pid_file())
@@ -553,6 +586,7 @@ def stop() -> None:
 @app.command("restart")
 def restart() -> None:
     """Restart llama-server (stop then start)."""
+    _ensure_sudo()
     _warn_if_stale()
     cfg = load_config()
     pid = _read_pid(cfg.server.port)
