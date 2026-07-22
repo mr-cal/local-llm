@@ -682,7 +682,9 @@ class LxdVmManager(_BaseVmManager):
                     f"VM '{self.container}' already exists. Pass recreate=True to delete and recreate it."
                 )
             console.print(f"Deleting existing VM: {self.container}")
-            run(["lxc", "delete", "--force", self.container])
+            # ZFS can transiently fail to remove the VM's mountpoint directory
+            # right after stop (unmount race), so retry on failure.
+            run_with_retry(["lxc", "delete", "--force", self.container], desc="lxc delete")
 
         console.print(f"Creating VM: {self.container}")
 
