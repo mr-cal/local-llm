@@ -123,7 +123,18 @@ class _BaseVmManager:
             "--device",
             f"root,size={VM_ROOT_DISK_SIZE}",
         ]
-        run_with_retry(launch_cmd, desc="lxc launch")
+        try:
+            run_with_retry(launch_cmd, desc="lxc launch", capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            if e.stderr and "no /dev/kvm" in e.stderr:
+                console.print(
+                    "[bold yellow]Hint:[/bold yellow] LXD reported missing KVM support, but this is "
+                    "often a stale check left over from before /dev/kvm became available (e.g. after "
+                    "loading kernel modules or restarting VirtualBox). Try:\n"
+                    "  sudo systemctl restart snap.lxd.daemon\n"
+                    "then re-run this command."
+                )
+            raise
         wait_for_container(self.container)
         self._setup_vm_swap()
         # Rename the default ubuntu user/group to match the host user, and move
@@ -1457,12 +1468,20 @@ def _cexec(container: str, uid: int, gid: int, *cmd: str) -> list[str]:
 def run(cmd, desc: str | None = None, **kwargs):
     console.print(f"  $ {' '.join(str(a) for a in cmd)}")
     try:
-        subprocess.run(cmd, check=True, **kwargs)
+        result = subprocess.run(cmd, check=True, **kwargs)
     except subprocess.CalledProcessError as e:
+        # When callers opt into capture_output, echo it back since it wasn't
+        # streamed live to the terminal.
+        if e.stdout:
+            console.print(e.stdout)
+        if e.stderr:
+            console.print(e.stderr)
         label = desc or " ".join(str(a) for a in cmd[:3])
         raise subprocess.CalledProcessError(e.returncode, e.cmd, e.output, e.stderr) from Exception(
             f"Command failed ({label}): exit {e.returncode}"
         )
+    if kwargs.get("capture_output") and result.stdout:
+        console.print(result.stdout)
 
 
 @retry(

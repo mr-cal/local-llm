@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import MagicMock
 
+import pytest
+
 from llm.config import _get_lxd_bridge_info
 
 # ── _get_lxd_bridge_info (shared impl used by lxd.py and config.py) ──────────
@@ -801,3 +803,53 @@ class TestNestedVmSupport:
             "lxc launch should use --vm; LXD VMs automatically pass through CPU "
             "virtualisation flags so nested VMs work when the host has nested KVM enabled"
         )
+
+    def test_create_container_hints_at_stale_kvm_check(self, monkeypatch, tmp_path, capsys):
+        """A 'no /dev/kvm' failure should surface a hint to restart the lxd daemon.
+
+        LXD caches its KVM support check at daemon startup, so this error can be
+        stale even when /dev/kvm is actually available; restarting the daemon
+        forces a fresh check.
+        """
+        import tomli_w
+
+        config = tmp_path / "config.toml"
+        config.write_text(
+            tomli_w.dumps(
+                {
+                    "server": {"port": 8080},
+                    "proxy": {
+                        "port": 8443,
+                        "lan_ip": "192.168.1.1",
+                        "lan_subnet": "192.168.1.0/24",
+                        "cert_path": str(tmp_path / "cert.pem"),
+                    },
+                    "auth": {"api_key": "key"},
+                    "models": {"active": "model.gguf", "dir": str(tmp_path)},
+                    "lxd": {"craft_dirs": [], "mounts": []},
+                }
+            )
+        )
+        monkeypatch.chdir(tmp_path)
+
+        def _run(cmd, **kwargs):
+            raise subprocess.CalledProcessError(
+                1,
+                cmd,
+                output="",
+                stderr="Error: Failed instance creation: Failed creating instance record: "
+                'Instance type "virtual-machine" is not supported on this server: '
+                "KVM support is missing (no /dev/kvm)",
+            )
+
+        monkeypatch.setattr(subprocess, "run", _run)
+        monkeypatch.setattr("llm.lxd.time.sleep", lambda *a, **k: None)
+
+        from llm.lxd import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[])
+        with pytest.raises(subprocess.CalledProcessError):
+            mgr.create_container()
+
+        captured = capsys.readouterr()
+        assert "sudo systemctl restart snap.lxd.daemon" in captured.out
