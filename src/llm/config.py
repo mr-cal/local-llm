@@ -584,10 +584,17 @@ def config_init() -> None:
 
 
 def _sudo(*args: str, desc: str) -> bool:
-    """Run a sudo command, printing what runs. Returns True on success."""
+    """Run a sudo command, printing what runs. Returns True on success.
+
+    Restores terminal echo if interrupted mid-password-prompt.
+    """
     cmd = ["sudo", *args]
     console.print(f"  [dim]$ {' '.join(cmd)}[/dim]")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except KeyboardInterrupt:
+        subprocess.run(["stty", "sane"], check=False)
+        raise
     if result.returncode != 0:
         msg = (result.stderr or result.stdout).strip()
         console.print(f"  [red]✗[/red]  {desc}" + (f": {msg}" if msg else ""))
