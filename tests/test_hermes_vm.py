@@ -110,7 +110,7 @@ class TestConfigureCredentials:
         """When provider is local-llm, _configure_local_llm is called with all_cfg."""
         from llm.config import AuthSettings, ProxySettings, ServerSettings, Settings
 
-        mgr = MagicMock()
+        mgr = HermesVmManager.__new__(HermesVmManager)
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
@@ -126,7 +126,7 @@ class TestConfigureCredentials:
     @patch.object(HermesVmManager, "_configure_local_llm")
     def test_local_llm_skipped_without_all_cfg(self, mock_local):
         """When all_cfg is None, _configure_local_llm should not be called."""
-        mgr = MagicMock()
+        mgr = HermesVmManager.__new__(HermesVmManager)
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
