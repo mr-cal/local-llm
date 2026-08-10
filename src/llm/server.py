@@ -70,6 +70,8 @@ def setup(
         write_config_toml,
     )
 
+    _ensure_sudo()
+
     project_root = Path.cwd()
     config_path = project_root / CONFIG_FILENAME
     existing_cfg: dict | None = None  # type: ignore[type-arg]
@@ -686,4 +688,5 @@ def apply() -> None:
     from llm.config import apply_server_configs  # noqa: PLC0415
 
     cfg = load_config()
+    _ensure_sudo()
     apply_server_configs(cfg, _project_root())
