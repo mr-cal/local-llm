@@ -415,7 +415,9 @@ def _start_embed_server(cfg: object, bin_path: str) -> None:
     log_path = _embed_log_file()
     log_fh = log_path.open("a")
     try:
-        proc = subprocess.Popen(cmd, stdout=log_fh, stderr=log_fh, start_new_session=True)
+        proc = subprocess.Popen(
+            cmd, stdout=log_fh, stderr=log_fh, stdin=subprocess.DEVNULL, start_new_session=True
+        )
     except FileNotFoundError:
         log_fh.close()
         console.print(f"[yellow]Embed server binary not found:[/yellow] {bin_path} — skipping")
@@ -496,6 +498,7 @@ def start(
             cmd,
             stdout=log_fh,
             stderr=log_fh,
+            stdin=subprocess.DEVNULL,
             start_new_session=True,  # detach from current session
         )
     except FileNotFoundError:
