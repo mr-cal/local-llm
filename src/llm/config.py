@@ -328,6 +328,10 @@ class HermesSettings(BaseModel):
         """True when both a bot token and at least one allowed user are configured."""
         return bool(self.telegram_token.strip()) and bool(self.telegram_allowed_users.strip())
 
+    def has_github(self) -> bool:
+        """True when a GitHub PAT is configured."""
+        return bool(self.github_token.strip())
+
 
 class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)

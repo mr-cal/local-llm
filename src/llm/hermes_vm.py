@@ -171,7 +171,8 @@ class HermesVmManager(_BaseVmManager):
     def get_status(self) -> dict[str, str]:
         """Return VM and gateway service status.
 
-        Returns a dict with keys ``vm`` and ``gateway``.
+        Returns a dict with keys ``vm``, ``gateway``, ``version``,
+        ``uptime`` (seconds since gateway started), and ``credentials_ok``.
         """
         # VM status
         r = subprocess.run(
@@ -189,6 +190,7 @@ class HermesVmManager(_BaseVmManager):
 
         # Gateway service status
         gateway_status = "unknown"
+        uptime_seconds = 0
         if vm_status == "Running":
             r2 = subprocess.run(
                 _cexec(
@@ -205,7 +207,88 @@ class HermesVmManager(_BaseVmManager):
             )
             gateway_status = r2.stdout.strip() or ("active" if r2.returncode == 0 else "inactive")
 
-        return {"vm": vm_status, "gateway": gateway_status}
+            # Uptime: systemctl show returns ActiveEnterTimestampEpoch in epoch seconds
+            r3 = subprocess.run(
+                _cexec(
+                    self.container,
+                    self.uid,
+                    self.gid,
+                    "systemctl",
+                    "--user",
+                    "show",
+                    "--property=ActiveEnterTimestampEpoch",
+                    "hermes-gateway",
+                ),
+                capture_output=True,
+                text=True,
+            )
+            try:
+                epoch = int(r3.stdout.split("=")[1].strip() or "0")
+                if epoch > 0:
+                    import time
+
+                    uptime_seconds = max(0, int(time.time()) - epoch)
+            except (IndexError, ValueError):
+                pass
+
+        # Version: run hermes --version inside the container
+        version = "unknown"
+        if vm_status == "Running":
+            r4 = subprocess.run(
+                _cexec(
+                    self.container,
+                    self.uid,
+                    self.gid,
+                    "hermes",
+                    "--version",
+                ),
+                capture_output=True,
+                text=True,
+            )
+            version = r4.stdout.strip() or "unknown"
+
+        # Credentials check: probe OpenRouter with a cheap request
+        credentials_ok = False
+        if vm_status == "Running":
+            r5 = subprocess.run(
+                _cexec(
+                    self.container,
+                    self.uid,
+                    self.gid,
+                    "hermes",
+                    "config",
+                    "get",
+                    "model.provider",
+                ),
+                capture_output=True,
+                text=True,
+            )
+            provider = r5.stdout.strip()
+            if provider == "openrouter":
+                # Quick probe: check that OpenRouter responds (non-401)
+                r6 = subprocess.run(
+                    _cexec(
+                        self.container,
+                        self.uid,
+                        self.gid,
+                        "curl",
+                        "-fsSL",
+                        "-H",
+                        "Authorization: Bearer $OPENROUTER_API_KEY",
+                        "https://openrouter.ai/api/v1/models",
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                credentials_ok = r6.returncode == 0
+
+        return {
+            "vm": vm_status,
+            "gateway": gateway_status,
+            "version": version,
+            "uptime": str(uptime_seconds),
+            "credentials_ok": str(credentials_ok),
+        }
 
     # ── Internal steps ────────────────────────────────────────────────────
 
@@ -266,7 +349,7 @@ class HermesVmManager(_BaseVmManager):
         if cfg.telegram_allowed_users:
             env_lines.append(f"TELEGRAM_ALLOWED_USERS={cfg.telegram_allowed_users}")
 
-        if cfg.github_token:
+        if cfg.has_github():
             env_lines.append(f"GITHUB_TOKEN={cfg.github_token}")
 
         if not env_lines:

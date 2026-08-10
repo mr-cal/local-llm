@@ -50,6 +50,15 @@ class TestHermesSettings:
         h = HermesSettings(telegram_token="123:ABC", telegram_allowed_users="987654321")
         assert h.has_telegram() is True
 
+    def test_has_github_false_by_default(self):
+        assert HermesSettings().has_github() is False
+
+    def test_has_github_true_with_token(self):
+        assert HermesSettings(github_token="ghp_test123").has_github() is True
+
+    def test_has_github_false_whitespace_only(self):
+        assert HermesSettings(github_token="   ").has_github() is False
+
 
 class TestSettingsHermes:
     def test_hermes_default_on_settings(self):

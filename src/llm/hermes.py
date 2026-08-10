@@ -73,6 +73,26 @@ def refresh() -> None:
         raise typer.Exit(1) from None
 
 
+def _format_uptime(secs: int) -> str:
+    """Format seconds into a human-readable uptime string."""
+    if secs >= 86400:
+        return f"{secs // 86400}d {secs % 86400 // 3600}h {secs % 3600 // 60}m"
+    if secs >= 3600:
+        return f"{secs // 3600}h {secs % 3600 // 60}m {secs % 60}s"
+    if secs >= 60:
+        return f"{secs // 60}m {secs % 60}s"
+    return f"{secs}s"
+
+
+def _format_credentials(cred: str) -> tuple[str, str]:
+    """Return (label, color) for the credentials status string."""
+    if cred == "True":
+        return "valid", "green"
+    if cred == "False":
+        return "invalid", "yellow"
+    return "unknown", "red"
+
+
 @app.command("status")
 def status() -> None:
     """Show VM and gateway service status for the hermes VM."""
@@ -93,3 +113,13 @@ def status() -> None:
 
     gw_color = "green" if s["gateway"] == "active" else "yellow"
     console.print(f"  [{gw_color}]●[/{gw_color}] Gateway:  {s['gateway']}  (hermes-gateway.service)")
+
+    ver = s.get("version", "unknown")
+    console.print(f"  Version:     {ver}")
+
+    uptime_secs = int(s.get("uptime", "0"))
+    console.print(f"  Uptime:      {_format_uptime(uptime_secs)}")
+
+    cred = s.get("credentials_ok", "unknown")
+    cred_label, cred_color = _format_credentials(cred)
+    console.print(f"  [{cred_color}]●[/{cred_color}] Credentials: {cred_label}")
