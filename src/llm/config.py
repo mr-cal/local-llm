@@ -306,7 +306,10 @@ class LxdSettings(BaseModel):
 class HermesSettings(BaseModel):
     """Configuration for the Hermes agent LXD VM."""
 
-    # OpenRouter API key — LLM backend for Hermes.
+    # LLM backend for the Hermes agent: "local-llm" or "openrouter".
+    provider: str = "local-llm"
+
+    # OpenRouter API key (used when provider = "openrouter").
     # https://openrouter.ai/keys
     openrouter_key: str = ""
 
@@ -321,8 +324,12 @@ class HermesSettings(BaseModel):
     github_token: str = ""
 
     def has_openrouter(self) -> bool:
-        """True when an OpenRouter API key is configured."""
-        return bool(self.openrouter_key.strip())
+        """True when OpenRouter backend is selected with a key."""
+        return self.provider == "openrouter" and bool(self.openrouter_key.strip())
+
+    def has_local_llm(self) -> bool:
+        """True when local-llm backend is selected."""
+        return self.provider == "local-llm"
 
     def has_telegram(self) -> bool:
         """True when both a bot token and at least one allowed user are configured."""

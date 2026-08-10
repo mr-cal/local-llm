@@ -11,6 +11,7 @@ from llm.config import HermesSettings, Settings
 class TestHermesSettings:
     def test_defaults(self):
         h = HermesSettings()
+        assert h.provider == "local-llm"
         assert h.openrouter_key == ""
         assert h.telegram_token == ""
         assert h.telegram_allowed_users == ""
@@ -18,11 +19,13 @@ class TestHermesSettings:
 
     def test_custom_values(self):
         h = HermesSettings(
+            provider="openrouter",
             openrouter_key="sk-or-v1-test",
             telegram_token="123:ABC",
             telegram_allowed_users="987654321",
             github_token="ghp_test",
         )
+        assert h.provider == "openrouter"
         assert h.openrouter_key == "sk-or-v1-test"
         assert h.telegram_token == "123:ABC"
         assert h.telegram_allowed_users == "987654321"
@@ -31,11 +34,17 @@ class TestHermesSettings:
     def test_has_openrouter_false_by_default(self):
         assert HermesSettings().has_openrouter() is False
 
+    def test_has_openrouter_false_when_local(self):
+        assert HermesSettings(provider="local-llm").has_openrouter() is False
+
     def test_has_openrouter_true_with_key(self):
-        assert HermesSettings(openrouter_key="sk-or-v1-abc").has_openrouter() is True
+        assert HermesSettings(provider="openrouter", openrouter_key="sk-or-v1-abc").has_openrouter() is True
+
+    def test_has_openrouter_false_no_key(self):
+        assert HermesSettings(provider="openrouter", openrouter_key="").has_openrouter() is False
 
     def test_has_openrouter_false_whitespace_only(self):
-        assert HermesSettings(openrouter_key="   ").has_openrouter() is False
+        assert HermesSettings(provider="openrouter", openrouter_key="   ").has_openrouter() is False
 
     def test_has_telegram_false_by_default(self):
         assert HermesSettings().has_telegram() is False
@@ -59,15 +68,26 @@ class TestHermesSettings:
     def test_has_github_false_whitespace_only(self):
         assert HermesSettings(github_token="   ").has_github() is False
 
+    def test_has_local_llm_true_by_default(self):
+        assert HermesSettings().has_local_llm() is True
+
+    def test_has_local_llm_true_explicit(self):
+        assert HermesSettings(provider="local-llm").has_local_llm() is True
+
+    def test_has_local_llm_false_when_openrouter(self):
+        assert HermesSettings(provider="openrouter").has_local_llm() is False
+
 
 class TestSettingsHermes:
     def test_hermes_default_on_settings(self):
         s = Settings()
         assert isinstance(s.hermes, HermesSettings)
+        assert s.hermes.provider == "local-llm"
         assert s.hermes.openrouter_key == ""
 
     def test_hermes_custom_via_settings(self):
-        s = Settings(hermes=HermesSettings(openrouter_key="sk-or-v1-xyz"))
+        s = Settings(hermes=HermesSettings(provider="openrouter", openrouter_key="sk-or-v1-xyz"))
+        assert s.hermes.provider == "openrouter"
         assert s.hermes.openrouter_key == "sk-or-v1-xyz"
 
 
@@ -81,6 +101,7 @@ class TestHermesConfigTemplate:
         template_path = Path(__file__).parent.parent / "src" / "llm" / "config_template.toml"
         data = tomllib.loads(template_path.read_text())
         hermes = data["hermes"]
+        assert "provider" in hermes
         assert "openrouter_key" in hermes
         assert "telegram_token" in hermes
         assert "telegram_allowed_users" in hermes
@@ -90,6 +111,7 @@ class TestHermesConfigTemplate:
         template_path = Path(__file__).parent.parent / "src" / "llm" / "config_template.toml"
         data = tomllib.loads(template_path.read_text())
         hermes = data["hermes"]
+        assert hermes["provider"] == "local-llm"
         assert hermes["openrouter_key"] == ""
         assert hermes["telegram_token"] == ""
         assert hermes["telegram_allowed_users"] == ""

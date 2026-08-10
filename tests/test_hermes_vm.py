@@ -6,18 +6,21 @@ import json
 from unittest.mock import MagicMock, patch
 
 from llm.config import HermesSettings
+from llm.hermes import _format_credentials, _format_uptime
 from llm.hermes_vm import HermesVmManager
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
 def _make_cfg(
+    provider: str = "local-llm",
     openrouter_key: str = "",
     telegram_token: str = "",
     telegram_allowed_users: str = "",
     github_token: str = "",
 ) -> HermesSettings:
     return HermesSettings(
+        provider=provider,
         openrouter_key=openrouter_key,
         telegram_token=telegram_token,
         telegram_allowed_users=telegram_allowed_users,
@@ -46,7 +49,7 @@ class TestConfigureCredentials:
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
-        cfg = _make_cfg(openrouter_key="sk-or-v1-test")
+        cfg = _make_cfg(provider="openrouter", openrouter_key="sk-or-v1-test")
         HermesVmManager._configure_credentials(mgr, cfg)
         # One call for setting provider, one for writing env
         assert mock_run.call_count == 2
@@ -67,6 +70,7 @@ class TestConfigureCredentials:
         mgr.uid = 1000
         mgr.gid = 1000
         cfg = _make_cfg(
+            provider="openrouter",
             openrouter_key="sk-or-v1-test",
             telegram_token="123:ABC",
             telegram_allowed_users="987654321",
@@ -100,6 +104,35 @@ class TestConfigureCredentials:
         env_call = mock_run.call_args_list[-1]
         cmd_str = " ".join(str(a) for a in env_call.args[0])
         assert "GITHUB_TOKEN=" in cmd_str
+
+    @patch.object(HermesVmManager, "_configure_local_llm")
+    def test_local_llm_calls_configure_local_llm(self, mock_local):
+        """When provider is local-llm, _configure_local_llm is called with all_cfg."""
+        from llm.config import AuthSettings, ProxySettings, ServerSettings, Settings
+
+        mgr = MagicMock()
+        mgr.container = "hermes"
+        mgr.uid = 1000
+        mgr.gid = 1000
+        all_cfg = Settings(
+            auth=AuthSettings(api_key="test-api-key"),
+            proxy=ProxySettings(enabled=False),
+            server=ServerSettings(port=8080),
+        )
+        cfg = _make_cfg(provider="local-llm")
+        HermesVmManager._configure_credentials(mgr, cfg, all_cfg)
+        mock_local.assert_called_once_with(all_cfg)
+
+    @patch.object(HermesVmManager, "_configure_local_llm")
+    def test_local_llm_skipped_without_all_cfg(self, mock_local):
+        """When all_cfg is None, _configure_local_llm should not be called."""
+        mgr = MagicMock()
+        mgr.container = "hermes"
+        mgr.uid = 1000
+        mgr.gid = 1000
+        cfg = _make_cfg(provider="local-llm")
+        HermesVmManager._configure_credentials(mgr, cfg)
+        mock_local.assert_not_called()
 
 
 # ── get_status ─────────────────────────────────────────────────────────────────
@@ -227,8 +260,12 @@ class TestGetStatus:
 
     @patch("llm.hermes_vm.subprocess.run")
     @patch("llm.hermes_vm._cexec")
-    def test_curl_not_probed_when_provider_not_openrouter(self, mock_cexec, mock_run):
-        """When provider is not openrouter, curl should not be called."""
+    def test_local_llm_probe_http(self, mock_cexec, mock_run):
+        """When provider is openai and proxy is disabled, probe http endpoint."""
+        from unittest.mock import patch as real_patch
+
+        from llm.config import AuthSettings, ProxySettings, ServerSettings, Settings
+
         mgr = self._build_mgr()
 
         def make_mock(stdout="", returncode=0):
@@ -242,7 +279,8 @@ class TestGetStatus:
             make_mock("active\n", 0),
             make_mock("ActiveEnterTimestampEpoch=1700000000\n"),
             make_mock("hermes 3.0.0\n"),
-            make_mock("openai\n"),  # Not openrouter
+            make_mock("openai\n"),
+            make_mock("", 0),  # curl probe for local-llm
         ]
 
         def cexec_side_effect(*args):
@@ -250,10 +288,20 @@ class TestGetStatus:
 
         mock_cexec.side_effect = cexec_side_effect
 
-        result = mgr.get_status()
-        assert result["credentials_ok"] == "False"
-        # Verify only 5 subprocess calls (no curl)
-        assert mock_run.call_count == 5
+        with real_patch("llm.config.load_config") as mock_load:
+            mock_load.return_value = Settings(
+                auth=AuthSettings(api_key="test-key"),
+                proxy=ProxySettings(enabled=False),
+                server=ServerSettings(port=8080),
+            )
+            result = mgr.get_status()
+
+        # Should have probed the local HTTP endpoint
+        http_calls = [c for c in mock_run.call_args_list if "local-llm" in str(c)]
+        assert len(http_calls) >= 1
+        cmd_str = " ".join(str(a) for a in http_calls[0].args[0])
+        assert "http://local-llm:8080" in cmd_str
+        assert result["credentials_ok"] == "True"
 
     @patch("llm.hermes_vm.subprocess.run")
     def test_bad_json_in_lxc_list(self, mock_run):
@@ -338,8 +386,6 @@ class TestFormatUptime:
     """Tests for hermes._format_uptime."""
 
     def _import_helpers(self):
-        from llm.hermes import _format_uptime
-
         return _format_uptime
 
     def test_zero_seconds(self):
@@ -387,8 +433,6 @@ class TestFormatCredentials:
     """Tests for hermes._format_credentials."""
 
     def _import_helpers(self):
-        from llm.hermes import _format_credentials
-
         return _format_credentials
 
     def test_valid(self):

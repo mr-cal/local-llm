@@ -16,7 +16,7 @@ import subprocess
 
 from rich.console import Console
 
-from llm.config import HermesSettings
+from llm.config import HermesSettings, Settings
 
 # Import shared LXD infrastructure from lxd.py
 from llm.lxd import (
@@ -98,8 +98,7 @@ class HermesVmManager(_BaseVmManager):
         console.print("\n[bold][3/6][/bold] Installing Hermes agent...")
         self._install_hermes()
 
-        console.print("\n[bold][4/6][/bold] Configuring credentials...")
-        self._configure_credentials(cfg)
+        self._configure_credentials(cfg, load_config())
 
         console.print("\n[bold][5/6][/bold] Setting up gateway service...")
         self._setup_gateway_service()
@@ -134,7 +133,7 @@ class HermesVmManager(_BaseVmManager):
         run(_cexec(self.container, self.uid, self.gid, "hermes", "update"), desc="hermes update")
 
         console.print("\n  [bold]credentials:[/bold] re-injecting...")
-        self._configure_credentials(cfg)
+        self._configure_credentials(cfg, load_config())
 
         # Restart the gateway service if it's already installed
         r = subprocess.run(
@@ -247,7 +246,7 @@ class HermesVmManager(_BaseVmManager):
             )
             version = r4.stdout.strip() or "unknown"
 
-        # Credentials check: probe OpenRouter with a cheap request
+        # Credentials check: probe the configured provider
         credentials_ok = False
         if vm_status == "Running":
             r5 = subprocess.run(
@@ -281,6 +280,46 @@ class HermesVmManager(_BaseVmManager):
                     text=True,
                 )
                 credentials_ok = r6.returncode == 0
+
+            elif provider in ("openai", "local"):
+                # Probe the local llama-server endpoint
+                from llm.config import load_config  # noqa: PLC0415
+                all_cfg = load_config()
+                if all_cfg.proxy.enabled:
+                    url = f"https://local-llm:{all_cfg.proxy.port}/v1/models"
+                    cert = f"{CONTAINER_HOME}/.hermes/cert.pem"
+                    r6 = subprocess.run(
+                        _cexec(
+                            self.container,
+                            self.uid,
+                            self.gid,
+                            "curl",
+                            "-fsSL",
+                            "--cacert",
+                            cert,
+                            "-H",
+                            f"Authorization: Bearer {all_cfg.auth.api_key}",
+                            url,
+                        ),
+                        capture_output=True,
+                        text=True,
+                    )
+                    credentials_ok = r6.returncode == 0
+                else:
+                    port = all_cfg.server.port
+                    r6 = subprocess.run(
+                        _cexec(
+                            self.container,
+                            self.uid,
+                            self.gid,
+                            "curl",
+                            "-fsSL",
+                            f"http://local-llm:{port}/v1/models",
+                        ),
+                        capture_output=True,
+                        text=True,
+                    )
+                    credentials_ok = r6.returncode == 0
 
         return {
             "vm": vm_status,
@@ -318,7 +357,72 @@ class HermesVmManager(_BaseVmManager):
         )
         console.print("  [green]✓[/green] Hermes agent installed")
 
-    def _configure_credentials(self, cfg: HermesSettings) -> None:
+    def _configure_local_llm(self, cfg: Settings) -> None:
+        """Configure the Hermes agent to use the local llama-server.
+
+        Sets up model.provider, endpoint, api_key, and optionally copies
+        the CA cert into the VM when the TLS proxy is enabled.
+        """
+        # Determine endpoint based on whether the proxy is enabled
+        if cfg.proxy.enabled:
+            local_url = f"https://local-llm:{cfg.proxy.port}/v1"
+            # Copy the CA cert into the VM so TLS is trusted
+            cert_src = cfg.proxy.cert_path  # e.g. /etc/ssl/local-llm/cert.pem
+            cert_dst = f"{CONTAINER_HOME}/.hermes/cert.pem"
+            subprocess.run(
+                [
+                    "lxc", "file", "copy", self.container, "/", "--",
+                    f"--path=0{cert_src}", f"{self.container}/{cert_dst.lstrip('/')}",
+                ],
+                capture_output=True,
+            )
+            console.print("  [green]✓[/green] CA cert copied into VM")
+        else:
+            local_url = f"http://local-llm:{cfg.server.port}/v1"
+
+        local_api_key = cfg.auth.api_key
+
+        run(
+            _cexec(
+                self.container,
+                self.uid,
+                self.gid,
+                "hermes",
+                "config",
+                "set",
+                "model.provider",
+                "openai",
+            ),
+            desc="set openai provider (local)",
+        )
+        run(
+            _cexec(
+                self.container,
+                self.uid,
+                self.gid,
+                "hermes",
+                "config",
+                "set",
+                "model.endpoint",
+                local_url,
+            ),
+            desc="set local endpoint",
+        )
+        run(
+            _cexec(
+                self.container,
+                self.uid,
+                self.gid,
+                "hermes",
+                "config",
+                "set",
+                "model.api_key",
+                local_api_key,
+            ),
+            desc="set local api key",
+        )
+
+    def _configure_credentials(self, cfg: HermesSettings, all_cfg: Settings | None = None) -> None:
         """Write API keys and tokens into ~/.hermes/.env inside the VM.
 
         Writes each configured secret directly to the Hermes env file.
@@ -343,6 +447,9 @@ class HermesVmManager(_BaseVmManager):
                 ),
                 desc="set openrouter provider",
             )
+
+        if cfg.has_local_llm() and all_cfg is not None:
+            self._configure_local_llm(all_cfg)
 
         if cfg.telegram_token:
             env_lines.append(f"TELEGRAM_BOT_TOKEN={cfg.telegram_token}")
@@ -380,6 +487,8 @@ class HermesVmManager(_BaseVmManager):
         console.print(f"  [green]✓[/green] credentials written to {env_path}")
         if cfg.has_openrouter():
             console.print("  [green]✓[/green] OpenRouter set as default provider")
+        if cfg.has_local_llm():
+            console.print("  [green]✓[/green] Local LLM set as default provider")
         if cfg.has_telegram():
             console.print("  [green]✓[/green] Telegram gateway credentials configured")
 

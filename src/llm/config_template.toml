@@ -285,7 +285,12 @@ host = "~/.config/opencode"
 # Set tokens here; run `uv run llm hermes setup` to create and configure the VM.
 
 [hermes]
-# OpenRouter API key — LLM backend for Hermes.
+# LLM backend for the Hermes agent: "local-llm" or "openrouter".
+# The local-llm backend uses the local llama-server; openrouter uses
+# https://openrouter.ai/.
+provider = "local-llm"
+
+# OpenRouter API key (used when provider = "openrouter").
 # https://openrouter.ai/keys
 openrouter_key = ""
 
