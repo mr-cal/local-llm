@@ -34,21 +34,29 @@ def _make_cfg(
 class TestConfigureCredentials:
     """Tests for HermesVmManager._configure_credentials."""
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.hermes_vm.run")
     def test_no_credentials_skips(self, mock_run):
         """When no credentials are set, the method should log a warning and skip."""
         mgr = MagicMock()
         mgr.container = "hermes"
+        mgr.uid = 1000
+        mgr.gid = 1000
+        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
+            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
+        )
         HermesVmManager._configure_credentials(mgr, _make_cfg())
         mock_run.assert_not_called()
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.hermes_vm.run")
     def test_single_credential_openrouter(self, mock_run):
         """When only openrouter_key is set, provider config and env write occur."""
         mgr = MagicMock()
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
+        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
+            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
+        )
         cfg = _make_cfg(provider="openrouter", openrouter_key="sk-or-v1-test")
         HermesVmManager._configure_credentials(mgr, cfg)
         # One call for setting provider, one for writing env
@@ -62,13 +70,16 @@ class TestConfigureCredentials:
         assert "model.provider" in cmd_str
         assert "openrouter" in cmd_str
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.hermes_vm.run")
     def test_all_credentials_written(self, mock_run):
         """When all credentials are set, all are written to .env."""
         mgr = MagicMock()
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
+        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
+            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
+        )
         cfg = _make_cfg(
             provider="openrouter",
             openrouter_key="sk-or-v1-test",
@@ -80,25 +91,31 @@ class TestConfigureCredentials:
         # One call for provider config, one for env write
         assert mock_run.call_count == 2
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.hermes_vm.run")
     def test_github_uses_has_github(self, mock_run):
         """Verify github_token uses has_github() guard (not raw truthiness)."""
         mgr = MagicMock()
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
+        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
+            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
+        )
         # Whitespace-only token should be treated as not set
         cfg = _make_cfg(github_token="   ")
         HermesVmManager._configure_credentials(mgr, cfg)
         mock_run.assert_not_called()
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.hermes_vm.run")
     def test_github_token_in_env_when_set(self, mock_run):
         """Verify GITHUB_TOKEN appears in env write when token is set."""
         mgr = MagicMock()
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
+        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
+            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
+        )
         cfg = _make_cfg(github_token="ghp_real")
         HermesVmManager._configure_credentials(mgr, cfg)
         env_call = mock_run.call_args_list[-1]

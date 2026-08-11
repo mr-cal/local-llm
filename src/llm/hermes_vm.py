@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from typing import Any
 
 from rich.console import Console
 
@@ -63,6 +64,31 @@ class HermesVmManager(_BaseVmManager):
 
     def __init__(self) -> None:
         super().__init__(HERMES_CONTAINER_NAME, uid=HOST_UID, gid=HOST_GID)
+
+    def _hermes_run(self, *args: str, desc: str | None = None, **kwargs: Any) -> None:
+        """Run a ``hermes`` CLI command inside the container with profile sourced.
+
+        The ``hermes`` binary is installed into ``~/.local/bin/`` which only appears
+        in PATH after ``/etc/profile`` is sourced (non-login shells skip it).
+        """
+        run(
+            self._hermes_exec(*args),
+            desc=desc or f"hermes {' '.join(args)}",
+            **kwargs,
+        )
+
+    def _hermes_exec(self, *args: str) -> list[str]:
+        """Build an ``lxc exec`` command that runs ``hermes`` with profile sourced."""
+        return _cexec(
+            self.container,
+            self.uid,
+            self.gid,
+            "bash",
+            "-c",
+            'source /etc/profile && exec hermes "$@"',
+            "_",
+            *args,
+        )
 
     # ── Full setup workflow ───────────────────────────────────────────────
 
@@ -130,7 +156,7 @@ class HermesVmManager(_BaseVmManager):
         run(["lxc", "exec", self.container, "--", "apt-get", "clean"])
 
         console.print("\n  [bold]hermes:[/bold] updating...")
-        run(_cexec(self.container, self.uid, self.gid, "hermes", "update"), desc="hermes update")
+        self._hermes_run("update", desc="hermes update")
 
         console.print("\n  [bold]credentials:[/bold] re-injecting...")
         self._configure_credentials(cfg, load_config())
@@ -234,31 +260,16 @@ class HermesVmManager(_BaseVmManager):
         version = "unknown"
         if vm_status == "Running":
             r4 = subprocess.run(
-                _cexec(
-                    self.container,
-                    self.uid,
-                    self.gid,
-                    "hermes",
-                    "--version",
-                ),
+                self._hermes_exec("--version"),
                 capture_output=True,
                 text=True,
             )
             version = r4.stdout.strip() or "unknown"
-
         # Credentials check: probe the configured provider
         credentials_ok = False
         if vm_status == "Running":
             r5 = subprocess.run(
-                _cexec(
-                    self.container,
-                    self.uid,
-                    self.gid,
-                    "hermes",
-                    "config",
-                    "get",
-                    "model.provider",
-                ),
+                self._hermes_exec("config", "get", "model.provider"),
                 capture_output=True,
                 text=True,
             )
@@ -284,6 +295,7 @@ class HermesVmManager(_BaseVmManager):
             elif provider in ("openai", "local"):
                 # Probe the local llama-server endpoint
                 from llm.config import load_config  # noqa: PLC0415
+
                 all_cfg = load_config()
                 if all_cfg.proxy.enabled:
                     url = f"https://local-llm:{all_cfg.proxy.port}/v1/models"
@@ -371,8 +383,14 @@ class HermesVmManager(_BaseVmManager):
             cert_dst = f"{CONTAINER_HOME}/.hermes/cert.pem"
             subprocess.run(
                 [
-                    "lxc", "file", "copy", self.container, "/", "--",
-                    f"--path=0{cert_src}", f"{self.container}/{cert_dst.lstrip('/')}",
+                    "lxc",
+                    "file",
+                    "copy",
+                    self.container,
+                    "/",
+                    "--",
+                    f"--path=0{cert_src}",
+                    f"{self.container}/{cert_dst.lstrip('/')}",
                 ],
                 capture_output=True,
             )
@@ -382,45 +400,9 @@ class HermesVmManager(_BaseVmManager):
 
         local_api_key = cfg.auth.api_key
 
-        run(
-            _cexec(
-                self.container,
-                self.uid,
-                self.gid,
-                "hermes",
-                "config",
-                "set",
-                "model.provider",
-                "openai",
-            ),
-            desc="set openai provider (local)",
-        )
-        run(
-            _cexec(
-                self.container,
-                self.uid,
-                self.gid,
-                "hermes",
-                "config",
-                "set",
-                "model.endpoint",
-                local_url,
-            ),
-            desc="set local endpoint",
-        )
-        run(
-            _cexec(
-                self.container,
-                self.uid,
-                self.gid,
-                "hermes",
-                "config",
-                "set",
-                "model.api_key",
-                local_api_key,
-            ),
-            desc="set local api key",
-        )
+        self._hermes_run("config", "set", "model.provider", "openai", desc="set openai provider (local)")
+        self._hermes_run("config", "set", "model.endpoint", local_url, desc="set local endpoint")
+        self._hermes_run("config", "set", "model.api_key", local_api_key, desc="set local api key")
 
     def _configure_credentials(self, cfg: HermesSettings, all_cfg: Settings | None = None) -> None:
         """Write API keys and tokens into ~/.hermes/.env inside the VM.
@@ -434,19 +416,7 @@ class HermesVmManager(_BaseVmManager):
         if cfg.has_openrouter():
             env_lines.append(f"OPENROUTER_API_KEY={cfg.openrouter_key}")
             # Set OpenRouter as default provider via config.yaml
-            run(
-                _cexec(
-                    self.container,
-                    self.uid,
-                    self.gid,
-                    "hermes",
-                    "config",
-                    "set",
-                    "model.provider",
-                    "openrouter",
-                ),
-                desc="set openrouter provider",
-            )
+            self._hermes_run("config", "set", "model.provider", "openrouter", desc="set openrouter provider")
 
         if cfg.has_local_llm() and all_cfg is not None:
             self._configure_local_llm(all_cfg)
@@ -466,7 +436,7 @@ class HermesVmManager(_BaseVmManager):
 
         # Merge into ~/.hermes/.env (append or create)
         env_path = f"{CONTAINER_HOME}/.hermes/.env"
-        subprocess.run(
+        run(
             _cexec(
                 self.container,
                 self.uid,
@@ -482,7 +452,7 @@ class HermesVmManager(_BaseVmManager):
                     for line in env_lines
                 ),
             ),
-            check=True,
+            desc="write hermes credentials",
         )
         console.print(f"  [green]✓[/green] credentials written to {env_path}")
         if cfg.has_openrouter():
@@ -499,17 +469,7 @@ class HermesVmManager(_BaseVmManager):
         ~/.config/systemd/user/hermes-gateway.service and enables it.
         Also enables linger so the service survives after logout.
         """
-        run(
-            _cexec(
-                self.container,
-                self.uid,
-                self.gid,
-                "hermes",
-                "gateway",
-                "install",
-            ),
-            desc="hermes gateway install",
-        )
+        self._hermes_run("gateway", "install", desc="hermes gateway install")
         # Enable linger so the user service persists after logout
         run(
             ["lxc", "exec", self.container, "--", "loginctl", "enable-linger", str(self.uid)],
