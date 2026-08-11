@@ -78,14 +78,18 @@ class HermesVmManager(_BaseVmManager):
         )
 
     def _hermes_exec(self, *args: str) -> list[str]:
-        """Build an ``lxc exec`` command that runs ``hermes`` with profile sourced."""
+        """Build an ``lxc exec`` command that runs ``hermes`` with ~/.profile sourced.
+
+        The ``hermes`` binary is installed into ``~/.local/bin/`` which is only in
+        PATH after ``~/.profile`` is sourced (a login shell or explicit source).
+        """
         return _cexec(
             self.container,
             self.uid,
             self.gid,
             "bash",
             "-c",
-            'source /etc/profile && exec hermes "$@"',
+            'source ~/.profile && exec hermes "$@"',
             "_",
             *args,
         )
