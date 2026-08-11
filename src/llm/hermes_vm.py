@@ -16,7 +16,7 @@ import subprocess
 
 from rich.console import Console
 
-from llm.config import HermesSettings, Settings
+from llm.config import HermesSettings, Settings, load_config
 
 # Import shared LXD infrastructure from lxd.py
 from llm.lxd import (
