@@ -476,15 +476,18 @@ class HermesVmManager(_BaseVmManager):
         ~/.config/systemd/user/hermes-gateway.service and enables it.
         Also enables linger so the service survives after logout.
         """
-        # Ensure user dbus and systemd are running before gateway install.
-        # In a fresh container, user systemd hasn't been started yet.
+        # Start dbus-daemon and user systemd before gateway install.
+        # In a fresh container, user systemd hasn't been initialized yet.
+        # dbus-daemon must be started first (systemctl --user needs a running bus),
+        # then systemd-user can connect and daemon-reload will work.
         run(
             [
                 "lxc", "exec", self.container, "--",
                 "bash", "-c",
-                "systemctl --user start dbus && systemctl --user daemon-reload",
+                "dbus-daemon --session --fork --print-pid && "
+                "systemctl --user daemon-reload",
             ],
-            desc="init user systemd/dbus",
+            desc="init user dbus/systemd",
         )
         self._hermes_run("gateway", "install", desc="hermes gateway install")
         # Enable linger so the user service persists after logout
