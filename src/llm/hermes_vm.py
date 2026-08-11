@@ -45,6 +45,9 @@ _PREREQ_PACKAGES = [
     "git",
     "ca-certificates",
     "jq",
+    "dbus",
+    "dbus-user-session",
+    "systemd",
 ]
 
 
