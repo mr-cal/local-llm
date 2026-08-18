@@ -414,6 +414,33 @@ class TestRunLlamaBench:
         assert rows == []
 
 
+# ── _abort_if_server_running ───────────────────────────────────────────────────
+
+
+class TestAbortIfServerRunning:
+    def test_passes_when_nothing_running(self, tmp_config_bench, fake_console, monkeypatch):
+        monkeypatch.chdir(tmp_config_bench.parent)
+        monkeypatch.setattr("llm.server._read_pid", lambda port, pid_file: None)
+        cfg = benchmark.load_config()
+        benchmark._abort_if_server_running(cfg)  # should not raise
+
+    def test_aborts_when_chat_server_running(self, tmp_config_bench, fake_console, monkeypatch):
+        monkeypatch.chdir(tmp_config_bench.parent)
+        monkeypatch.setattr("llm.server._read_pid", lambda port, pid_file: 1234 if port == 8080 else None)
+        cfg = benchmark.load_config()
+        with pytest.raises(click.exceptions.Exit):
+            benchmark._abort_if_server_running(cfg)
+
+    def test_aborts_when_embed_server_running(self, tmp_config_bench, fake_console, monkeypatch):
+        monkeypatch.chdir(tmp_config_bench.parent)
+        cfg = benchmark.load_config()
+        monkeypatch.setattr(
+            "llm.server._read_pid", lambda port, pid_file: 5678 if port == cfg.embed.port else None
+        )
+        with pytest.raises(click.exceptions.Exit):
+            benchmark._abort_if_server_running(cfg)
+
+
 # ── _apply_config ─────────────────────────────────────────────────────────────
 
 
