@@ -7,6 +7,7 @@ import hashlib
 import io
 import re
 import subprocess
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -120,6 +121,26 @@ def _bench_tps(
     return (sum(pp) / len(pp) if pp else 0.0, sum(tg) / len(tg) if tg else 0.0)
 
 
+# Low ngl values force most/all model weights into CPU RAM. On memory-constrained
+# hosts this can exhaust available memory, causing the kernel to thrash swap (or
+# invoke the OOM killer too late) and freeze the whole system. We poll available
+# memory while llama-bench runs and kill it before that happens.
+_MIN_AVAILABLE_MB = 1024
+_MEM_POLL_INTERVAL_S = 1.0
+
+
+def _available_memory_mb() -> float | None:
+    """Return current MemAvailable from /proc/meminfo in MiB, or None if unavailable."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 def _run_llama_bench(
     bench_bin: Path,
     model_path: Path,
@@ -130,8 +151,13 @@ def _run_llama_bench(
     n_prompt: int = 512,
     n_gen: int = 128,
     repetitions: int = 2,
+    min_available_mb: float = _MIN_AVAILABLE_MB,
 ) -> list[dict[str, str]]:
-    """Run llama-bench with given parameter combinations; return parsed CSV rows."""
+    """Run llama-bench with given parameter combinations; return parsed CSV rows.
+
+    A background watchdog kills the process if system memory runs critically low,
+    to avoid an OOM/swap-thrash system freeze (see low-ngl CPU RAM note above).
+    """
     cmd = [
         str(bench_bin),
         "-m",
@@ -155,8 +181,44 @@ def _run_llama_bench(
         ",".join(ctk_values),
     ]
     console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
-    result = subprocess.run(cmd, capture_output=False, stdout=subprocess.PIPE, text=True)
-    return _parse_bench_csv(result.stdout)
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    stop_event = threading.Event()
+    killed = threading.Event()
+
+    def _watch_memory() -> None:
+        while not stop_event.is_set():
+            available_mb = _available_memory_mb()
+            if available_mb is not None and available_mb < min_available_mb:
+                console.print(
+                    f"[red]Low memory ({available_mb:.0f} MiB available, "
+                    f"threshold {min_available_mb:.0f} MiB) - killing llama-bench "
+                    "before it freezes the system.[/red]"
+                )
+                killed.set()
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                return
+            stop_event.wait(_MEM_POLL_INTERVAL_S)
+
+    watchdog = threading.Thread(target=_watch_memory, daemon=True)
+    watchdog.start()
+    try:
+        stdout, _ = proc.communicate()
+    finally:
+        stop_event.set()
+        watchdog.join(timeout=_MEM_POLL_INTERVAL_S + 1)
+
+    if killed.is_set():
+        console.print(
+            "[yellow]Skipping this configuration - reduce ngl sweep values, "
+            "add swap, or free up memory before retrying.[/yellow]"
+        )
+        return []
+    return _parse_bench_csv(stdout)
 
 
 def _apply_config(n_gpu_layers: int, flash_attn: bool, ctk: str) -> None:
@@ -514,6 +576,14 @@ def tune(
     apply: Annotated[
         bool, typer.Option("--apply/--no-apply", help="Write best settings to config.toml.")
     ] = True,
+    min_free_mb: Annotated[
+        float,
+        typer.Option(
+            "--min-free-mb",
+            help="Abort a configuration if available system memory drops below this "
+            "(protects against OOM/swap-thrash freezes at low ngl values).",
+        ),
+    ] = _MIN_AVAILABLE_MB,
 ) -> None:
     """3-phase optimization sweep: GPU layers → flash-attn → KV-cache quant.
 
@@ -534,6 +604,7 @@ def tune(
     console.print(f"  bench binary : {bench_bin}")
     console.print(f"  repetitions  : {repetitions}  |  prompt: {n_prompt} tok  gen: {n_gen} tok")
     console.print(f"  ngl sweep    : {ngl_list}")
+    console.print(f"  min free mem : {min_free_mb:.0f} MiB")
     console.print()
 
     # ── Phase 1: GPU layer sweep ──────────────────────────────────────────────
@@ -550,6 +621,7 @@ def tune(
         n_prompt=n_prompt,
         n_gen=n_gen,
         repetitions=repetitions,
+        min_available_mb=min_free_mb,
     )
 
     t_p1 = Table(title="Phase 1: GPU layers", show_header=True)
@@ -582,6 +654,7 @@ def tune(
         n_prompt=n_prompt,
         n_gen=n_gen,
         repetitions=repetitions,
+        min_available_mb=min_free_mb,
     )
 
     t_p2 = Table(title="Phase 2: Flash-attention", show_header=True)
@@ -615,6 +688,7 @@ def tune(
         n_prompt=n_prompt,
         n_gen=n_gen,
         repetitions=repetitions,
+        min_available_mb=min_free_mb,
     )
 
     t_p3 = Table(title="Phase 3: KV-cache type", show_header=True)

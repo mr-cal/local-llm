@@ -228,10 +228,69 @@ class TestBenchTps:
         assert tg == pytest.approx(25.0)
 
 
+# ── _available_memory_mb ──────────────────────────────────────────────────────
+
+
+class TestAvailableMemoryMb:
+    def _patch_open(self, monkeypatch, real_open, replacement):
+        def _fake_open(path, *a, **kw):
+            if path == "/proc/meminfo":
+                return replacement()
+            return real_open(path, *a, **kw)
+
+        monkeypatch.setattr("builtins.open", _fake_open)
+
+    def test_parses_mem_available(self, tmp_path, monkeypatch):
+        real_open = open
+        meminfo = tmp_path / "meminfo"
+        meminfo.write_text("MemTotal:       16144972 kB\nMemAvailable:   12538480 kB\n")
+        self._patch_open(monkeypatch, real_open, lambda: real_open(meminfo))
+        assert benchmark._available_memory_mb() == pytest.approx(12538480 / 1024)
+
+    def test_returns_none_when_missing(self, monkeypatch):
+        real_open = open
+
+        def _raise():
+            raise OSError("no such file")
+
+        self._patch_open(monkeypatch, real_open, _raise)
+        assert benchmark._available_memory_mb() is None
+
+    def test_returns_none_when_field_absent(self, tmp_path, monkeypatch):
+        real_open = open
+        meminfo = tmp_path / "meminfo"
+        meminfo.write_text("MemTotal:       16144972 kB\n")
+        self._patch_open(monkeypatch, real_open, lambda: real_open(meminfo))
+        assert benchmark._available_memory_mb() is None
+
+
 # ── _run_llama_bench ──────────────────────────────────────────────────────────
 
 
 class TestRunLlamaBench:
+    def test_kills_process_and_returns_empty_on_low_memory(self, tmp_path, fake_console, monkeypatch):
+        bench = tmp_path / "llama-bench"
+        # Sleep long enough for the watchdog to notice and terminate it first.
+        bench.write_text("#!/bin/bash\nsleep 30\necho 'n_gpu_layers,n_prompt,n_gen,avg_ts'\n")
+        bench.chmod(0o755)
+
+        model = tmp_path / "model.gguf"
+        model.touch()
+
+        monkeypatch.setattr(benchmark, "_MEM_POLL_INTERVAL_S", 0.05)
+        monkeypatch.setattr(benchmark, "_available_memory_mb", lambda: 100.0)
+
+        rows = benchmark._run_llama_bench(
+            bench_bin=bench,
+            model_path=model,
+            n_threads=12,
+            ngl_values=[0],
+            flash_attn_values=[0],
+            ctk_values=["f16"],
+            min_available_mb=1024,
+        )
+        assert rows == []
+
     def test_runs_bench_with_correct_args(self, tmp_path, fake_console):
         bench = tmp_path / "llama-bench"
         bench.write_text("#!/bin/bash\necho 'n_gpu_layers,n_prompt,n_gen,avg_ts'\necho '20,512,0,10.0'\n")
