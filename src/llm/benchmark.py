@@ -151,11 +151,55 @@ def _available_memory_mb() -> float | None:
     return None
 
 
-def _run_one_bench(cmd: list[str], min_available_mb: float) -> tuple[list[dict[str, str]], bool]:
+# High ngl values push model weights into the GPU's VRAM/GTT pool. On an
+# integrated GPU that pool is capped independently of total system RAM (e.g. a
+# fixed GTT carveout), so it can be exhausted well before system RAM runs low.
+# When that happens the GPU driver can crash/reset, taking down every other
+# Mesa client sharing the GPU (e.g. the terminal emulator's own GPU-accelerated
+# rendering) - not just llama-bench. We watch GPU headroom the same way as
+# system RAM and kill llama-bench before that happens.
+_MIN_GPU_FREE_MB = 512
+
+
+def _gpu_memory_status() -> tuple[float, float] | None:
+    """Return (used_mb, total_mb) for whichever AMD GPU memory pool (VRAM or GTT)
+    is currently more utilized, or None if unavailable.
+
+    Mirrors _read_gpu_gtt_mb()'s "report whichever pool is larger" logic, but
+    also returns that pool's total capacity so callers can compute headroom.
+    """
+    for card in sorted(Path("/sys/class/drm").glob("card*")):
+        dev = card / "device"
+        vram_used_f = dev / "mem_info_vram_used"
+        vram_total_f = dev / "mem_info_vram_total"
+        gtt_used_f = dev / "mem_info_gtt_used"
+        gtt_total_f = dev / "mem_info_gtt_total"
+        if not vram_used_f.exists():
+            continue
+        try:
+            vram_used = int(vram_used_f.read_text().strip()) / (1024 * 1024)
+            vram_total = (
+                int(vram_total_f.read_text().strip()) / (1024 * 1024) if vram_total_f.exists() else 0.0
+            )
+            gtt_used = int(gtt_used_f.read_text().strip()) / (1024 * 1024) if gtt_used_f.exists() else 0.0
+            gtt_total = int(gtt_total_f.read_text().strip()) / (1024 * 1024) if gtt_total_f.exists() else 0.0
+            return (gtt_used, gtt_total) if gtt_used > vram_used else (vram_used, vram_total)
+        except (ValueError, OSError):
+            pass
+    return None
+
+
+def _run_one_bench(
+    cmd: list[str],
+    min_available_mb: float,
+    min_gpu_free_mb: float = _MIN_GPU_FREE_MB,
+) -> tuple[list[dict[str, str]], bool]:
     """Run a single llama-bench invocation with a memory watchdog.
 
-    Returns (rows, killed). A background thread polls available memory and kills
-    the process before it can freeze the system (see low-ngl CPU RAM note above).
+    Returns (rows, killed). A background thread polls both available system RAM
+    and available GPU memory (VRAM/GTT), killing the process before either one
+    runs low enough to freeze the system or crash the GPU driver (see notes
+    above on low-ngl CPU RAM and high-ngl GPU memory exhaustion).
     """
     console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
 
@@ -168,18 +212,34 @@ def _run_one_bench(cmd: list[str], min_available_mb: float) -> tuple[list[dict[s
             available_mb = _available_memory_mb()
             if available_mb is not None and available_mb < min_available_mb:
                 console.print(
-                    f"[red]Low memory ({available_mb:.0f} MiB available, "
+                    f"[red]Low system memory ({available_mb:.0f} MiB available, "
                     f"threshold {min_available_mb:.0f} MiB) - killing llama-bench "
                     "before it freezes the system.[/red]"
                 )
                 killed.set()
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                return
+                break
+
+            gpu_status = _gpu_memory_status()
+            if gpu_status is not None:
+                gpu_used_mb, gpu_total_mb = gpu_status
+                gpu_free_mb = gpu_total_mb - gpu_used_mb
+                if gpu_total_mb > 0 and gpu_free_mb < min_gpu_free_mb:
+                    console.print(
+                        f"[red]Low GPU memory ({gpu_free_mb:.0f} MiB free, "
+                        f"threshold {min_gpu_free_mb:.0f} MiB) - killing llama-bench "
+                        "before it crashes the GPU driver.[/red]"
+                    )
+                    killed.set()
+                    break
+
             stop_event.wait(_MEM_POLL_INTERVAL_S)
+
+        if killed.is_set():
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
     watchdog = threading.Thread(target=_watch_memory, daemon=True)
     watchdog.start()
@@ -205,6 +265,7 @@ def _run_llama_bench(
     n_gen: int = 128,
     repetitions: int = 2,
     min_available_mb: float = _MIN_AVAILABLE_MB,
+    min_gpu_free_mb: float = _MIN_GPU_FREE_MB,
 ) -> list[dict[str, str]]:
     """Run llama-bench across ngl values; return parsed CSV rows.
 
@@ -238,7 +299,7 @@ def _run_llama_bench(
             "-ctk",
             ",".join(ctk_values),
         ]
-        rows, killed = _run_one_bench(cmd, min_available_mb)
+        rows, killed = _run_one_bench(cmd, min_available_mb, min_gpu_free_mb)
         if killed:
             console.print(
                 f"[yellow]Skipping ngl={ngl_val} - too little memory available. "
@@ -621,6 +682,15 @@ def tune(
             "(protects against OOM/swap-thrash freezes at low ngl values).",
         ),
     ] = _MIN_AVAILABLE_MB,
+    min_gpu_free_mb: Annotated[
+        float,
+        typer.Option(
+            "--min-gpu-free-mb",
+            help="Abort a configuration if available GPU memory (VRAM/GTT) drops below this "
+            "(protects against GPU driver crashes at high ngl values, which can take down "
+            "other GPU clients like your terminal).",
+        ),
+    ] = _MIN_GPU_FREE_MB,
 ) -> None:
     """3-phase optimization sweep: GPU layers → flash-attn → KV-cache quant.
 
@@ -641,7 +711,7 @@ def tune(
     console.print(f"  bench binary : {bench_bin}")
     console.print(f"  repetitions  : {repetitions}  |  prompt: {n_prompt} tok  gen: {n_gen} tok")
     console.print(f"  ngl sweep    : {ngl_list}")
-    console.print(f"  min free mem : {min_free_mb:.0f} MiB")
+    console.print(f"  min free mem : {min_free_mb:.0f} MiB (system)  |  {min_gpu_free_mb:.0f} MiB (GPU)")
     console.print()
 
     # ── Phase 1: GPU layer sweep ──────────────────────────────────────────────
@@ -659,6 +729,7 @@ def tune(
         n_gen=n_gen,
         repetitions=repetitions,
         min_available_mb=min_free_mb,
+        min_gpu_free_mb=min_gpu_free_mb,
     )
 
     t_p1 = Table(title="Phase 1: GPU layers", show_header=True)
@@ -700,6 +771,7 @@ def tune(
         n_gen=n_gen,
         repetitions=repetitions,
         min_available_mb=min_free_mb,
+        min_gpu_free_mb=min_gpu_free_mb,
     )
 
     t_p2 = Table(title="Phase 2: Flash-attention", show_header=True)
@@ -734,6 +806,7 @@ def tune(
         n_gen=n_gen,
         repetitions=repetitions,
         min_available_mb=min_free_mb,
+        min_gpu_free_mb=min_gpu_free_mb,
     )
 
     t_p3 = Table(title="Phase 3: KV-cache type", show_header=True)
