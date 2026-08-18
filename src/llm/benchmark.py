@@ -128,9 +128,15 @@ def _bench_tps(
 _MIN_AVAILABLE_MB = 1024
 _MEM_POLL_INTERVAL_S = 1.0
 
-# Default ngl sweep for `tune`: 0, 5, 10, ..., 95, 99 (21 points spanning
-# CPU-only to full-GPU offload). 99 is llama.cpp's sentinel for "all layers".
-_DEFAULT_NGL_SWEEP = ",".join(str(v) for v in [*range(0, 100, 5), 99])
+# Default ngl sweep for `tune`: every discrete value from --ngl-min to 99 (llama.cpp's
+# sentinel for "all layers"), i.e. full CPU-only through full-GPU offload.
+_DEFAULT_NGL_MIN = 0
+_DEFAULT_NGL_MAX = 99
+
+
+def _default_ngl_sweep(ngl_min: int) -> list[int]:
+    """Every discrete n_gpu_layers value from ngl_min through 99, inclusive."""
+    return list(range(ngl_min, _DEFAULT_NGL_MAX + 1))
 
 
 def _available_memory_mb() -> float | None:
@@ -589,9 +595,18 @@ def _run_llama_bench_raw(cfg: object) -> None:
 @app.command("tune")
 def tune(
     ngl: Annotated[
-        str,
-        typer.Option("--ngl", help="Comma-separated n_gpu_layers values. Default sweeps 0→99 in steps of 5."),
-    ] = _DEFAULT_NGL_SWEEP,
+        str | None,
+        typer.Option(
+            "--ngl", help="Comma-separated n_gpu_layers values. Default: every value from --ngl-min to 99."
+        ),
+    ] = None,
+    ngl_min: Annotated[
+        int,
+        typer.Option(
+            "--ngl-min",
+            help="Lowest n_gpu_layers value to try (skip low values known to OOM/crash this host).",
+        ),
+    ] = _DEFAULT_NGL_MIN,
     repetitions: Annotated[int, typer.Option("-r", help="Repetitions per configuration.")] = 2,
     n_prompt: Annotated[int, typer.Option("--n-prompt", help="Prompt tokens for benchmark.")] = 512,
     n_gen: Annotated[int, typer.Option("--n-gen", help="Generated tokens for benchmark.")] = 128,
@@ -620,7 +635,7 @@ def tune(
 
     model_path = cfg.model_path
     n_threads = cfg.server.n_threads
-    ngl_list = [int(x) for x in ngl.split(",")]
+    ngl_list = [int(x) for x in ngl.split(",")] if ngl is not None else _default_ngl_sweep(ngl_min)
 
     console.print(f"\n[bold cyan]╔══ Benchmark Tune: {cfg.models.active} ══╗[/bold cyan]")
     console.print(f"  bench binary : {bench_bin}")

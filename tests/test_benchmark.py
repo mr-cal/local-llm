@@ -228,6 +228,20 @@ class TestBenchTps:
         assert tg == pytest.approx(25.0)
 
 
+# ── _default_ngl_sweep ─────────────────────────────────────────────────────────
+
+
+class TestDefaultNglSweep:
+    def test_covers_every_discrete_value_from_zero(self):
+        assert benchmark._default_ngl_sweep(0) == list(range(0, 100))
+
+    def test_respects_ngl_min(self):
+        result = benchmark._default_ngl_sweep(20)
+        assert result[0] == 20
+        assert result[-1] == 99
+        assert result == list(range(20, 100))
+
+
 # ── _available_memory_mb ──────────────────────────────────────────────────────
 
 
