@@ -128,6 +128,10 @@ def _bench_tps(
 _MIN_AVAILABLE_MB = 1024
 _MEM_POLL_INTERVAL_S = 1.0
 
+# Default ngl sweep for `tune`: 0, 5, 10, ..., 95, 99 (21 points spanning
+# CPU-only to full-GPU offload). 99 is llama.cpp's sentinel for "all layers".
+_DEFAULT_NGL_SWEEP = ",".join(str(v) for v in [*range(0, 100, 5), 99])
+
 
 def _available_memory_mb() -> float | None:
     """Return current MemAvailable from /proc/meminfo in MiB, or None if unavailable."""
@@ -141,45 +145,12 @@ def _available_memory_mb() -> float | None:
     return None
 
 
-def _run_llama_bench(
-    bench_bin: Path,
-    model_path: Path,
-    n_threads: int,
-    ngl_values: list[int],
-    flash_attn_values: list[int],
-    ctk_values: list[str],
-    n_prompt: int = 512,
-    n_gen: int = 128,
-    repetitions: int = 2,
-    min_available_mb: float = _MIN_AVAILABLE_MB,
-) -> list[dict[str, str]]:
-    """Run llama-bench with given parameter combinations; return parsed CSV rows.
+def _run_one_bench(cmd: list[str], min_available_mb: float) -> tuple[list[dict[str, str]], bool]:
+    """Run a single llama-bench invocation with a memory watchdog.
 
-    A background watchdog kills the process if system memory runs critically low,
-    to avoid an OOM/swap-thrash system freeze (see low-ngl CPU RAM note above).
+    Returns (rows, killed). A background thread polls available memory and kills
+    the process before it can freeze the system (see low-ngl CPU RAM note above).
     """
-    cmd = [
-        str(bench_bin),
-        "-m",
-        str(model_path),
-        "-t",
-        str(n_threads),
-        "-p",
-        str(n_prompt),
-        "-n",
-        str(n_gen),
-        "-r",
-        str(repetitions),
-        "-o",
-        "csv",
-        "--progress",
-        "-ngl",
-        ",".join(str(v) for v in ngl_values),
-        "-fa",
-        ",".join(str(v) for v in flash_attn_values),
-        "-ctk",
-        ",".join(ctk_values),
-    ]
     console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
@@ -213,12 +184,63 @@ def _run_llama_bench(
         watchdog.join(timeout=_MEM_POLL_INTERVAL_S + 1)
 
     if killed.is_set():
-        console.print(
-            "[yellow]Skipping this configuration - reduce ngl sweep values, "
-            "add swap, or free up memory before retrying.[/yellow]"
-        )
-        return []
-    return _parse_bench_csv(stdout)
+        return [], True
+    return _parse_bench_csv(stdout), False
+
+
+def _run_llama_bench(
+    bench_bin: Path,
+    model_path: Path,
+    n_threads: int,
+    ngl_values: list[int],
+    flash_attn_values: list[int],
+    ctk_values: list[str],
+    n_prompt: int = 512,
+    n_gen: int = 128,
+    repetitions: int = 2,
+    min_available_mb: float = _MIN_AVAILABLE_MB,
+) -> list[dict[str, str]]:
+    """Run llama-bench across ngl values; return parsed CSV rows.
+
+    Each ngl value is run as its own llama-bench invocation (rather than passing
+    the whole sweep as one "-ngl a,b,c" call) so that a low-ngl configuration
+    that trips the memory watchdog only loses that one data point - the sweep
+    keeps going to try the remaining (typically less memory-hungry, higher-ngl)
+    values instead of aborting the whole phase.
+    """
+    all_rows: list[dict[str, str]] = []
+    for ngl_val in ngl_values:
+        cmd = [
+            str(bench_bin),
+            "-m",
+            str(model_path),
+            "-t",
+            str(n_threads),
+            "-p",
+            str(n_prompt),
+            "-n",
+            str(n_gen),
+            "-r",
+            str(repetitions),
+            "-o",
+            "csv",
+            "--progress",
+            "-ngl",
+            str(ngl_val),
+            "-fa",
+            ",".join(str(v) for v in flash_attn_values),
+            "-ctk",
+            ",".join(ctk_values),
+        ]
+        rows, killed = _run_one_bench(cmd, min_available_mb)
+        if killed:
+            console.print(
+                f"[yellow]Skipping ngl={ngl_val} - too little memory available. "
+                "Continuing sweep with remaining ngl values.[/yellow]"
+            )
+            continue
+        all_rows.extend(rows)
+    return all_rows
 
 
 def _apply_config(n_gpu_layers: int, flash_attn: bool, ctk: str) -> None:
@@ -568,8 +590,8 @@ def _run_llama_bench_raw(cfg: object) -> None:
 def tune(
     ngl: Annotated[
         str,
-        typer.Option("--ngl", help="Comma-separated n_gpu_layers values. Default covers CPU→full GPU."),
-    ] = "0,16,32,48,99",
+        typer.Option("--ngl", help="Comma-separated n_gpu_layers values. Default sweeps 0→99 in steps of 5."),
+    ] = _DEFAULT_NGL_SWEEP,
     repetitions: Annotated[int, typer.Option("-r", help="Repetitions per configuration.")] = 2,
     n_prompt: Annotated[int, typer.Option("--n-prompt", help="Prompt tokens for benchmark.")] = 512,
     n_gen: Annotated[int, typer.Option("--n-gen", help="Generated tokens for benchmark.")] = 128,
@@ -630,15 +652,23 @@ def tune(
     t_p1.add_column("TG tok/s", justify="right", style="bold")
 
     best_ngl, best_tg = ngl_list[0], 0.0
+    any_success = False
     for ngl_val in ngl_list:
         pp, tg = _bench_tps(rows_p1, n_gpu_layers=ngl_val)
+        if pp or tg:
+            any_success = True
         marker = ""
         if tg > best_tg:
             best_tg, best_ngl = tg, ngl_val
         t_p1.add_row(str(ngl_val), f"{pp:.1f}", f"{tg:.1f}{marker}")
 
-    # Re-mark best
     console.print(t_p1)
+    if not any_success:
+        console.print(
+            "[red]Every ngl value ran out of memory - unable to tune.[/red] "
+            "Free up memory, add swap, or raise --min-free-mb's floor with more RAM before retrying."
+        )
+        raise typer.Exit(1)
     console.print(f"  → Best ngl: [green]{best_ngl}[/green]  ({best_tg:.1f} tg tok/s)\n")
 
     # ── Phase 2: Flash-attention test ─────────────────────────────────────────

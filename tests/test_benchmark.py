@@ -310,7 +310,7 @@ class TestRunLlamaBench:
             n_gen=128,
             repetitions=2,
         )
-        assert len(rows) == 1
+        assert len(rows) == 2
 
     def test_returns_empty_on_failure(self, tmp_path, fake_console):
         bench = tmp_path / "llama-bench"
