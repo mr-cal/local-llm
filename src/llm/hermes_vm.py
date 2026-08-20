@@ -39,7 +39,11 @@ HERMES_CONTAINER_NAME = "hermes"
 _HERMES_INSTALL_URL = "https://hermes-agent.nousresearch.com/install.sh"
 
 # Minimal system packages — the Hermes install script handles uv, Python,
-# Node.js, ripgrep, and ffmpeg itself.
+# Node.js, ripgrep, and ffmpeg itself. libatomic1 isn't pulled in by the base
+# image but is required by the prebuilt Node.js binary the script downloads;
+# without it `node` fails with "error while loading shared libraries:
+# libatomic.so.1" (which the install script reports as exit 127 / "Command
+# not found").
 _PREREQ_PACKAGES = [
     "curl",
     "git",
@@ -48,6 +52,7 @@ _PREREQ_PACKAGES = [
     "dbus",
     "dbus-user-session",
     "systemd",
+    "libatomic1",
 ]
 
 
