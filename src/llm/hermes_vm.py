@@ -22,6 +22,7 @@ from llm.config import HermesSettings, Settings, load_config
 # Import shared LXD infrastructure from lxd.py
 from llm.lxd import (
     CONTAINER_HOME,
+    CONTAINER_USER,
     HOST_GID,
     HOST_UID,
     _BaseVmManager,
@@ -49,8 +50,6 @@ _PREREQ_PACKAGES = [
     "git",
     "ca-certificates",
     "jq",
-    "dbus",
-    "dbus-user-session",
     "systemd",
     "libatomic1",
 ]
@@ -173,32 +172,17 @@ class HermesVmManager(_BaseVmManager):
         console.print("\n  [bold]credentials:[/bold] re-injecting...")
         self._configure_credentials(cfg, load_config())
 
-        # Restart the gateway service if it's already installed
+        # Restart the gateway service if it's already installed. The gateway
+        # runs as a system-level systemd service (see _setup_gateway_service),
+        # so this is a plain `systemctl`, not `systemctl --user`.
         r = subprocess.run(
-            _cexec(
-                self.container,
-                self.uid,
-                self.gid,
-                "systemctl",
-                "--user",
-                "is-active",
-                "--quiet",
-                "hermes-gateway",
-            ),
+            ["lxc", "exec", self.container, "--", "systemctl", "is-active", "--quiet", "hermes-gateway"],
             capture_output=True,
         )
         if r.returncode == 0:
             console.print("\n  [bold]gateway:[/bold] restarting service...")
             run(
-                _cexec(
-                    self.container,
-                    self.uid,
-                    self.gid,
-                    "systemctl",
-                    "--user",
-                    "restart",
-                    "hermes-gateway",
-                ),
+                ["lxc", "exec", self.container, "--", "systemctl", "restart", "hermes-gateway"],
                 desc="restart gateway",
             )
             console.print("  [green]✓[/green] gateway restarted")
@@ -229,16 +213,10 @@ class HermesVmManager(_BaseVmManager):
         gateway_status = "unknown"
         uptime_seconds = 0
         if vm_status == "Running":
+            # The gateway runs as a system-level systemd service (see
+            # _setup_gateway_service), so plain `systemctl`, not `systemctl --user`.
             r2 = subprocess.run(
-                _cexec(
-                    self.container,
-                    self.uid,
-                    self.gid,
-                    "systemctl",
-                    "--user",
-                    "is-active",
-                    "hermes-gateway",
-                ),
+                ["lxc", "exec", self.container, "--", "systemctl", "is-active", "hermes-gateway"],
                 capture_output=True,
                 text=True,
             )
@@ -246,16 +224,16 @@ class HermesVmManager(_BaseVmManager):
 
             # Uptime: systemctl show returns ActiveEnterTimestampEpoch in epoch seconds
             r3 = subprocess.run(
-                _cexec(
+                [
+                    "lxc",
+                    "exec",
                     self.container,
-                    self.uid,
-                    self.gid,
+                    "--",
                     "systemctl",
-                    "--user",
                     "show",
                     "--property=ActiveEnterTimestampEpoch",
                     "hermes-gateway",
-                ),
+                ],
                 capture_output=True,
                 text=True,
             )
@@ -475,33 +453,35 @@ class HermesVmManager(_BaseVmManager):
             console.print("  [green]✓[/green] Telegram gateway credentials configured")
 
     def _setup_gateway_service(self) -> None:
-        """Install the Hermes gateway as a systemd user service.
+        """Install the Hermes gateway as a system-level systemd service.
 
-        Runs ``hermes gateway install`` which generates
-        ~/.config/systemd/user/hermes-gateway.service and enables it.
-        Also enables linger so the service survives after logout.
+        ``hermes gateway install`` defaults to a per-user service under
+        ``~/.config/systemd/user/``, which needs a running session bus.
+        A fresh, non-interactive LXD VM has no logged-in session, so
+        ``systemctl --user`` (and any workaround to bootstrap one) is
+        fragile. Passing ``--system --run-as-user`` instead installs
+        ``/etc/systemd/system/hermes-gateway.service``, managed directly by
+        PID 1 — no session bus or linger required.
         """
-        # Start dbus-daemon and user systemd before gateway install.
-        # In a fresh container, user systemd hasn't been initialized yet.
-        # dbus-daemon must be started first (systemctl --user needs a running bus),
-        # then systemd-user can connect and daemon-reload will work.
+        hermes_bin = f"{CONTAINER_HOME}/.local/bin/hermes"
         run(
             [
-                "lxc", "exec", self.container, "--",
-                "bash", "-c",
-                "dbus-daemon --session --fork --print-pid && "
-                "systemctl --user daemon-reload",
+                "lxc",
+                "exec",
+                self.container,
+                "--",
+                "sudo",
+                hermes_bin,
+                "gateway",
+                "install",
+                "--system",
+                "--run-as-user",
+                CONTAINER_USER,
+                "--start-now",
+                "--start-on-login",
+                "--force",
             ],
-            desc="init user dbus/systemd",
+            desc="hermes gateway install --system",
         )
-        self._hermes_run("gateway", "install", desc="hermes gateway install")
-        # Enable linger so the user service persists after logout
-        run(
-            ["lxc", "exec", self.container, "--", "loginctl", "enable-linger", str(self.uid)],
-            desc="loginctl enable-linger",
-        )
-        console.print("  [green]✓[/green] gateway service installed and linger enabled")
-        console.print(
-            "  Start with: [bold]lxc exec hermes -- "
-            "su -l $USER -c 'systemctl --user start hermes-gateway'[/bold]"
-        )
+        console.print("  [green]✓[/green] gateway system service installed and started")
+        console.print("  Manage with: [bold]lxc exec hermes -- systemctl status hermes-gateway[/bold]")
