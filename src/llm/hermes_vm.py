@@ -390,20 +390,26 @@ class HermesVmManager(_BaseVmManager):
             # Copy the CA cert into the VM so TLS is trusted
             cert_src = cfg.proxy.cert_path  # e.g. /etc/ssl/local-llm/cert.pem
             cert_dst = f"{CONTAINER_HOME}/.hermes/cert.pem"
-            subprocess.run(
+            copy_result = subprocess.run(
                 [
                     "lxc",
                     "file",
-                    "copy",
-                    self.container,
-                    "/",
-                    "--",
-                    f"--path=0{cert_src}",
+                    "push",
+                    "--create-dirs",
+                    f"--uid={self.uid}",
+                    f"--gid={self.gid}",
+                    cert_src,
                     f"{self.container}/{cert_dst.lstrip('/')}",
                 ],
                 capture_output=True,
+                text=True,
             )
-            console.print("  [green]✓[/green] CA cert copied into VM")
+            if copy_result.returncode != 0:
+                console.print(
+                    f"  [red]ERROR:[/red] Failed to copy CA cert into VM: {copy_result.stderr.strip()}"
+                )
+            else:
+                console.print("  [green]✓[/green] CA cert copied into VM")
         else:
             local_url = f"http://local-llm:{cfg.server.port}/v1"
 
