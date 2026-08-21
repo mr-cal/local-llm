@@ -6,7 +6,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 from llm.config import HermesSettings
-from llm.hermes import _format_credentials, _format_uptime
+from llm.hermes import _format_credentials, _format_local_llm, _format_uptime
 from llm.hermes_vm import HermesVmManager
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -443,7 +443,7 @@ class TestGetStatus:
         mock_cexec.side_effect = cexec_side_effect
 
         result = mgr.get_status()
-        expected_keys = {"vm", "gateway", "version", "uptime", "credentials_ok"}
+        expected_keys = {"vm", "gateway", "version", "uptime", "provider", "credentials_ok"}
         assert set(result.keys()) == expected_keys
         assert all(isinstance(v, str) for v in result.values())
 
@@ -521,3 +521,68 @@ class TestFormatCredentials:
         label, color = f("unknown")
         assert label == "unknown"
         assert color == "red"
+
+
+class TestFormatLocalLlm:
+    """Tests for hermes._format_local_llm."""
+
+    def test_connected(self):
+        label, color = _format_local_llm("True")
+        assert label == "connected"
+        assert color == "green"
+
+    def test_unreachable(self):
+        label, color = _format_local_llm("False")
+        assert label == "unreachable"
+        assert color == "yellow"
+
+    def test_unknown(self):
+        label, color = _format_local_llm("unknown")
+        assert label == "unknown"
+        assert color == "red"
+
+
+class TestStatusCommand:
+    """Tests for hermes.status() displaying local LLM connectivity."""
+
+    @patch("llm.hermes.console")
+    @patch("llm.lxd.container_exists", return_value=True)
+    @patch.object(HermesVmManager, "get_status")
+    def test_status_shows_local_llm_line_for_local_provider(self, mock_get_status, mock_exists, mock_console):
+        """When hermes is configured for the local llama-server, show 'Local LLM'."""
+        from llm.hermes import status
+
+        mock_get_status.return_value = {
+            "vm": "Running",
+            "gateway": "active",
+            "version": "hermes 3.0.0",
+            "uptime": "60",
+            "provider": "openai",
+            "credentials_ok": "True",
+        }
+        status()
+
+        printed = " ".join(str(c.args[0]) for c in mock_console.print.call_args_list)
+        assert "Local LLM:   connected" in printed
+        assert "Credentials:" not in printed
+
+    @patch("llm.hermes.console")
+    @patch("llm.lxd.container_exists", return_value=True)
+    @patch.object(HermesVmManager, "get_status")
+    def test_status_shows_credentials_line_for_openrouter(self, mock_get_status, mock_exists, mock_console):
+        """When hermes is configured for OpenRouter, show 'Credentials'."""
+        from llm.hermes import status
+
+        mock_get_status.return_value = {
+            "vm": "Running",
+            "gateway": "active",
+            "version": "hermes 3.0.0",
+            "uptime": "60",
+            "provider": "openrouter",
+            "credentials_ok": "False",
+        }
+        status()
+
+        printed = " ".join(str(c.args[0]) for c in mock_console.print.call_args_list)
+        assert "Credentials: invalid" in printed
+        assert "Local LLM:" not in printed

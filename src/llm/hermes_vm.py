@@ -257,6 +257,7 @@ class HermesVmManager(_BaseVmManager):
             version = r4.stdout.strip() or "unknown"
         # Credentials check: probe the configured provider
         credentials_ok = False
+        provider = "unknown"
         if vm_status == "Running":
             r5 = subprocess.run(
                 self._hermes_exec("config", "get", "model.provider"),
@@ -328,6 +329,7 @@ class HermesVmManager(_BaseVmManager):
             "gateway": gateway_status,
             "version": version,
             "uptime": str(uptime_seconds),
+            "provider": provider,
             "credentials_ok": str(credentials_ok),
         }
 

@@ -93,6 +93,15 @@ def _format_credentials(cred: str) -> tuple[str, str]:
     return "unknown", "red"
 
 
+def _format_local_llm(ok: str) -> tuple[str, str]:
+    """Return (label, color) for the local LLM connectivity status string."""
+    if ok == "True":
+        return "connected", "green"
+    if ok == "False":
+        return "unreachable", "yellow"
+    return "unknown", "red"
+
+
 @app.command("status")
 def status() -> None:
     """Show VM and gateway service status for the hermes VM."""
@@ -120,6 +129,14 @@ def status() -> None:
     uptime_secs = int(s.get("uptime", "0"))
     console.print(f"  Uptime:      {_format_uptime(uptime_secs)}")
 
-    cred = s.get("credentials_ok", "unknown")
-    cred_label, cred_color = _format_credentials(cred)
-    console.print(f"  [{cred_color}]●[/{cred_color}] Credentials: {cred_label}")
+    # The "Credentials" check probes different things depending on the
+    # configured provider: OpenRouter API key validity, or reachability of
+    # the local llama-server through the hermes VM's network setup.
+    provider = s.get("provider", "unknown")
+    ok = s.get("credentials_ok", "unknown")
+    if provider in ("openai", "local"):
+        label, color = _format_local_llm(ok)
+        console.print(f"  [{color}]●[/{color}] Local LLM:   {label}")
+    else:
+        label, color = _format_credentials(ok)
+        console.print(f"  [{color}]●[/{color}] Credentials: {label}")
