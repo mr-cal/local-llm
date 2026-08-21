@@ -29,6 +29,7 @@ from llm.lxd import (
     _cexec,
     container_exists,
     run,
+    run_capture,
     run_with_retry,
 )
 
@@ -412,23 +413,49 @@ class HermesVmManager(_BaseVmManager):
                 console.print("  [green]✓[/green] CA cert copied into VM")
                 # Hermes' Python OpenAI client (httpx) verifies TLS against
                 # certifi's bundled CAs, not the OS trust store, so curl
-                # trusting our self-signed cert isn't enough — the agent
-                # itself needs SSL_CERT_FILE pointed at it too.
-                env_path = f"{CONTAINER_HOME}/.hermes/.env"
-                run(
+                # trusting our self-signed cert isn't enough. Pointing
+                # SSL_CERT_FILE straight at our self-signed cert would work
+                # for local-llm but replaces the *entire* trust store for
+                # the process, breaking every other HTTPS call (Telegram,
+                # OpenRouter, GitHub, ...). Instead, build a combined bundle
+                # — the venv's certifi CAs plus our cert — and point
+                # SSL_CERT_FILE there. Rebuilt on every setup/refresh so it
+                # tracks certifi upgrades and cert rotation.
+                bundle_dst = f"{CONTAINER_HOME}/.hermes/ca-bundle.pem"
+                venv_python = f"{CONTAINER_HOME}/.hermes/hermes-agent/venv/bin/python"
+                bundle_result = run_capture(
                     _cexec(
                         self.container,
                         self.uid,
                         self.gid,
                         "bash",
                         "-c",
-                        f"mkdir -p {CONTAINER_HOME}/.hermes && "
-                        f"grep -qF 'SSL_CERT_FILE=' {env_path} 2>/dev/null "
-                        f"&& sed -i 's|^SSL_CERT_FILE=.*|SSL_CERT_FILE={cert_dst}|' {env_path} "
-                        f"|| echo 'SSL_CERT_FILE={cert_dst}' >> {env_path}",
+                        f"certifi_bundle=$({venv_python} -c 'import certifi; print(certifi.where())') && "
+                        f'cat "$certifi_bundle" {cert_dst} > {bundle_dst}',
                     ),
-                    desc="set SSL_CERT_FILE for local-llm TLS trust",
                 )
+                if bundle_result.returncode != 0:
+                    console.print(
+                        f"  [red]ERROR:[/red] Failed to build combined CA bundle: "
+                        f"{bundle_result.stderr.strip()}"
+                    )
+                else:
+                    console.print("  [green]✓[/green] combined CA bundle built")
+                    env_path = f"{CONTAINER_HOME}/.hermes/.env"
+                    run(
+                        _cexec(
+                            self.container,
+                            self.uid,
+                            self.gid,
+                            "bash",
+                            "-c",
+                            f"mkdir -p {CONTAINER_HOME}/.hermes && "
+                            f"grep -qF 'SSL_CERT_FILE=' {env_path} 2>/dev/null "
+                            f"&& sed -i 's|^SSL_CERT_FILE=.*|SSL_CERT_FILE={bundle_dst}|' {env_path} "
+                            f"|| echo 'SSL_CERT_FILE={bundle_dst}' >> {env_path}",
+                        ),
+                        desc="set SSL_CERT_FILE to combined CA bundle",
+                    )
         else:
             local_url = f"http://local-llm:{cfg.server.port}/v1"
 
@@ -528,4 +555,24 @@ class HermesVmManager(_BaseVmManager):
             desc="hermes gateway install --system",
         )
         console.print("  [green]✓[/green] gateway system service installed and started")
+
+        # `sudo hermes gateway install` runs the Hermes CLI as root just long
+        # enough to write the systemd unit, but importing Python modules
+        # along the way leaves root-owned __pycache__ dirs inside the venv.
+        # Left in place, those block later `uv sync`/pip operations run as
+        # the unprivileged container user with "Permission denied" — reset
+        # ownership back to that user so the venv stays writable.
+        run(
+            [
+                "lxc",
+                "exec",
+                self.container,
+                "--",
+                "chown",
+                "-R",
+                f"{self.uid}:{self.gid}",
+                f"{CONTAINER_HOME}/.hermes/hermes-agent/venv",
+            ],
+            desc="restore venv ownership after gateway install",
+        )
         console.print("  Manage with: [bold]lxc exec hermes -- systemctl status hermes-gateway[/bold]")
