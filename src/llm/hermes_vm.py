@@ -365,6 +365,23 @@ class HermesVmManager(_BaseVmManager):
         Sets up model.provider, endpoint, api_key, and optionally copies
         the CA cert into the VM when the TLS proxy is enabled.
         """
+        # Add /etc/hosts entry so the "local-llm" hostname (used in the
+        # endpoint URL and the cert's SubjectAltName) resolves inside the VM.
+        from urllib.parse import urlparse  # noqa: PLC0415
+
+        if cfg.client.server_url:
+            server_ip = urlparse(cfg.client.server_url).hostname or cfg.proxy.lan_ip
+        else:
+            server_ip = cfg.proxy.lan_ip
+        console.print(f"  Adding /etc/hosts entry: {server_ip} local-llm...")
+        hosts_cmd = (
+            f"grep -qxF '{server_ip} local-llm' /etc/hosts || echo '{server_ip} local-llm' >> /etc/hosts"
+        )
+        subprocess.run(
+            ["lxc", "exec", self.container, "--", "bash", "-c", hosts_cmd],
+            check=True,
+        )
+
         # Determine endpoint based on whether the proxy is enabled
         if cfg.proxy.enabled:
             local_url = f"https://local-llm:{cfg.proxy.port}/v1"

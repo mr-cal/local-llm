@@ -152,6 +152,58 @@ class TestConfigureCredentials:
         mock_local.assert_not_called()
 
 
+# ── _configure_local_llm ───────────────────────────────────────────────────────
+
+
+class TestConfigureLocalLlm:
+    """Tests for HermesVmManager._configure_local_llm."""
+
+    @patch("llm.hermes_vm.subprocess.run")
+    def test_adds_etc_hosts_entry_proxy_disabled(self, mock_subprocess):
+        """The 'local-llm' hostname must resolve inside the VM via /etc/hosts."""
+        from llm.config import AuthSettings, ProxySettings, ServerSettings, Settings
+
+        mgr = HermesVmManager.__new__(HermesVmManager)
+        mgr.container = "hermes"
+        mgr.uid = 1000
+        mgr.gid = 1000
+        mgr._hermes_run = MagicMock()
+        all_cfg = Settings(
+            auth=AuthSettings(api_key="test-api-key"),
+            proxy=ProxySettings(enabled=False, lan_ip="192.168.1.50"),
+            server=ServerSettings(port=8080),
+        )
+        HermesVmManager._configure_local_llm(mgr, all_cfg)
+
+        hosts_calls = [c for c in mock_subprocess.call_args_list if "/etc/hosts" in str(c)]
+        assert len(hosts_calls) == 1
+        cmd_str = " ".join(str(a) for a in hosts_calls[0].args[0])
+        assert "192.168.1.50 local-llm" in cmd_str
+
+    @patch("llm.hermes_vm.subprocess.run")
+    def test_adds_etc_hosts_entry_uses_server_url_host(self, mock_subprocess):
+        """When client.server_url is set, its hostname is used for the hosts entry."""
+        from llm.config import AuthSettings, ClientSettings, ProxySettings, ServerSettings, Settings
+
+        mgr = HermesVmManager.__new__(HermesVmManager)
+        mgr.container = "hermes"
+        mgr.uid = 1000
+        mgr.gid = 1000
+        mgr._hermes_run = MagicMock()
+        all_cfg = Settings(
+            auth=AuthSettings(api_key="test-api-key"),
+            client=ClientSettings(server_url="https://10.0.0.5:8443/v1"),
+            proxy=ProxySettings(enabled=True, lan_ip="192.168.1.50"),
+            server=ServerSettings(port=8080),
+        )
+        HermesVmManager._configure_local_llm(mgr, all_cfg)
+
+        hosts_calls = [c for c in mock_subprocess.call_args_list if "/etc/hosts" in str(c)]
+        assert len(hosts_calls) == 1
+        cmd_str = " ".join(str(a) for a in hosts_calls[0].args[0])
+        assert "10.0.0.5 local-llm" in cmd_str
+
+
 # ── get_status ─────────────────────────────────────────────────────────────────
 
 
