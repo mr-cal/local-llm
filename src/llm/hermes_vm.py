@@ -410,6 +410,25 @@ class HermesVmManager(_BaseVmManager):
                 )
             else:
                 console.print("  [green]✓[/green] CA cert copied into VM")
+                # Hermes' Python OpenAI client (httpx) verifies TLS against
+                # certifi's bundled CAs, not the OS trust store, so curl
+                # trusting our self-signed cert isn't enough — the agent
+                # itself needs SSL_CERT_FILE pointed at it too.
+                env_path = f"{CONTAINER_HOME}/.hermes/.env"
+                run(
+                    _cexec(
+                        self.container,
+                        self.uid,
+                        self.gid,
+                        "bash",
+                        "-c",
+                        f"mkdir -p {CONTAINER_HOME}/.hermes && "
+                        f"grep -qF 'SSL_CERT_FILE=' {env_path} 2>/dev/null "
+                        f"&& sed -i 's|^SSL_CERT_FILE=.*|SSL_CERT_FILE={cert_dst}|' {env_path} "
+                        f"|| echo 'SSL_CERT_FILE={cert_dst}' >> {env_path}",
+                    ),
+                    desc="set SSL_CERT_FILE for local-llm TLS trust",
+                )
         else:
             local_url = f"http://local-llm:{cfg.server.port}/v1"
 
