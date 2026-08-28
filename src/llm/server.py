@@ -6,12 +6,14 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from llm.config import CONFIG_FILENAME, find_config, load_config
 
@@ -307,6 +309,8 @@ _PID_FILE = Path(".server.pid")
 _LOG_FILE = Path(".server.log")
 _EMBED_PID_FILE = Path(".embed.pid")
 _EMBED_LOG_FILE = Path(".embed.log")
+_MONITOR_PID_FILE = Path(".server-monitor.pid")
+_MONITOR_LOG_FILE = Path(".server-monitor.log")
 
 
 def _pid_file() -> Path:
@@ -377,6 +381,104 @@ def _server_is_ready(port: int) -> bool:
         return resp.status_code == 200
     except Exception:
         return False
+
+
+def _read_monitor_pid() -> int | None:
+    """Return the memory-monitor PID if it is still alive."""
+    pf = _MONITOR_PID_FILE
+    if not pf.exists():
+        return None
+    try:
+        pid = int(pf.read_text().strip())
+        os.kill(pid, 0)
+        return pid
+    except (ValueError, ProcessLookupError, PermissionError):
+        pf.unlink(missing_ok=True)
+        return None
+
+
+def _start_monitor(cfg: object, server_pid: int, embed_pid: int | None) -> None:
+    """Spawn the detached memory-monitor daemon for the running server."""
+    from llm.config import Settings  # noqa: PLC0415
+
+    assert isinstance(cfg, Settings)
+    if cfg.server.monitor_interval <= 0:
+        return
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "llm.monitor",
+        str(server_pid),
+        "--interval",
+        str(cfg.server.monitor_interval),
+        "--retention-days",
+        str(cfg.server.monitor_retention_days),
+    ]
+    if embed_pid is not None:
+        cmd += ["--embed-pid", str(embed_pid)]
+
+    log_fh = _MONITOR_LOG_FILE.open("a")
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fh,
+            stderr=log_fh,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except FileNotFoundError:
+        log_fh.close()
+        console.print("[yellow]Could not start memory monitor[/yellow]")
+        return
+
+    _MONITOR_PID_FILE.write_text(str(proc.pid))
+    console.print(
+        f"[dim]Memory monitor started[/dim] (PID {proc.pid}, every "
+        f"{cfg.server.monitor_interval}s → logs/memory-monitor.csv)"
+    )
+
+
+def _stop_monitor() -> None:
+    """Stop the memory-monitor daemon if it is running."""
+    pid = _read_monitor_pid()
+    if pid is None:
+        return
+    os.kill(pid, signal.SIGTERM)
+    _MONITOR_PID_FILE.unlink(missing_ok=True)
+
+
+def _check_oom() -> None:
+    """Best-effort scan of the kernel log for OOM kills."""
+    result = subprocess.run(
+        ["journalctl", "-k", "--no-pager", "--grep", "Out of memory"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        console.print("[yellow]Could not read the kernel log.[/yellow]")
+        console.print("  Try: [bold]sudo journalctl -k | grep -i 'out of memory'[/bold]")
+        return
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    if not lines:
+        console.print("[green]No OOM kills found in the kernel log.[/green]")
+        return
+    console.print(f"[red]{len(lines)} OOM kill(s)[/red] in kernel log:")
+    for ln in lines[-10:]:
+        console.print(f"  {ln}")
+
+
+def _fmt_mib(value: str, unit: str) -> str:
+    """Format a kB/MB string value as MiB, or '-' when missing."""
+    if value == "":
+        return "-"
+    try:
+        number = float(value)
+    except ValueError:
+        return value
+    if unit == "kb":
+        number /= 1024
+    return f"{number:,.0f} MiB"
 
 
 def _start_embed_server(cfg: object, bin_path: str) -> None:
@@ -542,6 +644,11 @@ def start(
     if cfg.embed.enabled:
         _start_embed_server(cfg, bin_path)
 
+    # ── Memory monitor ────────────────────────────────────────────────────
+    if cfg.server.monitor:
+        embed_pid = _read_pid(cfg.embed.port, _embed_pid_file()) if cfg.embed.enabled else None
+        _start_monitor(cfg, proc.pid, embed_pid)
+
     _nginx_ensure_running()
 
 
@@ -586,6 +693,8 @@ def stop() -> None:
             console.print("[green]Stopped[/green] nginx")
         else:
             console.print("[yellow]nginx[/yellow]       failed to stop - check: sudo systemctl status nginx")
+
+    _stop_monitor()
 
 
 @app.command("restart")
@@ -656,6 +765,13 @@ def status() -> None:
             console.print("[red]● embed-server[/red] stopped")
             console.print("  Run [bold]uv run llm server start[/bold] to start.")
 
+    # Memory monitor status
+    monitor_pid = _read_monitor_pid()
+    if monitor_pid:
+        console.print(f"[green]● monitor[/green]       PID {monitor_pid} → logs/memory-monitor.csv")
+    else:
+        console.print("[dim]● monitor[/dim]       stopped")
+
     if _nginx_is_active():
         console.print("[green]● nginx[/green]         active")
     else:
@@ -678,6 +794,45 @@ def logs(
     if follow:
         cmd.insert(1, "-f")
     subprocess.run(cmd, check=False)
+
+
+@app.command("memory")
+def memory(
+    last: Annotated[int, typer.Option("-n", help="Number of samples to show.")] = 10,
+    oom: Annotated[bool, typer.Option("--oom", help="Scan the kernel log for OOM kills.")] = False,
+) -> None:
+    """Show recent memory samples recorded by the monitor."""
+    from llm.monitor import MONITOR_CSV, read_recent_rows
+
+    if oom:
+        _check_oom()
+        return
+
+    if not MONITOR_CSV.exists():
+        console.print("[yellow]No memory samples yet.[/yellow]")
+        console.print("  Start the server to enable the monitor: [bold]uv run llm server start[/bold]")
+        raise typer.Exit(1)
+
+    rows = read_recent_rows(MONITOR_CSV, last)
+    if not rows:
+        console.print("[yellow]Memory sample file is empty.[/yellow]")
+        raise typer.Exit(1)
+
+    table = Table(title="Memory monitor — logs/memory-monitor.csv")
+    table.add_column("Time (UTC)", no_wrap=True)
+    table.add_column("Event")
+    table.add_column("MemAvail", justify="right")
+    table.add_column("RSS", justify="right")
+    table.add_column("GPU GTT", justify="right")
+    for row in rows:
+        table.add_row(
+            row.get("timestamp", ""),
+            row.get("event", ""),
+            _fmt_mib(row.get("mem_avail_kb", ""), "kb"),
+            _fmt_mib(row.get("rss_kb", ""), "kb"),
+            _fmt_mib(row.get("gpu_gtt_used_mb", ""), "mb"),
+        )
+    console.print(table)
 
 
 @app.command("apply")

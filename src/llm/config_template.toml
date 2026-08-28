@@ -45,6 +45,14 @@ n_threads = 12
 #   extra_args = ["--spec-type", "draft-mtp", "--spec-draft-n-max", "2"]
 extra_args = []
 
+# Memory monitor: samples system + GPU memory while the server runs, appending
+# one row to logs/memory-monitor.csv. Lets you diagnose unexpected stops (OOM).
+monitor = true
+# Sampling interval in seconds. <= 0 disables the monitor.
+monitor_interval = 30
+# Drop samples older than this many days to keep the CSV small.
+monitor_retention_days = 90
+
 
 
 # ── EMBEDDING SERVER ──────────────────────────────────────────────────────────

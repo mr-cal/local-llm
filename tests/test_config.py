@@ -50,6 +50,9 @@ class TestServerSettings:
         assert s.n_ctx == 4096
         assert s.n_threads == 12
         assert s.extra_args == []
+        assert s.monitor is True
+        assert s.monitor_interval == 30
+        assert s.monitor_retention_days == 90
 
     def test_custom_values(self):
         s = ServerSettings(enabled=False, port=9000, n_threads=8, extra_args=["--jinja"])

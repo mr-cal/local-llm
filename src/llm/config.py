@@ -127,6 +127,9 @@ class ServerSettings(BaseModel):
     n_ctx: int = 4096
     n_threads: int = 12
     extra_args: list[str] = Field(default_factory=list)
+    monitor: bool = True
+    monitor_interval: int = 30
+    monitor_retention_days: int = 90
 
 
 class ModelCost(BaseModel):

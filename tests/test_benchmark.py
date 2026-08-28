@@ -278,50 +278,6 @@ class TestAvailableMemoryMb:
         assert benchmark._available_memory_mb() is None
 
 
-# ── _gpu_memory_status ─────────────────────────────────────────────────────────
-
-
-class TestGpuMemoryStatus:
-    def _make_card(self, tmp_path, vram_used, vram_total, gtt_used, gtt_total):
-        card = tmp_path / "card0" / "device"
-        card.mkdir(parents=True)
-        (card / "mem_info_vram_used").write_text(str(vram_used))
-        (card / "mem_info_vram_total").write_text(str(vram_total))
-        (card / "mem_info_gtt_used").write_text(str(gtt_used))
-        (card / "mem_info_gtt_total").write_text(str(gtt_total))
-        return card
-
-    def test_returns_vram_when_vram_used_is_larger(self, tmp_path, monkeypatch):
-        self._make_card(
-            tmp_path, vram_used=2 * 1024 * 1024, vram_total=8 * 1024 * 1024, gtt_used=0, gtt_total=0
-        )
-        monkeypatch.setattr(benchmark.Path, "glob", lambda self, pattern: [tmp_path / "card0"])
-        result = benchmark._gpu_memory_status()
-        assert result is not None
-        used_mb, total_mb = result
-        assert used_mb == pytest.approx(2.0)
-        assert total_mb == pytest.approx(8.0)
-
-    def test_returns_gtt_when_gtt_used_is_larger(self, tmp_path, monkeypatch):
-        self._make_card(
-            tmp_path,
-            vram_used=1 * 1024 * 1024,
-            vram_total=8 * 1024 * 1024,
-            gtt_used=5 * 1024 * 1024,
-            gtt_total=6 * 1024 * 1024,
-        )
-        monkeypatch.setattr(benchmark.Path, "glob", lambda self, pattern: [tmp_path / "card0"])
-        result = benchmark._gpu_memory_status()
-        assert result is not None
-        used_mb, total_mb = result
-        assert used_mb == pytest.approx(5.0)
-        assert total_mb == pytest.approx(6.0)
-
-    def test_returns_none_when_no_card_found(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(benchmark.Path, "glob", lambda self, pattern: [])
-        assert benchmark._gpu_memory_status() is None
-
-
 # ── _run_llama_bench ──────────────────────────────────────────────────────────
 
 
@@ -360,7 +316,7 @@ class TestRunLlamaBench:
 
         monkeypatch.setattr(benchmark, "_MEM_POLL_INTERVAL_S", 0.05)
         monkeypatch.setattr(benchmark, "_available_memory_mb", lambda: 999999.0)
-        monkeypatch.setattr(benchmark, "_gpu_memory_status", lambda: (7900.0, 8000.0))
+        monkeypatch.setattr(benchmark, "gpu_memory_status", lambda: (7900.0, 8000.0))
 
         rows = benchmark._run_llama_bench(
             bench_bin=bench,

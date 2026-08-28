@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.table import Table
 
 from llm.config import find_config, load_config
+from llm.gpu import gpu_memory_status, gpu_used_mb
 
 app = typer.Typer(help="Benchmark inference speed.", no_args_is_help=True)
 console = Console()
@@ -47,29 +48,6 @@ _DEFAULT_PROMPT = (
 
 
 # ── llama-bench helpers ───────────────────────────────────────────────────────
-
-
-def _read_gpu_gtt_mb() -> float | None:
-    """Return AMD GPU memory used in MiB, or None if unavailable.
-
-    Checks both VRAM (dedicated, when iGPU is allocated a large slice in BIOS)
-    and GTT (system RAM mapped to GPU, used when VRAM slice is small).
-    Reports whichever is larger, since the model weights will live in one or
-    the other depending on BIOS UMA buffer size.
-    """
-    for card in sorted(Path("/sys/class/drm").glob("card*")):
-        dev = card / "device"
-        vram_used = dev / "mem_info_vram_used"
-        gtt_used = dev / "mem_info_gtt_used"
-        if not vram_used.exists():
-            continue
-        try:
-            vram_mb = int(vram_used.read_text().strip()) / (1024 * 1024)
-            gtt_mb = int(gtt_used.read_text().strip()) / (1024 * 1024) if gtt_used.exists() else 0.0
-            return max(vram_mb, gtt_mb)
-        except (ValueError, OSError):
-            pass
-    return None
 
 
 def _find_bench_bin() -> Path | None:
@@ -191,34 +169,6 @@ def _available_memory_mb() -> float | None:
 _MIN_GPU_FREE_MB = 512
 
 
-def _gpu_memory_status() -> tuple[float, float] | None:
-    """Return (used_mb, total_mb) for whichever AMD GPU memory pool (VRAM or GTT)
-    is currently more utilized, or None if unavailable.
-
-    Mirrors _read_gpu_gtt_mb()'s "report whichever pool is larger" logic, but
-    also returns that pool's total capacity so callers can compute headroom.
-    """
-    for card in sorted(Path("/sys/class/drm").glob("card*")):
-        dev = card / "device"
-        vram_used_f = dev / "mem_info_vram_used"
-        vram_total_f = dev / "mem_info_vram_total"
-        gtt_used_f = dev / "mem_info_gtt_used"
-        gtt_total_f = dev / "mem_info_gtt_total"
-        if not vram_used_f.exists():
-            continue
-        try:
-            vram_used = int(vram_used_f.read_text().strip()) / (1024 * 1024)
-            vram_total = (
-                int(vram_total_f.read_text().strip()) / (1024 * 1024) if vram_total_f.exists() else 0.0
-            )
-            gtt_used = int(gtt_used_f.read_text().strip()) / (1024 * 1024) if gtt_used_f.exists() else 0.0
-            gtt_total = int(gtt_total_f.read_text().strip()) / (1024 * 1024) if gtt_total_f.exists() else 0.0
-            return (gtt_used, gtt_total) if gtt_used > vram_used else (vram_used, vram_total)
-        except (ValueError, OSError):
-            pass
-    return None
-
-
 def _run_one_bench(
     cmd: list[str],
     min_available_mb: float,
@@ -249,7 +199,7 @@ def _run_one_bench(
                 killed.set()
                 break
 
-            gpu_status = _gpu_memory_status()
+            gpu_status = gpu_memory_status()
             if gpu_status is not None:
                 gpu_used_mb, gpu_total_mb = gpu_status
                 gpu_free_mb = gpu_total_mb - gpu_used_mb
@@ -521,7 +471,7 @@ def _run_single_benchmark(
 
     elapsed = time.perf_counter() - t_start
     data = resp.json()
-    gtt_mb = _read_gpu_gtt_mb()
+    gtt_mb = gpu_used_mb()
 
     usage = data.get("usage", {})
     prompt_tokens: int = usage.get("prompt_tokens", 0)

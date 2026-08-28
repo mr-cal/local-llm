@@ -230,7 +230,8 @@ class TestStartCommand:
 
         def fake_popen(cmd, **kw):
             nonlocal started_cmd
-            started_cmd = cmd
+            if "--model" in cmd:  # server launch, not the memory monitor
+                started_cmd = cmd
             return proc
 
         def fake_kill(pid, sig):
