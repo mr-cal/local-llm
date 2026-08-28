@@ -505,6 +505,39 @@ def _fmt_mib(value: str, unit: str) -> str:
     return f"{number:,.0f} MiB"
 
 
+def _process_uptime_seconds(pid: int) -> int | None:
+    """Return how long *pid* has been running in seconds, or None if unknown."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        boot_uptime = float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+    # /proc/<pid>/stat field 2 (comm) is parenthesized and may itself contain
+    # spaces or parens, so parse everything after the last ")". Field 22
+    # (starttime) is then the 20th token (index 19) of what remains.
+    rest = stat.rpartition(")")[2].split()
+    try:
+        clk_tck = os.sysconf("SC_CLK_TCK")
+    except (ValueError, OSError):
+        clk_tck = 100  # USER_HZ fallback on x86 Linux
+    try:
+        start_since_boot = int(rest[19]) / clk_tck
+    except (IndexError, ValueError):
+        return None
+    return max(0, int(boot_uptime - start_since_boot))
+
+
+def _format_uptime(secs: int) -> str:
+    """Format seconds as a compact human-readable duration."""
+    if secs >= 86400:
+        return f"{secs // 86400}d {secs % 86400 // 3600}h"
+    if secs >= 3600:
+        return f"{secs // 3600}h {secs % 3600 // 60}m"
+    if secs >= 60:
+        return f"{secs // 60}m {secs % 60}s"
+    return f"{secs}s"
+
+
 def _start_embed_server(cfg: object, bin_path: str) -> None:
     """Start the embedding llama-server as a background process."""
     from llm.config import Settings  # noqa: PLC0415
@@ -768,8 +801,11 @@ def status() -> None:
         display = entry.alias if entry else cfg.models.active
         ready = _server_is_ready(cfg.server.port)
         status_icon = "[green]●[/green]" if ready else "[yellow]●[/yellow] loading"
+        uptime = _process_uptime_seconds(pid)
         console.print(f"{status_icon} llama-server  PID {pid} port {cfg.server.port}")
         console.print(f"  Model  : {display}  [dim]({cfg.models.active})[/dim]")
+        if uptime is not None:
+            console.print(f"  Uptime : {_format_uptime(uptime)}")
         console.print(f"  Layers : {cfg.server.n_gpu_layers}")
         if cfg.server.extra_args:
             console.print(f"  Extra  : {' '.join(cfg.server.extra_args)}")
@@ -790,8 +826,11 @@ def status() -> None:
         if embed_pid:
             embed_ready = _server_is_ready(cfg.embed.port)
             embed_icon = "[green]●[/green]" if embed_ready else "[yellow]●[/yellow] loading"
+            embed_uptime = _process_uptime_seconds(embed_pid)
             console.print(f"{embed_icon} embed-server  PID {embed_pid} port {cfg.embed.port}")
             console.print(f"  Model  : {cfg.embed.active}")
+            if embed_uptime is not None:
+                console.print(f"  Uptime : {_format_uptime(embed_uptime)}")
             embed_log = _embed_log_file().resolve()
             console.print(f"  Logs   : {embed_log}  [dim](uv run llm server logs --embed -f)[/dim]")
         else:

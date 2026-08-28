@@ -495,6 +495,23 @@ class TestStatusCommand:
         server.status()
 
 
+class TestUptimeHelpers:
+    def test_format_uptime_branches(self):
+        assert server._format_uptime(0) == "0s"
+        assert server._format_uptime(59) == "59s"
+        assert server._format_uptime(60) == "1m 0s"
+        assert server._format_uptime(3661) == "1h 1m"
+        assert server._format_uptime(90061) == "1d 1h"
+
+    def test_process_uptime_seconds_unknown_pid(self):
+        assert server._process_uptime_seconds(2_147_483_647) is None
+
+    def test_process_uptime_seconds_live_pid(self):
+        import os
+
+        assert isinstance(server._process_uptime_seconds(os.getpid()), int)
+
+
 # ── logs command ─────────────────────────────────────────────────────────────
 
 
