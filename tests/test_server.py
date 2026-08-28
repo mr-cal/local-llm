@@ -393,6 +393,25 @@ class TestLlmServerDisable:
         assert server._llm_server_disable() is False
 
 
+class TestLlmServerEnable:
+    def test_noop_when_unit_not_installed(self, monkeypatch, mocker):
+        monkeypatch.setattr(server.Path, "exists", lambda self: False)
+        run = mocker.patch.object(server, "_run_sudo")
+        assert server._llm_server_enable() is True
+        run.assert_not_called()
+
+    def test_enables_when_unit_installed(self, monkeypatch, mocker, _make_proc):
+        monkeypatch.setattr(server.Path, "exists", lambda self: True)
+        run = mocker.patch.object(server, "_run_sudo", return_value=_make_proc(0, ""))
+        assert server._llm_server_enable() is True
+        run.assert_called_once_with(["sudo", "systemctl", "enable", "llm-server"])
+
+    def test_returns_false_on_failure(self, monkeypatch, mocker, _make_proc):
+        monkeypatch.setattr(server.Path, "exists", lambda self: True)
+        mocker.patch.object(server, "_run_sudo", return_value=_make_proc(1, ""))
+        assert server._llm_server_enable() is False
+
+
 # ── restart command ───────────────────────────────────────────────────────────
 
 
@@ -425,12 +444,18 @@ class TestRestartCommand:
                 raise ProcessLookupError()
             return None
 
+        enable_calls = []
         mocker.patch.object(server, "_read_pid", return_value=12345)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         mocker.patch.object(server, "_nginx_start", return_value=True)
         mocker.patch.object(server, "_ensure_sudo")
         mocker.patch.object(server, "stop", fake_stop)
         mocker.patch.object(server, "start", fake_start)
+        mocker.patch.object(
+            server,
+            "_llm_server_enable",
+            side_effect=lambda: enable_calls.append(True) or True,
+        )
         mocker.patch("subprocess.Popen", fake_popen)
         mocker.patch("os.kill", fake_kill)
         mocker.patch("time.monotonic", return_value=999999)
@@ -438,6 +463,7 @@ class TestRestartCommand:
 
         assert stop_calls
         assert start_calls
+        assert enable_calls
 
 
 # ── status command ────────────────────────────────────────────────────────────

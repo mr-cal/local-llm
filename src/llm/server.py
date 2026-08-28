@@ -267,6 +267,18 @@ def _llm_server_disable() -> bool:
     return result.returncode == 0
 
 
+def _llm_server_enable() -> bool:
+    """Enable the llm-server systemd unit so it starts on boot.
+
+    Returns True when there is nothing to do (unit not installed) or the
+    enable succeeded.
+    """
+    if not Path("/etc/systemd/system/llm-server.service").exists():
+        return True
+    result = _run_sudo(["sudo", "systemctl", "enable", "llm-server"])
+    return result.returncode == 0
+
+
 def _nginx_ensure_running() -> None:
     """Start nginx if it isn't already running; reload if it is."""
     if _nginx_is_active():
@@ -716,7 +728,7 @@ def stop() -> None:
 
 @app.command("restart")
 def restart() -> None:
-    """Restart llama-server (stop then start)."""
+    """Restart llama-server (stop then start) and re-enable the systemd service."""
     _ensure_sudo()
     _warn_if_stale()
     cfg = load_config()
@@ -724,6 +736,10 @@ def restart() -> None:
     if pid:
         stop()
     start()
+    if not _llm_server_enable():
+        console.print(
+            "[yellow]llm-server[/yellow]     failed to enable - check: sudo systemctl enable llm-server"
+        )
 
 
 @app.command("status")
