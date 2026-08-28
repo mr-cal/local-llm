@@ -320,6 +320,7 @@ class TestStopCommand:
         """nginx is still running after a previous failed stop; should stop it."""
         mocker.patch.object(server, "_read_pid", return_value=None)
         mocker.patch.object(server, "_nginx_is_active", return_value=True)
+        mocker.patch.object(server, "_llm_server_disable", return_value=True)
         nginx_stop = mocker.patch.object(server, "_nginx_stop", return_value=True)
         server.stop()
         nginx_stop.assert_called_once()
@@ -344,6 +345,7 @@ class TestStopCommand:
             return _make_proc(0, "inactive")
 
         mocker.patch.object(server, "_read_pid", return_value=12345)
+        mocker.patch.object(server, "_llm_server_disable", return_value=True)
         mocker.patch("os.kill", fake_kill)
         monkeypatch.setattr(subprocess, "run", fake_run)
         server.stop()
@@ -364,11 +366,31 @@ class TestStopCommand:
             return _make_proc(0, "inactive")
 
         mocker.patch.object(server, "_read_pid", return_value=12345)
+        mocker.patch.object(server, "_llm_server_disable", return_value=True)
         mocker.patch("os.kill", fake_kill)
         monkeypatch.setattr(subprocess, "run", fake_run)
         server.stop()
 
         assert not pid_file.exists()
+
+
+class TestLlmServerDisable:
+    def test_noop_when_unit_not_installed(self, monkeypatch, mocker):
+        monkeypatch.setattr(server.Path, "exists", lambda self: False)
+        run = mocker.patch.object(server, "_run_sudo")
+        assert server._llm_server_disable() is True
+        run.assert_not_called()
+
+    def test_disables_when_unit_installed(self, monkeypatch, mocker, _make_proc):
+        monkeypatch.setattr(server.Path, "exists", lambda self: True)
+        run = mocker.patch.object(server, "_run_sudo", return_value=_make_proc(0, ""))
+        assert server._llm_server_disable() is True
+        run.assert_called_once_with(["sudo", "systemctl", "disable", "llm-server"])
+
+    def test_returns_false_on_failure(self, monkeypatch, mocker, _make_proc):
+        monkeypatch.setattr(server.Path, "exists", lambda self: True)
+        mocker.patch.object(server, "_run_sudo", return_value=_make_proc(1, ""))
+        assert server._llm_server_disable() is False
 
 
 # ── restart command ───────────────────────────────────────────────────────────

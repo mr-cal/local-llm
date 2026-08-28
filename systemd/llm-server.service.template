@@ -24,7 +24,7 @@ ExecStart=%%LLAMA_SERVER_BIN%% \
     --threads %%N_THREADS%%
 
 Restart=on-failure
-RestartSec=30s
+RestartSec=15s
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=llm-server

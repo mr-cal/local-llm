@@ -255,6 +255,18 @@ def _nginx_stop() -> bool:
     return result.returncode == 0
 
 
+def _llm_server_disable() -> bool:
+    """Disable the llm-server systemd unit so it won't restart on boot.
+
+    Returns True when there is nothing to do (unit not installed) or the
+    disable succeeded.
+    """
+    if not Path("/etc/systemd/system/llm-server.service").exists():
+        return True
+    result = _run_sudo(["sudo", "systemctl", "disable", "llm-server"])
+    return result.returncode == 0
+
+
 def _nginx_ensure_running() -> None:
     """Start nginx if it isn't already running; reload if it is."""
     if _nginx_is_active():
@@ -654,7 +666,7 @@ def start(
 
 @app.command("stop")
 def stop() -> None:
-    """Stop the running llama-server, embedding server, and nginx."""
+    """Stop llama-server, embedding server, and nginx, and disable the systemd service."""
     _ensure_sudo()
     cfg = load_config()
     pid = _read_pid(cfg.server.port)
@@ -693,6 +705,11 @@ def stop() -> None:
             console.print("[green]Stopped[/green] nginx")
         else:
             console.print("[yellow]nginx[/yellow]       failed to stop - check: sudo systemctl status nginx")
+
+    if not _llm_server_disable():
+        console.print(
+            "[yellow]llm-server[/yellow]     failed to disable - check: sudo systemctl disable llm-server"
+        )
 
     _stop_monitor()
 
