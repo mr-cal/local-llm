@@ -1169,7 +1169,7 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
         "%%SERVER_PORT%%": str(cfg.server.port),
         "%%EMBED_PORT%%": str(cfg.embed.port),
         "%%API_KEY%%": cfg.auth.api_key,
-        "%%LLAMA_SERVER_BIN%%": cfg.server.llama_server_bin,
+        "%%LLAMA_SERVER_BIN%%": cfg.resolve_llama_server_bin(),
         "%%MODELS_DIR%%": str(cfg.models_path),
         "%%ACTIVE_MODEL%%": active_filename,
         "%%N_GPU_LAYERS%%": str(cfg.server.n_gpu_layers),
