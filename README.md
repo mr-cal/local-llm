@@ -158,6 +158,7 @@ Client
 Models
   uv run llm model list            List downloaded models
   uv run llm model download <id>   Download a model from HuggingFace
+                                   (skips models already present; --force re-downloads)
   uv run llm model switch <name>   Set active model + restart
 
 Config

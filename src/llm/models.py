@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import re
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Annotated
 
@@ -265,6 +269,45 @@ def list_models() -> None:
     console.print("Download: [bold]uv run llm model download <alias>[/bold]")
 
 
+def _split_subfolder(dl_filename: str) -> tuple[str | None, str]:
+    """Split a catalog filename into (repo subfolder, flat local filename)."""
+    dl_path = Path(dl_filename)
+    if len(dl_path.parts) > 1:
+        return str(dl_path.parent), dl_path.name
+    return None, dl_filename
+
+
+def _flatten_conflicts(hf_filename: str, source_filename: str, entries: list[ModelEntry]) -> list[ModelEntry]:
+    """Catalog entries that would be saved over the top of this download.
+
+    Catalog filenames may carry a subfolder but are always saved flat, so
+    "a/model.gguf" and "b/model.gguf" both land on "model.gguf".
+    """
+    return [e for e in entries if Path(e.filename).name == hf_filename and e.filename != source_filename]
+
+
+def _remote_size(repo_id: str, filename: str, subfolder: str | None, token: str | None) -> int | None:
+    """Expected download size from HuggingFace, or None if it cannot be determined."""
+    try:
+        from huggingface_hub import get_hf_file_metadata, hf_hub_url
+
+        url = hf_hub_url(repo_id=repo_id, filename=filename, subfolder=subfolder)
+        return get_hf_file_metadata(url, token=token).size
+    except Exception:
+        return None
+
+
+def _verify_size(path: Path, expected: int | None) -> None:
+    """Reject an empty or short download before it is promoted into place."""
+    actual = path.stat().st_size
+    if actual == 0:
+        console.print(f"[red]Download is empty:[/red] {path.name}")
+        raise typer.Exit(1)
+    if expected is not None and actual != expected:
+        console.print(f"[red]Download is incomplete:[/red] got {actual} bytes, expected {expected}.")
+        raise typer.Exit(1)
+
+
 @app.command("download")
 def download(
     target: Annotated[
@@ -280,6 +323,10 @@ def download(
         str | None,
         typer.Option("--file", "-f", help="GGUF filename - required when passing a raw repo ID."),
     ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Re-download even if the file is already present."),
+    ] = False,
 ) -> None:
     """Download a GGUF model from HuggingFace."""
     if target is None:
@@ -316,31 +363,48 @@ def download(
     # When the catalog filename includes a subfolder (e.g. "gguf/model.gguf"),
     # split it so hf_hub_download fetches from the right repo path but saves
     # the file flat into models_path (where llama-server expects it).
-    dl_path = Path(dl_filename)
-    if len(dl_path.parts) > 1:
-        hf_subfolder: str | None = str(dl_path.parent)
-        hf_filename = dl_path.name
-    else:
-        hf_subfolder = None
-        hf_filename = dl_filename
+    hf_subfolder, hf_filename = _split_subfolder(dl_filename)
+
+    catalog = cfg.models.entries if cfg.models.has_catalog else KNOWN_MODELS
+    conflicts = _flatten_conflicts(hf_filename, dl_filename, catalog)
+    if conflicts:
+        console.print(
+            f"[red]Name collision:[/red] '{dl_filename}' would be saved as "
+            f"'{hf_filename}', which is already claimed by:"
+        )
+        for other in conflicts:
+            console.print(f"  - {other.alias} ({other.filename})")
+        console.print("Give one of them a distinct filename in config.toml before downloading.")
+        raise typer.Exit(1)
+
+    dest_file = dest_dir / hf_filename
+    if dest_file.exists() and not force:
+        console.print(f"[yellow]Already downloaded[/yellow] → {dest_file}")
+        console.print("  Re-download with [bold]--force[/bold].")
+        raise typer.Exit(0)
 
     console.print(f"Downloading [bold]{dl_filename}[/bold] from [cyan]{repo_id}[/cyan] ...")
 
-    import tempfile
+    expected_size = _remote_size(repo_id, hf_filename, hf_subfolder, token)
 
-    # Download to a temp dir first, then move flat into dest_dir.
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = hf_hub_download(
-            repo_id=repo_id,
-            filename=hf_filename,
-            subfolder=hf_subfolder,
-            local_dir=tmp,
-            token=token,
+    # Stage inside the destination directory so the final os.replace() is an
+    # atomic same-filesystem rename: an interrupted download can never leave a
+    # truncated file where llama-server expects a complete model.
+    staging = Path(tempfile.mkdtemp(prefix=".download-", dir=dest_dir))
+    try:
+        tmp_path = Path(
+            hf_hub_download(
+                repo_id=repo_id,
+                filename=hf_filename,
+                subfolder=hf_subfolder,
+                local_dir=str(staging),
+                token=token,
+            )
         )
-        dest_file = dest_dir / hf_filename
-        import shutil
-
-        shutil.move(tmp_path, dest_file)
+        _verify_size(tmp_path, expected_size)
+        os.replace(tmp_path, dest_file)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
 
     local_path = dest_file
     console.print(f"[green]Saved[/green] → {local_path}")
@@ -352,6 +416,36 @@ def download(
         resolved = _by_filename(hf_filename, KNOWN_MODELS)
     switch_target = resolved.alias if resolved else hf_filename
     console.print(f"Switch to it with: [bold]uv run llm model switch {switch_target}[/bold]")
+
+
+# Matches an `active = <value>` assignment, keeping any trailing inline comment.
+_ACTIVE_RE = re.compile(r"""^(?P<prefix>\s*active\s*=\s*)(?:"[^"]*"|'[^']*')(?P<suffix>.*)$""")
+
+
+def _set_active_in_config(text: str, value: str) -> str | None:
+    """Rewrite `active` inside the [models] table, preserving comments and layout.
+
+    Scoped to [models] so that an `active` key in any other table (now or
+    later) is left alone. Returns None if no such key exists.
+    """
+    if '"' in value:
+        raise ValueError(f"model name contains a quote and cannot be written to TOML: {value!r}")
+
+    lines = text.splitlines()
+    in_models = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_models = stripped == "[models]"
+            continue
+        if not in_models:
+            continue
+        match = _ACTIVE_RE.match(line)
+        if match:
+            lines[i] = f'{match.group("prefix")}"{value}"{match.group("suffix")}'
+            trailing = "\n" if text.endswith("\n") else ""
+            return "\n".join(lines) + trailing
+    return None
 
 
 @app.command("switch")
@@ -380,19 +474,17 @@ def switch(
         console.print("Run [bold]uv run llm model list[/bold] to see available models.")
         raise typer.Exit(1)
 
-    # Update config.toml in-place using regex to avoid destroying comments
+    # Prefer the alias: `active` is documented as holding an alias, and
+    # `config show` marks the active model by comparing against aliases.
+    active_value = entry.alias if entry else model_name
+
+    # Update config.toml in place to avoid destroying comments and formatting.
     config_path = find_config()
-    text = config_path.read_text()
-
-    import re
-
-    text = re.sub(
-        r'^(active\s*=\s*)"[^"]*"',
-        f'\\1"{model_name}"',
-        text,
-        flags=re.MULTILINE,
-    )
-    config_path.write_text(text)
+    updated = _set_active_in_config(config_path.read_text(), active_value)
+    if updated is None:
+        console.print(f"[red]Could not find an 'active' key under [models] in {config_path}.[/red]")
+        raise typer.Exit(1)
+    config_path.write_text(updated)
     label = f"{entry.alias} ({model_name})" if entry else model_name
     console.print(f"[green]Active model set to[/green] {label}")
 
