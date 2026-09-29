@@ -290,10 +290,10 @@ def show() -> None:
 
 @app.command("list")
 def list_containers() -> None:
-    """List all managed LXD containers with their status and version."""
-    from llm.lxd import _list_managed_containers  # noqa: PLC0415
+    """List all managed LXD containers with their kind, status and version."""
+    from llm.lxd import _list_managed_containers, get_container_kind  # noqa: PLC0415
 
-    managed = _list_managed_containers()
+    managed = _list_managed_containers(kind=None)
     if not managed:
         console.print(
             "[yellow]No managed containers found.[/yellow]\n"
@@ -326,7 +326,8 @@ def list_containers() -> None:
             pass
 
         status_color = "green" if status == "Running" else "yellow"
-        console.print(f"  [{status_color}]●[/{status_color}] {name}  v{version}  ({status})")
+        kind = get_container_kind(name)
+        console.print(f"  [{status_color}]●[/{status_color}] {name}  {kind}  v{version}  ({status})")
 
 
 # ── client refresh ────────────────────────────────────────────────────────────

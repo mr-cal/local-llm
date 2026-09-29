@@ -23,8 +23,10 @@ from llm.config import HermesSettings, Settings, load_config
 from llm.lxd import (
     CONTAINER_HOME,
     CONTAINER_USER,
+    HERMES_CONTAINER_NAME,
     HOST_GID,
     HOST_UID,
+    KIND_HERMES,
     _BaseVmManager,
     _cexec,
     add_hosts_entry,
@@ -36,8 +38,6 @@ from llm.lxd import (
 )
 
 console = Console()
-
-HERMES_CONTAINER_NAME = "hermes"
 
 # Hermes install script URL (official one-liner)
 _HERMES_INSTALL_URL = "https://hermes-agent.nousresearch.com/install.sh"
@@ -165,7 +165,7 @@ class HermesVmManager(_BaseVmManager):
         self._setup_gateway_service()
 
         console.print("\n[bold][6/6][/bold] Tagging as managed...")
-        self._tag_as_managed()
+        self._tag_as_managed(kind=KIND_HERMES)
 
         console.print("\n[bold green]✓ hermes VM is ready![/bold green]")
         console.print(
@@ -404,63 +404,7 @@ class HermesVmManager(_BaseVmManager):
         # Determine endpoint based on whether the proxy is enabled
         if cfg.proxy.enabled:
             local_url = f"https://local-llm:{cfg.proxy.port}/v1"
-            # Copy the CA cert into the VM so TLS is trusted
-            cert_src = cfg.proxy.cert_path  # e.g. /etc/ssl/local-llm/cert.pem
-            cert_dst = f"{CONTAINER_HOME}/.hermes/cert.pem"
-            copy_result = subprocess.run(
-                [
-                    "lxc",
-                    "file",
-                    "push",
-                    "--create-dirs",
-                    f"--uid={self.uid}",
-                    f"--gid={self.gid}",
-                    cert_src,
-                    f"{self.container}/{cert_dst.lstrip('/')}",
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if copy_result.returncode != 0:
-                console.print(
-                    f"  [red]ERROR:[/red] Failed to copy CA cert into VM: {copy_result.stderr.strip()}"
-                )
-            else:
-                console.print("  [green]✓[/green] CA cert copied into VM")
-                # Hermes' Python OpenAI client (httpx) verifies TLS against
-                # certifi's bundled CAs, not the OS trust store, so curl
-                # trusting our self-signed cert isn't enough. Pointing
-                # SSL_CERT_FILE straight at our self-signed cert would work
-                # for local-llm but replaces the *entire* trust store for
-                # the process, breaking every other HTTPS call (Telegram,
-                # OpenRouter, GitHub, ...). Instead, build a combined bundle
-                # — the venv's certifi CAs plus our cert — and point
-                # SSL_CERT_FILE there. Rebuilt on every setup/refresh so it
-                # tracks certifi upgrades and cert rotation.
-                bundle_dst = f"{CONTAINER_HOME}/.hermes/ca-bundle.pem"
-                venv_python = f"{CONTAINER_HOME}/.hermes/hermes-agent/venv/bin/python"
-                bundle_result = run_capture(
-                    _cexec(
-                        self.container,
-                        self.uid,
-                        self.gid,
-                        "bash",
-                        "-c",
-                        f"certifi_bundle=$({venv_python} -c 'import certifi; print(certifi.where())') && "
-                        f'cat "$certifi_bundle" {cert_dst} > {bundle_dst}',
-                    ),
-                )
-                if bundle_result.returncode != 0:
-                    console.print(
-                        f"  [red]ERROR:[/red] Failed to build combined CA bundle: "
-                        f"{bundle_result.stderr.strip()}"
-                    )
-                else:
-                    console.print("  [green]✓[/green] combined CA bundle built")
-                    self._write_env_vars(
-                        {"SSL_CERT_FILE": bundle_dst},
-                        desc="set SSL_CERT_FILE to combined CA bundle",
-                    )
+            self._install_ca_bundle(cfg.proxy.cert_path)
         else:
             local_url = f"http://local-llm:{cfg.server.port}/v1"
 
@@ -470,6 +414,70 @@ class HermesVmManager(_BaseVmManager):
         self._hermes_run("config", "set", "model.provider", "openai", desc="set openai provider (local)")
         self._hermes_run("config", "set", "model.endpoint", local_url, desc="set local endpoint")
         self._hermes_run("config", "set", "model.api_key", local_api_key, desc="set local api key")
+
+    def _install_ca_bundle(self, cert_src: str) -> None:
+        """Copy the proxy's CA cert into the VM and trust it for HTTPS calls.
+
+        Raises:
+            RuntimeError: If the cert cannot be installed. Without it every
+                request to the TLS proxy fails, so setup must not report
+                success.
+        """
+        cert_dst = f"{CONTAINER_HOME}/.hermes/cert.pem"
+        copy_result = subprocess.run(
+            [
+                "lxc",
+                "file",
+                "push",
+                "--create-dirs",
+                f"--uid={self.uid}",
+                f"--gid={self.gid}",
+                cert_src,
+                f"{self.container}/{cert_dst.lstrip('/')}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if copy_result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to copy CA cert {cert_src} into the VM: {copy_result.stderr.strip()}\n"
+                "Hermes cannot reach the TLS proxy without it. Run 'llm server certs' "
+                "to regenerate the cert, or disable proxy.enabled in config.toml."
+            )
+        console.print("  [green]✓[/green] CA cert copied into VM")
+
+        # Hermes' Python OpenAI client (httpx) verifies TLS against certifi's
+        # bundled CAs, not the OS trust store, so curl trusting our self-signed
+        # cert isn't enough. Pointing SSL_CERT_FILE straight at our self-signed
+        # cert would work for local-llm but replaces the *entire* trust store
+        # for the process, breaking every other HTTPS call (Telegram,
+        # OpenRouter, GitHub, ...). Instead, build a combined bundle — the
+        # venv's certifi CAs plus our cert — and point SSL_CERT_FILE there.
+        # Rebuilt on every setup/refresh so it tracks certifi upgrades and
+        # cert rotation.
+        bundle_dst = f"{CONTAINER_HOME}/.hermes/ca-bundle.pem"
+        venv_python = f"{CONTAINER_HOME}/.hermes/hermes-agent/venv/bin/python"
+        bundle_result = run_capture(
+            _cexec(
+                self.container,
+                self.uid,
+                self.gid,
+                "bash",
+                "-c",
+                f"certifi_bundle=$({venv_python} -c 'import certifi; print(certifi.where())') && "
+                f'cat "$certifi_bundle" {cert_dst} > {bundle_dst}',
+            ),
+        )
+        if bundle_result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to build the combined CA bundle in the VM: {bundle_result.stderr.strip()}\n"
+                "Hermes would not trust the TLS proxy."
+            )
+        console.print("  [green]✓[/green] combined CA bundle built")
+        self._write_env_vars(
+            {"SSL_CERT_FILE": bundle_dst},
+            desc="set SSL_CERT_FILE to combined CA bundle",
+        )
 
     def _read_env_file(self, env_path: str) -> str:
         """Return the current contents of *env_path* in the VM, or "" if absent."""

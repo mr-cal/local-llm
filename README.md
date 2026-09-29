@@ -101,10 +101,11 @@ lxc exec craft-llm-1 -- su -l $USER
 # Run make setup in configured craft directories
 uv run llm client crafts craft-llm-1
 
-# Refresh packages and configs in all managed VMs
+# Refresh packages and configs in all managed dev client VMs
+# (the Hermes agent VM is excluded; use `llm hermes setup` for that)
 uv run llm client refresh
 
-# List managed VMs
+# List managed VMs, with their kind (client or hermes)
 uv run llm client list
 ```
 
@@ -140,7 +141,7 @@ Client
   uv run llm client check          Test connectivity to the server
   uv run llm client show           Print current client connection info
   uv run llm client list           List managed LXD VMs
-  uv run llm client refresh [NAME] Update packages + re-apply config in VMs
+  uv run llm client refresh [NAME] Update packages + re-apply config in client VMs
   uv run llm client crafts NAME    Run make setup in craft directories inside a VM
 
 Models

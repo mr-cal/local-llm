@@ -87,6 +87,19 @@ class SetupStep(Enum):
         return f"{self.value}/{total}"
 
 
+_MANAGED_TAG = "user.local-llm-managed"
+_KIND_TAG = "user.local-llm-kind"
+
+# Managed VMs come in two flavours with incompatible provisioning. Dev client
+# VMs are refreshed by ``llm client refresh``; the Hermes agent VM must not be,
+# because reconfiguring it as a dev client would overwrite its agent setup.
+KIND_CLIENT = "client"
+KIND_HERMES = "hermes"
+
+# The Hermes VM always uses this reserved name.
+HERMES_CONTAINER_NAME = "hermes"
+
+
 class _BaseVmManager:
     """Shared LXD VM lifecycle: create, configure user, swap, sudo, and tag.
 
@@ -189,9 +202,10 @@ class _BaseVmManager:
             ]
         )
 
-    def _tag_as_managed(self) -> None:
-        """Set the managed tag on this container."""
+    def _tag_as_managed(self, kind: str = KIND_CLIENT) -> None:
+        """Tag this container as managed, recording which kind of VM it is."""
         run(["lxc", "config", "set", self.container, f"{_MANAGED_TAG}=true"])
+        run(["lxc", "config", "set", self.container, f"{_KIND_TAG}={kind}"])
 
     def _snap_install(self, *args: str) -> None:
         """Install a snap inside the VM via systemd-run to avoid lxd-agent cgroup errors.
@@ -1393,7 +1407,6 @@ _PI_CONTAINER_CONFIG = f"{CONTAINER_HOME}/.pi/agent/models.json"
 _OMP_CONTAINER_CONFIG = f"{CONTAINER_HOME}/.omp/agent/models.yml"
 _NODE_CA_CERTS_DIR = f"{CONTAINER_HOME}/.config/local-llm"
 _NODE_CA_CERTS_FILE = f"{_NODE_CA_CERTS_DIR}/cert.pem"
-_MANAGED_TAG = "user.local-llm-managed"
 
 VM_ROOT_DISK_SIZE = "90GB"
 VM_MEMORY = "4GiB"
@@ -1613,13 +1626,41 @@ def container_exists(container):
 # ── Tag / list helpers ──────────────────────────────────────────────────────
 
 
-def _tag_as_managed(container: str) -> None:
-    """Set the managed tag on *container* so it is discovered by ``llm client refresh``."""
+def _tag_as_managed(container: str, kind: str = KIND_CLIENT) -> None:
+    """Tag *container* as managed so it is discovered by ``llm client refresh``."""
     run(["lxc", "config", "set", container, f"{_MANAGED_TAG}=true"])
+    run(["lxc", "config", "set", container, f"{_KIND_TAG}={kind}"])
 
 
-def _list_managed_containers() -> list[str]:
-    """Return names of all running LXD instances tagged as managed by this tool."""
+def _container_kind(instance: dict) -> str:
+    """Return the managed kind of an LXD instance from ``lxc list --format=json``.
+
+    VMs provisioned before the kind tag existed carry no kind. The Hermes VM
+    has a reserved name, so it can still be told apart from a dev client.
+    """
+    kind = instance.get("config", {}).get(_KIND_TAG)
+    if kind:
+        return kind
+    return KIND_HERMES if instance.get("name") == HERMES_CONTAINER_NAME else KIND_CLIENT
+
+
+def get_container_kind(container: str) -> str:
+    """Return the managed kind of *container* (``client`` or ``hermes``)."""
+    r = run_capture(["lxc", "list", container, "--format=json"])
+    if r.returncode != 0:
+        return KIND_CLIENT
+    for inst in json.loads(r.stdout):
+        if inst.get("name") == container:
+            return _container_kind(inst)
+    return KIND_CLIENT
+
+
+def _list_managed_containers(kind: str | None = KIND_CLIENT) -> list[str]:
+    """Return names of running LXD instances managed by this tool.
+
+    Args:
+        kind: Restrict to one kind of VM, or ``None`` for every managed VM.
+    """
     r = run_capture(["lxc", "list", "--format=json"])
     if r.returncode != 0:
         return []
@@ -1627,7 +1668,9 @@ def _list_managed_containers() -> list[str]:
     return [
         inst["name"]
         for inst in instances
-        if inst.get("config", {}).get(_MANAGED_TAG) == "true" and inst.get("status") == "Running"
+        if inst.get("config", {}).get(_MANAGED_TAG) == "true"
+        and inst.get("status") == "Running"
+        and (kind is None or _container_kind(inst) == kind)
     ]
 
 
@@ -1777,17 +1820,26 @@ def refresh_containers(
     git_email: str = "",
     git_pat: str = "",
 ) -> None:
-    """Update packages and re-apply config in managed LXD VM(s).
+    """Update packages and re-apply config in managed dev client VM(s).
 
     When *container_name* is ``None``, discovers every running VM tagged
-    with ``user.local-llm-managed=true`` and refreshes all of them.
+    ``user.local-llm-managed=true`` whose kind is ``client`` and refreshes all
+    of them. The Hermes agent VM is excluded: refreshing it would reconfigure
+    it as a dev client and overwrite its agent setup. Use ``llm hermes setup``
+    to update it instead.
 
     Raises:
-        RuntimeError: If a named VM doesn't exist or no managed VMs are found.
+        RuntimeError: If a named VM doesn't exist, is not a dev client, or if
+            no managed client VMs are found.
     """
     if container_name is not None:
         if not container_exists(container_name):
             raise RuntimeError(f"'{container_name}' does not exist.")
+        if get_container_kind(container_name) == KIND_HERMES:
+            raise RuntimeError(
+                f"'{container_name}' is the Hermes agent VM, not a dev client. "
+                "Run 'llm hermes setup' to update it."
+            )
         mgr = LxdVmManager(container_name, uid=HOST_UID, gid=HOST_GID)
         mgr._refresh(
             cert_pem=cert_pem,
@@ -1797,9 +1849,9 @@ def refresh_containers(
             git_pat=git_pat,
         )
     else:
-        managed = _list_managed_containers()
+        managed = _list_managed_containers(kind=KIND_CLIENT)
         if not managed:
-            raise RuntimeError(f"No running VMs tagged with {_MANAGED_TAG}=true found.")
+            raise RuntimeError(f"No running client VMs tagged with {_MANAGED_TAG}=true found.")
 
         console.print(f"Found [bold]{len(managed)}[/bold] managed VM(s): " + ", ".join(managed))
         for container in managed:

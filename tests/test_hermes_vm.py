@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from llm.config import HermesSettings
 from llm.hermes import _format_credentials, _format_local_llm, _format_uptime
 from llm.hermes_vm import HermesVmManager, _merge_env_file
@@ -159,50 +161,104 @@ class TestConfigureCredentials:
 class TestConfigureLocalLlm:
     """Tests for HermesVmManager._configure_local_llm."""
 
-    @patch("llm.hermes_vm.subprocess.run")
-    def test_adds_etc_hosts_entry_proxy_disabled(self, mock_subprocess):
-        """The 'local-llm' hostname must resolve inside the VM via /etc/hosts."""
-        from llm.config import AuthSettings, ProxySettings, ServerSettings, Settings
-
+    def _mgr(self):
         mgr = HermesVmManager.__new__(HermesVmManager)
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
         mgr._hermes_run = MagicMock()
-        all_cfg = Settings(
+        mgr._install_ca_bundle = MagicMock()
+        return mgr
+
+    @staticmethod
+    def _cfg(**proxy_kwargs):
+        from llm.config import AuthSettings, ClientSettings, ProxySettings, ServerSettings, Settings
+
+        return Settings(
             auth=AuthSettings(api_key="test-api-key"),
-            proxy=ProxySettings(enabled=False, lan_ip="192.168.1.50"),
+            client=ClientSettings(server_url=proxy_kwargs.pop("server_url", "")),
+            proxy=ProxySettings(**proxy_kwargs),
             server=ServerSettings(port=8080),
         )
-        HermesVmManager._configure_local_llm(mgr, all_cfg)
+
+    @patch("llm.hermes_vm.subprocess.run")
+    def test_adds_etc_hosts_entry_proxy_disabled(self, mock_subprocess):
+        """The 'local-llm' hostname must resolve inside the VM via /etc/hosts."""
+        mgr = self._mgr()
+        HermesVmManager._configure_local_llm(mgr, self._cfg(enabled=False, lan_ip="192.168.1.50"))
 
         hosts_calls = [c for c in mock_subprocess.call_args_list if "/etc/hosts" in str(c)]
         assert len(hosts_calls) == 1
-        cmd_str = " ".join(str(a) for a in hosts_calls[0].args[0])
-        assert "192.168.1.50 local-llm" in cmd_str
+        assert "192.168.1.50 local-llm" in " ".join(str(a) for a in hosts_calls[0].args[0])
 
     @patch("llm.hermes_vm.subprocess.run")
     def test_adds_etc_hosts_entry_uses_server_url_host(self, mock_subprocess):
         """When client.server_url is set, its hostname is used for the hosts entry."""
-        from llm.config import AuthSettings, ClientSettings, ProxySettings, ServerSettings, Settings
+        mgr = self._mgr()
+        cfg = self._cfg(server_url="https://10.0.0.5:8443/v1", enabled=True, lan_ip="192.168.1.50")
+        HermesVmManager._configure_local_llm(mgr, cfg)
 
+        hosts_calls = [c for c in mock_subprocess.call_args_list if "/etc/hosts" in str(c)]
+        assert len(hosts_calls) == 1
+        assert "10.0.0.5 local-llm" in " ".join(str(a) for a in hosts_calls[0].args[0])
+
+    @patch("llm.hermes_vm.subprocess.run")
+    def test_ca_bundle_installed_only_when_proxy_enabled(self, mock_subprocess):
+        """A plain HTTP endpoint needs no CA cert."""
+        mgr = self._mgr()
+        HermesVmManager._configure_local_llm(mgr, self._cfg(enabled=False, lan_ip="192.168.1.50"))
+        mgr._install_ca_bundle.assert_not_called()
+
+        mgr = self._mgr()
+        HermesVmManager._configure_local_llm(
+            mgr, self._cfg(enabled=True, lan_ip="192.168.1.50", cert_path="/etc/ssl/x/cert.pem")
+        )
+        mgr._install_ca_bundle.assert_called_once_with("/etc/ssl/x/cert.pem")
+
+
+class TestInstallCaBundle:
+    """Setup must fail loudly when the VM cannot be made to trust the proxy."""
+
+    def _mgr(self):
         mgr = HermesVmManager.__new__(HermesVmManager)
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
-        mgr._hermes_run = MagicMock()
-        all_cfg = Settings(
-            auth=AuthSettings(api_key="test-api-key"),
-            client=ClientSettings(server_url="https://10.0.0.5:8443/v1"),
-            proxy=ProxySettings(enabled=True, lan_ip="192.168.1.50"),
-            server=ServerSettings(port=8080),
-        )
-        HermesVmManager._configure_local_llm(mgr, all_cfg)
+        mgr._write_env_vars = MagicMock()
+        return mgr
 
-        hosts_calls = [c for c in mock_subprocess.call_args_list if "/etc/hosts" in str(c)]
-        assert len(hosts_calls) == 1
-        cmd_str = " ".join(str(a) for a in hosts_calls[0].args[0])
-        assert "10.0.0.5 local-llm" in cmd_str
+    @patch("llm.hermes_vm.subprocess.run")
+    def test_raises_when_cert_push_fails(self, mock_subprocess):
+        """Without the cert every request to the proxy fails, so don't report success."""
+        mock_subprocess.return_value = MagicMock(returncode=1, stderr="no such file")
+
+        with pytest.raises(RuntimeError, match="Failed to copy CA cert"):
+            HermesVmManager._install_ca_bundle(self._mgr(), "/etc/ssl/local-llm/cert.pem")
+
+    @patch("llm.hermes_vm.run_capture")
+    @patch("llm.hermes_vm.subprocess.run")
+    def test_raises_when_bundle_build_fails(self, mock_subprocess, mock_capture):
+        """A pushed cert that isn't in the trust bundle is still unusable."""
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+        mock_capture.return_value = MagicMock(returncode=1, stderr="certifi missing")
+
+        mgr = self._mgr()
+        with pytest.raises(RuntimeError, match="combined CA bundle"):
+            HermesVmManager._install_ca_bundle(mgr, "/etc/ssl/local-llm/cert.pem")
+        mgr._write_env_vars.assert_not_called()
+
+    @patch("llm.hermes_vm.run_capture")
+    @patch("llm.hermes_vm.subprocess.run")
+    def test_points_ssl_cert_file_at_the_bundle(self, mock_subprocess, mock_capture):
+        """httpx reads SSL_CERT_FILE, so it must point at the combined bundle."""
+        mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
+        mock_capture.return_value = MagicMock(returncode=0, stderr="")
+
+        mgr = self._mgr()
+        HermesVmManager._install_ca_bundle(mgr, "/etc/ssl/local-llm/cert.pem")
+
+        updates = mgr._write_env_vars.call_args.args[0]
+        assert updates["SSL_CERT_FILE"].endswith("/.hermes/ca-bundle.pem")
 
 
 # ── get_status ─────────────────────────────────────────────────────────────────
