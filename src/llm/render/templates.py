@@ -84,9 +84,11 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
             console.print(f"[yellow]Template not found, skipping:[/yellow] {src}")
             continue
         text = src.read_text()
+        # A rendered template that embeds the API key must not be world-readable.
+        mode = 0o600 if "%%API_KEY%%" in text else None
         for placeholder, value in replacements.items():
             text = text.replace(placeholder, value)
-        write_atomic(dst, text)
+        write_atomic(dst, text, mode=mode)
         console.print(f"[green]Rendered[/green] {dst}")
 
     # ── nginx ─────────────────────────────────────────────────────────────
