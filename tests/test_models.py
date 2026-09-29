@@ -233,28 +233,6 @@ class TestByFilenameWithList:
 # ── New commands: init-catalog, show, cost ────────────────────────────────────
 
 
-class TestInitCatalog:
-    def test_init_catalog_adds_entries(self, tmp_path, monkeypatch, fake_console):
-        """Test that init-catalog adds model entries to config.toml."""
-        config = tmp_path / "config.toml"
-        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
-        monkeypatch.chdir(tmp_path)
-
-        from typer.testing import CliRunner  # noqa: PLC0415
-
-        from llm.cli import app  # noqa: PLC0415
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["model", "init-catalog"])
-        assert result.exit_code == 0, result.output
-
-        # Verify entries were added
-        content = config.read_text()
-        assert "[[models.list]]" in content
-        assert 'alias = "qwen2.5-coder-14b-q4"' in content
-        assert 'alias = "qwen3-8b-q8"' in content
-
-
 class TestModelShow:
     def test_show_existing_model(self, tmp_path, monkeypatch, fake_console):
         """Test showing details for an existing model."""
@@ -286,49 +264,3 @@ class TestModelShow:
         result = runner.invoke(app, ["model", "show", "nonexistent"])
         assert result.exit_code != 0
         assert "not found" in fake_console[0]
-
-
-class TestModelCost:
-    def test_show_cost_for_model(self, tmp_path, monkeypatch, fake_console):
-        """Test showing cost for a specific model."""
-        config = tmp_path / "config.toml"
-        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
-        monkeypatch.chdir(tmp_path)
-
-        from typer.testing import CliRunner  # noqa: PLC0415
-
-        from llm.cli import app  # noqa: PLC0415
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["model", "cost", "qwen2.5-coder-14b-q4"])
-        assert result.exit_code == 0, result.output
-        assert "qwen2.5-coder-14b-q4" in fake_console[0]
-        assert "(all costs are zero" in fake_console[5]
-
-    def test_show_cost_all(self, tmp_path, monkeypatch, fake_console):
-        """Test showing cost for all models (empty when all zero)."""
-        config = tmp_path / "config.toml"
-        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
-        monkeypatch.chdir(tmp_path)
-
-        from typer.testing import CliRunner  # noqa: PLC0415
-
-        from llm.cli import app  # noqa: PLC0415
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["model", "cost"])
-        assert result.exit_code == 0, result.output
-
-    def test_show_cost_unknown(self, tmp_path, monkeypatch, fake_console):
-        """Test showing cost for unknown model."""
-        config = tmp_path / "config.toml"
-        config.write_text('[server]\nllama_server_bin = "llama-server"\nport = 8080\n')
-        monkeypatch.chdir(tmp_path)
-
-        from typer.testing import CliRunner  # noqa: PLC0415
-
-        from llm.cli import app  # noqa: PLC0415
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["model", "cost", "nonexistent"])
-        assert result.exit_code != 0

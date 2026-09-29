@@ -560,59 +560,6 @@ def _print_profile_comparison(results: list[tuple[str, dict]]) -> None:
     console.print(t)
 
 
-@app.command("compare")
-def compare(
-    last: Annotated[int, typer.Option("--last", "-n", help="Show last N entries per model.")] = 10,
-) -> None:
-    """Show benchmark history grouped by profile for comparison.
-
-    Reads the benchmark history CSV and prints a comparison table, useful for
-    seeing how different build profiles perform over time.
-    """
-    if not HISTORY_FILE.exists():
-        console.print(
-            "[yellow]No benchmark history found.[/yellow] Run [bold]uv run llm benchmark run[/bold] first."
-        )
-        raise typer.Exit(1)
-
-    with HISTORY_FILE.open(newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    if not rows:
-        console.print("[yellow]History file is empty.[/yellow]")
-        raise typer.Exit(1)
-
-    # Group by profile (or "default" if missing)
-    by_profile: dict[str, list[dict]] = {}
-    for row in rows[-last * 10 :]:  # avoid reading entire file into memory for comparison
-        p = row.get("profile", "") or "default"
-        by_profile.setdefault(p, []).append(row)
-
-    t = Table(title=f"Benchmark History (last {last} per profile)", show_header=True)
-    t.add_column("Profile", style="cyan")
-    t.add_column("Timestamp")
-    t.add_column("Model")
-    t.add_column("PP tok/s", justify="right")
-    t.add_column("TG tok/s", justify="right", style="bold")
-    t.add_column("GPU Layers", justify="right")
-    t.add_column("GTT MiB", justify="right")
-
-    for profile_name, profile_rows in sorted(by_profile.items()):
-        for row in profile_rows[-last:]:
-            t.add_row(
-                profile_name,
-                row.get("timestamp", ""),
-                row.get("model", ""),
-                row.get("pp_tps", ""),
-                row.get("tg_tps", ""),
-                row.get("n_gpu_layers", ""),
-                row.get("gtt_mb", ""),
-            )
-
-    console.print(t)
-
-
 def _run_llama_bench_raw(cfg: object) -> None:
     """Run llama-bench for raw pp/tg throughput without HTTP overhead (used by `run --raw`)."""
     from llm.config import Settings
