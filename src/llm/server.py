@@ -20,6 +20,12 @@ from llm.config import CONFIG_FILENAME, find_config, load_config
 app = typer.Typer(help="Manage the llama-server process.", no_args_is_help=True)
 console = Console()
 
+# systemd is the only supervisor for llama-server: it owns the process, the
+# restart policy and the logs. The unit is rendered from config.toml and
+# installed by `llm server apply`.
+SERVICE_UNIT = "llm-server"
+_UNIT_PATH = Path("/etc/systemd/system/llm-server.service")
+
 
 # ── server setup ──────────────────────────────────────────────────────────────
 
@@ -198,8 +204,13 @@ def setup(
 
 
 def _nginx_is_active() -> bool:
+    return _unit_is_active("nginx")
+
+
+def _unit_is_active(unit: str) -> bool:
+    """Return True when *unit* is active according to systemd."""
     result = subprocess.run(
-        ["systemctl", "is-active", "nginx"],
+        ["systemctl", "is-active", unit],
         capture_output=True,
         text=True,
     )
@@ -255,28 +266,45 @@ def _nginx_stop() -> bool:
     return result.returncode == 0
 
 
-def _llm_server_disable() -> bool:
-    """Disable the llm-server systemd unit so it won't restart on boot.
+def _llm_server_unit_installed() -> bool:
+    """Return True when the llm-server unit has been installed."""
+    return _UNIT_PATH.exists()
 
-    Returns True when there is nothing to do (unit not installed) or the
-    disable succeeded.
-    """
-    if not Path("/etc/systemd/system/llm-server.service").exists():
-        return True
-    result = _run_sudo(["sudo", "systemctl", "disable", "llm-server"])
+
+def _require_unit_installed() -> None:
+    """Exit with guidance when the llm-server unit has not been installed yet."""
+    if _llm_server_unit_installed():
+        return
+    console.print(f"[red]systemd unit not installed:[/red] {_UNIT_PATH}")
+    console.print("Render and install it with: [bold]uv run llm server apply[/bold]")
+    raise typer.Exit(1)
+
+
+def _llm_server_systemctl(action: str) -> bool:
+    """Run ``systemctl <action> llm-server``. Returns True on success."""
+    result = _run_sudo(["sudo", "systemctl", action, SERVICE_UNIT])
+    if result.returncode != 0 and result.stderr.strip():
+        console.print(f"  [dim]{result.stderr.strip()}[/dim]")
     return result.returncode == 0
 
 
-def _llm_server_enable() -> bool:
-    """Enable the llm-server systemd unit so it starts on boot.
+def _unit_main_pid() -> int | None:
+    """Return the llm-server unit's main PID, or None if it isn't running.
 
-    Returns True when there is nothing to do (unit not installed) or the
-    enable succeeded.
+    systemd reports MainPID=0 for an inactive unit.
     """
-    if not Path("/etc/systemd/system/llm-server.service").exists():
-        return True
-    result = _run_sudo(["sudo", "systemctl", "enable", "llm-server"])
-    return result.returncode == 0
+    result = subprocess.run(
+        ["systemctl", "show", "-p", "MainPID", "--value", SERVICE_UNIT],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        pid = int(result.stdout.strip())
+    except ValueError:
+        return None
+    return pid or None
 
 
 def _nginx_ensure_running() -> None:
@@ -327,41 +355,24 @@ def _warn_if_stale() -> None:
         )
 
 
-# Runtime files live alongside the config in the project directory.
-# Both are gitignored.
-_PID_FILE = Path(".server.pid")
-_LOG_FILE = Path(".server.log")
+# Runtime files for the memory monitor live alongside the config in the
+# project directory. Both are gitignored. llama-server itself is supervised by
+# systemd and logs to the journal, so it has no PID or log file of its own.
 _MONITOR_PID_FILE = Path(".server-monitor.pid")
 _MONITOR_LOG_FILE = Path(".server-monitor.log")
 
 
-def _pid_file() -> Path:
-    """Resolve PID file path relative to CWD (project root)."""
-    return _PID_FILE
+def _server_pid(port: int | None = None) -> int | None:
+    """Return the running llama-server PID, or None if it isn't running.
 
-
-def _log_file() -> Path:
-    return _LOG_FILE
-
-
-def _read_pid(port: int | None = None, pid_file: Path | None = None) -> int | None:
-    """Return running server PID, or None if not running.
-
-    Tries two strategies:
-    1. Read the PID file (fast path)
-    2. Fall back to finding the process listening on *port* via ss
+    Asks systemd first, then falls back to probing *port*. The fallback still
+    matters: it finds a llama-server started outside the unit, which callers
+    such as the benchmark sweep need to know about.
     """
-    # Strategy 1: PID file
-    pf = pid_file if pid_file is not None else _pid_file()
-    if pf.exists():
-        try:
-            pid = int(pf.read_text().strip())
-            os.kill(pid, 0)  # signal 0 = existence check
-            return pid
-        except (ValueError, ProcessLookupError, PermissionError):
-            pf.unlink(missing_ok=True)
+    pid = _unit_main_pid()
+    if pid is not None:
+        return pid
 
-    # Strategy 2: probe the port (fallback when PID file is missing)
     if port is not None:
         result = subprocess.run(
             ["ss", "-tlnp", f"sport = :{port}"],
@@ -529,16 +540,13 @@ def _format_uptime(secs: int) -> str:
 @app.command("start")
 def start(
     wait: Annotated[int, typer.Option("--wait", help="Seconds to wait for server to be ready.")] = 5,
-    profile: Annotated[
-        str | None,
-        typer.Option(
-            "--profile",
-            "-p",
-            help="Build profile to use (overrides config.toml [server] profile).",
-        ),
-    ] = None,
 ) -> None:
-    """Start llama-server using settings from config.toml."""
+    """Start llama-server via its systemd unit.
+
+    The command line comes from the unit rendered by ``llm server apply``, so
+    change settings (including the build profile) in config.toml and re-apply
+    rather than passing overrides here.
+    """
     _ensure_sudo()
     _warn_if_stale()
     cfg = load_config()
@@ -550,7 +558,9 @@ def start(
         )
         raise typer.Exit(1)
 
-    existing = _read_pid(cfg.server.port)
+    _require_unit_installed()
+
+    existing = _server_pid(cfg.server.port)
     if existing:
         console.print(f"[yellow]Server already running[/yellow] (PID {existing})")
         raise typer.Exit(1)
@@ -560,93 +570,56 @@ def start(
         console.print("Run [bold]uv run llm model list[/bold] to see available models.")
         raise typer.Exit(1)
 
-    # Resolve binary: --profile flag > config override > auto-resolve
-    if profile:
-        p = cfg.build.get_profile(profile)
-        if p is None:
-            console.print(
-                f"[red]Unknown profile:[/red] '{profile}'\nAvailable: {', '.join(cfg.build.profile_names())}"
-            )
-            raise typer.Exit(1)
-        bin_path = str(p.installed_server_bin(cfg.build.install_path))
-    else:
-        bin_path = cfg.resolve_llama_server_bin()
+    if not _llm_server_systemctl("start"):
+        console.print("[red]Failed to start llm-server.[/red]")
+        console.print("  Check: [bold]systemctl status llm-server[/bold]")
+        raise typer.Exit(1)
 
-    cmd: list[str] = [
-        bin_path,
-        "--model",
-        str(cfg.model_path),
-        "--port",
-        str(cfg.server.port),
-        "--n-gpu-layers",
-        str(cfg.server.n_gpu_layers),
-        "--ctx-size",
-        str(cfg.server.n_ctx),
-        "--threads",
-        str(cfg.server.n_threads),
-        *cfg.server.extra_args,
-    ]
-
-    log_path = _log_file()
-    log_fh = log_path.open("a")
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=log_fh,
-            stderr=log_fh,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,  # detach from current session
-        )
-    except FileNotFoundError:
-        log_fh.close()
-        console.print(f"[red]Binary not found:[/red] {bin_path}")
-        console.print(
-            "\nBuild llama.cpp and install the binary:\n"
-            "  [bold]uv run llm build init[/bold]   # initialize submodule\n"
-            "  [bold]uv run llm build run[/bold]    # build active profile\n"
-            "\nOr set [bold]llama_server_bin[/bold] explicitly in config.toml:\n"
-            '  llama_server_bin = "~/.local/bin/llama-server"'
-        )
-        raise typer.Exit(1) from None
-
-    _pid_file().write_text(str(proc.pid))
-    console.print(f"[green]Started[/green] llama-server (PID {proc.pid})")
+    pid = _unit_main_pid()
+    suffix = f" (PID {pid})" if pid else ""
+    console.print(f"[green]Started[/green] llama-server{suffix}")
     console.print(f"  Model  : {cfg.models.active}")
     console.print(f"  Port   : {cfg.server.port}")
     console.print(f"  Layers : {cfg.server.n_gpu_layers} (Vulkan iGPU)")
     if cfg.server.extra_args:
         console.print(f"  Extra  : {' '.join(cfg.server.extra_args)}")
-    console.print(f"  Logs   : {log_path.resolve()}")
+    console.print("  Logs   : journalctl -u llm-server  [dim](uv run llm server logs -f)[/dim]")
 
     if wait > 0:
-        console.print(f"Waiting up to {wait}s for server to be ready...", end="")
-        import httpx
+        _wait_until_ready(cfg, wait)
 
-        deadline = time.monotonic() + wait
-        while time.monotonic() < deadline:
-            time.sleep(0.5)
-            try:
-                httpx.get(f"{cfg.internal_url}/health", timeout=1).raise_for_status()
-                console.print(" [green]ready[/green]")
-                break
-            except Exception:
-                pass
-        else:
-            console.print(" [yellow]timeout (server may still be loading)[/yellow]")
-
-    # ── Memory monitor ────────────────────────────────────────────────────
-    if cfg.server.monitor:
-        _start_monitor(cfg, proc.pid)
+    if cfg.server.monitor and pid:
+        _start_monitor(cfg, pid)
 
     _nginx_ensure_running()
 
 
+def _wait_until_ready(cfg: object, wait: int) -> None:
+    """Poll /health until the server answers or *wait* seconds elapse."""
+    import httpx  # noqa: PLC0415
+
+    from llm.config import Settings  # noqa: PLC0415
+
+    assert isinstance(cfg, Settings)
+    console.print(f"Waiting up to {wait}s for server to be ready...", end="")
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        try:
+            httpx.get(f"{cfg.internal_url}/health", timeout=1).raise_for_status()
+            console.print(" [green]ready[/green]")
+            return
+        except Exception:
+            pass
+    console.print(" [yellow]timeout (server may still be loading)[/yellow]")
+
+
 @app.command("stop")
 def stop() -> None:
-    """Stop llama-server and nginx, and disable the systemd service."""
+    """Stop llama-server and nginx."""
     _ensure_sudo()
     cfg = load_config()
-    pid = _read_pid(cfg.server.port)
+    pid = _server_pid(cfg.server.port)
     nginx_active = _nginx_is_active()
 
     if pid is None and not nginx_active:
@@ -654,16 +627,19 @@ def stop() -> None:
         raise typer.Exit(1)
 
     if pid is not None:
-        os.kill(pid, signal.SIGTERM)
-        # Wait briefly for clean shutdown
-        for _ in range(20):
-            time.sleep(0.25)
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                break
-        _pid_file().unlink(missing_ok=True)
-        console.print(f"[green]Stopped[/green] llama-server (PID {pid})")
+        if _llm_server_systemctl("stop"):
+            console.print(f"[green]Stopped[/green] llama-server (PID {pid})")
+        else:
+            console.print("[yellow]llm-server[/yellow]   failed to stop - check: systemctl status llm-server")
+        # systemctl reports success even when the unit was already inactive, so
+        # confirm nothing is still listening. A survivor was started outside the
+        # unit, which systemd has no way to stop.
+        survivor = _server_pid(cfg.server.port)
+        if survivor is not None:
+            console.print(
+                f"[yellow]⚠  llama-server (PID {survivor}) is still running.[/yellow]\n"
+                f"   It was not started by systemd - stop it with: [bold]kill {survivor}[/bold]"
+            )
 
     if nginx_active:
         if _nginx_stop():
@@ -671,28 +647,33 @@ def stop() -> None:
         else:
             console.print("[yellow]nginx[/yellow]       failed to stop - check: sudo systemctl status nginx")
 
-    if not _llm_server_disable():
-        console.print(
-            "[yellow]llm-server[/yellow]     failed to disable - check: sudo systemctl disable llm-server"
-        )
-
     _stop_monitor()
 
 
 @app.command("restart")
 def restart() -> None:
-    """Restart llama-server (stop then start) and re-enable the systemd service."""
+    """Restart llama-server and make sure nginx is running."""
     _ensure_sudo()
     _warn_if_stale()
     cfg = load_config()
-    pid = _read_pid(cfg.server.port)
-    if pid:
-        stop()
-    start()
-    if not _llm_server_enable():
-        console.print(
-            "[yellow]llm-server[/yellow]     failed to enable - check: sudo systemctl enable llm-server"
-        )
+    _require_unit_installed()
+
+    _stop_monitor()
+    if not _llm_server_systemctl("restart"):
+        console.print("[red]Failed to restart llm-server.[/red]")
+        console.print("  Check: [bold]systemctl status llm-server[/bold]")
+        raise typer.Exit(1)
+
+    pid = _unit_main_pid()
+    suffix = f" (PID {pid})" if pid else ""
+    console.print(f"[green]Restarted[/green] llama-server{suffix}")
+
+    _wait_until_ready(cfg, 5)
+
+    if cfg.server.monitor and pid:
+        _start_monitor(cfg, pid)
+
+    _nginx_ensure_running()
 
 
 @app.command("status")
@@ -708,7 +689,7 @@ def status() -> None:
             console.print("[green]● nginx[/green]         active")
         return
 
-    pid = _read_pid(cfg.server.port)
+    pid = _server_pid(cfg.server.port)
     if pid:
         from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
@@ -734,8 +715,10 @@ def status() -> None:
         if active_profile:
             profile_name = cfg.server.profile or active_profile.name
             console.print(f"  Profile: {profile_name}")
-        log = _log_file().resolve()
-        console.print(f"  Logs   : {log}  [dim](uv run llm server logs -f)[/dim]")
+        console.print("  Logs   : journalctl -u llm-server  [dim](uv run llm server logs -f)[/dim]")
+    elif not _llm_server_unit_installed():
+        console.print("[red]● llama-server[/red] no systemd unit installed")
+        console.print("  Run [bold]uv run llm server apply[/bold] to install it.")
     else:
         console.print("[red]● llama-server[/red] stopped")
         console.print("  Run [bold]uv run llm server start[/bold] to start.")
@@ -758,15 +741,10 @@ def logs(
     lines: Annotated[int, typer.Option("-n", help="Number of lines to show.")] = 50,
     follow: Annotated[bool, typer.Option("-f", "--follow", help="Follow log output.")] = False,
 ) -> None:
-    """Show server logs."""
-    log_path = _log_file()
-    if not log_path.exists():
-        console.print(f"[yellow]No log file found:[/yellow] {log_path}")
-        raise typer.Exit(1)
-
-    cmd = ["tail", f"-{lines}", str(log_path)]
+    """Show server logs from the systemd journal."""
+    cmd = ["journalctl", "-u", SERVICE_UNIT, "-n", str(lines), "--no-pager"]
     if follow:
-        cmd.insert(1, "-f")
+        cmd.append("-f")
     subprocess.run(cmd, check=False)
 
 

@@ -67,10 +67,10 @@ def _abort_if_server_running(cfg: object) -> None:
     headroom with the server stopped.
     """
     from llm.config import Settings  # noqa: PLC0415
-    from llm.server import _pid_file, _read_pid  # noqa: PLC0415
+    from llm.server import _server_pid  # noqa: PLC0415
 
     assert isinstance(cfg, Settings)
-    server_pid = _read_pid(cfg.server.port, _pid_file())
+    server_pid = _server_pid(cfg.server.port)
     if server_pid:
         console.print("[red]A llama-server is already running.[/red]")
         console.print(f"  chat server  : PID {server_pid} (port {cfg.server.port})")

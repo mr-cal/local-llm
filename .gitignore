@@ -6,8 +6,6 @@ nginx/llm-proxy.conf
 systemd/llm-server.service
 
 # Runtime state
-.server.pid
-.server.log
 .server-monitor.pid
 .server-monitor.log
 logs/

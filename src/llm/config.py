@@ -1125,11 +1125,12 @@ def apply_client_configs(cfg: Settings) -> None:
     console.print(f"[green]Rendered[/green] {opencode_path}")
 
 
-def apply_server_configs(cfg: Settings, project_root: Path) -> None:
-    """Render nginx/systemd templates and install them.
+def _template_replacements(cfg: Settings) -> dict[str, str]:
+    """Build the placeholder → value map for the nginx and systemd templates.
 
-    Handles template rendering, nginx site install + reload, and systemd
-    service install + daemon-reload + enable.
+    The systemd unit is the only thing that starts llama-server, so every
+    setting that affects its command line must appear here; a missing
+    placeholder means the server runs with different options than configured.
     """
     from llm.models import KNOWN_MODELS  # noqa: PLC0415
 
@@ -1156,6 +1157,9 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
         "%%N_GPU_LAYERS%%": str(cfg.server.n_gpu_layers),
         "%%N_CTX%%": str(cfg.server.n_ctx),
         "%%N_THREADS%%": str(cfg.server.n_threads),
+        # Continues the unit's line-continuation style so extra args land on
+        # their own lines; empty when no extra args are configured.
+        "%%EXTRA_ARGS%%": "".join(f" \\\n    {arg}" for arg in cfg.server.extra_args),
         "%%USER%%": os.environ.get("USER", os.environ.get("LOGNAME", "nobody")),
     }
 
@@ -1166,6 +1170,17 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
         replacements["%%LXD_ALLOW_LINE%%"] = f"    allow {lxd_bridge_subnet};\n"
     else:
         replacements["%%LXD_ALLOW_LINE%%"] = ""
+
+    return replacements
+
+
+def apply_server_configs(cfg: Settings, project_root: Path) -> None:
+    """Render nginx/systemd templates and install them.
+
+    Handles template rendering, nginx site install + reload, and systemd
+    service install + daemon-reload + enable.
+    """
+    replacements = _template_replacements(cfg)
 
     templates = [
         (project_root / "nginx" / "llm-proxy.conf.template", project_root / "nginx" / "llm-proxy.conf"),

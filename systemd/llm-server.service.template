@@ -21,7 +21,7 @@ ExecStart=%%LLAMA_SERVER_BIN%% \
     --port %%SERVER_PORT%% \
     --n-gpu-layers %%N_GPU_LAYERS%% \
     --ctx-size %%N_CTX%% \
-    --threads %%N_THREADS%%
+    --threads %%N_THREADS%%%%EXTRA_ARGS%%
 
 Restart=on-failure
 RestartSec=15s

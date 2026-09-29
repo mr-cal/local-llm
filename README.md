@@ -76,6 +76,16 @@ uv run llm server start
 uv run llm server status
 ```
 
+`llama-server` runs under systemd as the `llm-server` unit, which owns its
+restart policy and logging. `start`, `stop` and `restart` are thin wrappers
+around `systemctl`, and `logs` reads the journal.
+
+The unit's command line is generated from `config.toml`, so changing
+`[server]` settings (port, `n_ctx`, `n_gpu_layers`, `extra_args`, build
+profile) means re-running `uv run llm server apply` followed by
+`uv run llm server restart`. `status` warns when `config.toml` is newer than
+the installed unit.
+
 ### 6 - Verify connectivity
 
 ```bash
@@ -133,7 +143,8 @@ Server
   uv run llm server stop           Stop llama-server and nginx
   uv run llm server restart        Restart llama-server
   uv run llm server status         Show running status
-  uv run llm server logs [-f]      Tail server logs
+  uv run llm server logs [-f]      Tail server logs from the journal
+  uv run llm server apply          Re-render and install nginx + systemd configs
 
 Client
   uv run llm client setup          Set up this machine as a client (opencode, pi, shell env)

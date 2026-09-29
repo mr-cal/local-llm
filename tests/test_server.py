@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import signal
 import subprocess
-import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -88,73 +86,66 @@ class TestNginxHelpers:
         assert reload_called
 
 
-# ── PID file management ──────────────────────────────────────────────────────
+# ── process discovery ────────────────────────────────────────────────────────
 
 
-class TestPidFile:
-    def test_pid_file_path(self):
-        assert server._pid_file().name == ".server.pid"
+def _ss_output(port: int, pid: int) -> str:
+    """Build `ss -tlnp` output showing llama-server listening on *port*."""
+    return (
+        "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+        f"LISTEN 0      4096         0.0.0.0:{port}         0.0.0.0:*     "
+        f'users:(("llama-server",pid={pid},fd=3))\n'
+    )
 
-    def test_log_file_path(self):
-        assert server._log_file().name == ".server.log"
 
-    def test_read_pid_returns_none_when_no_file(self, tmp_path, mocker):
+class TestServerPid:
+    """llama-server is supervised by systemd, so systemd is the source of truth."""
 
-        mocker.patch.object(server, "_PID_FILE", tmp_path / "nonexistent.pid")
-        mocker.patch("os.kill")
-        result = server._read_pid()
-        assert result is None
+    def test_returns_unit_main_pid(self, mocker):
+        mocker.patch.object(server, "_unit_main_pid", return_value=4242)
+        assert server._server_pid(8080) == 4242
 
-    def test_read_pid_returns_pid_when_running(self, tmp_path, fake_pid_file, mocker):
+    def test_falls_back_to_port_probe(self, mocker):
+        """A server started outside the unit must still be detected."""
+        mocker.patch.object(server, "_unit_main_pid", return_value=None)
+        mocker.patch("subprocess.run", return_value=MagicMock(stdout=_ss_output(8080, 777)))
+        mocker.patch("os.kill", lambda pid, sig: None)
+        assert server._server_pid(8080) == 777
 
-        fake_pid_file.write_text("99999")
+    def test_ignores_dead_process_from_port_probe(self, mocker):
+        mocker.patch.object(server, "_unit_main_pid", return_value=None)
+        mocker.patch("subprocess.run", return_value=MagicMock(stdout=_ss_output(8080, 777)))
+        mocker.patch("os.kill", MagicMock(side_effect=ProcessLookupError))
+        assert server._server_pid(8080) is None
 
-        def fake_kill(pid, sig):
-            if sig == 0:
-                pass  # simulate process exists
-            return None
+    def test_returns_none_when_nothing_is_running(self, mocker):
+        mocker.patch.object(server, "_unit_main_pid", return_value=None)
+        mocker.patch("subprocess.run", return_value=MagicMock(stdout=""))
+        assert server._server_pid(8080) is None
 
-        mocker.patch.object(server, "_PID_FILE", fake_pid_file)
-        mocker.patch("os.kill", fake_kill)
-        result = server._read_pid()
-        assert result == 99999
+    def test_no_port_and_no_unit_pid(self, mocker):
+        mocker.patch.object(server, "_unit_main_pid", return_value=None)
+        assert server._server_pid() is None
 
-    def test_read_pid_returns_none_when_process_gone(self, tmp_path, fake_pid_file, mocker):
 
-        fake_pid_file.write_text("99999")
+class TestUnitMainPid:
+    """systemd reports MainPID=0 for an inactive unit."""
 
-        def fake_kill(pid, sig):
-            if sig == 0:
-                raise ProcessLookupError()
-            return None
+    def test_parses_main_pid(self, mocker, _make_proc):
+        mocker.patch("subprocess.run", return_value=_make_proc(0, "4242"))
+        assert server._unit_main_pid() == 4242
 
-        mocker.patch.object(server, "_PID_FILE", fake_pid_file)
-        mocker.patch("os.kill", fake_kill)
-        result = server._read_pid()
-        assert result is None
+    def test_zero_means_not_running(self, mocker, _make_proc):
+        mocker.patch("subprocess.run", return_value=_make_proc(0, "0"))
+        assert server._unit_main_pid() is None
 
-    def test_read_pid_handles_corrupt_file(self, tmp_path, fake_pid_file, mocker):
+    def test_unknown_unit_returns_none(self, mocker, _make_proc):
+        mocker.patch("subprocess.run", return_value=_make_proc(1, ""))
+        assert server._unit_main_pid() is None
 
-        fake_pid_file.write_text("not-a-pid")
-
-        mocker.patch.object(server, "_PID_FILE", fake_pid_file)
-        mocker.patch("os.kill")
-        result = server._read_pid()
-        assert result is None
-
-    def test_read_pid_handles_permission_error(self, tmp_path, fake_pid_file, mocker):
-
-        fake_pid_file.write_text("99999")
-
-        def fake_kill(pid, sig):
-            if sig == 0:
-                raise PermissionError()
-            return None
-
-        mocker.patch.object(server, "_PID_FILE", fake_pid_file)
-        mocker.patch("os.kill", fake_kill)
-        result = server._read_pid()
-        assert result is None
+    def test_unparseable_output_returns_none(self, mocker, _make_proc):
+        mocker.patch("subprocess.run", return_value=_make_proc(0, "nonsense"))
+        assert server._unit_main_pid() is None
 
 
 # ── start command ─────────────────────────────────────────────────────────────
@@ -168,140 +159,75 @@ class TestStartCommand:
         with pytest.raises(typer.Exit):
             server.start(wait=0)
 
-    def test_start_server_already_running(self, tmp_config_server, fake_console, monkeypatch, mocker):
-        config, tmp_path = tmp_config_server
-        pid_file = tmp_path / ".server.pid"
-        pid_file.write_text("12345")
+    def test_start_requires_installed_unit(self, tmp_config_server, fake_console, mocker):
+        """Without the unit there is nothing to start, so say so rather than fail opaquely."""
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=False)
+        systemctl = mocker.patch.object(server, "_llm_server_systemctl")
 
-        def fake_kill(pid, sig):
-            if sig == 0:
-                pass  # process exists
-            return None
-
-        mocker.patch("os.kill", fake_kill)
         with pytest.raises(typer.Exit):
             server.start(wait=0)
+        systemctl.assert_not_called()
 
-    def test_start_model_not_found(self, tmp_config_server, fake_console, monkeypatch):
+    def test_start_server_already_running(self, tmp_config_server, fake_console, mocker):
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
+        mocker.patch.object(server, "_server_pid", return_value=12345)
+        systemctl = mocker.patch.object(server, "_llm_server_systemctl")
+
+        with pytest.raises(typer.Exit):
+            server.start(wait=0)
+        systemctl.assert_not_called()
+
+    def test_start_model_not_found(self, tmp_config_server, fake_console, mocker):
         config, tmp_path = tmp_config_server
-        # Remove the model file so start fails
         (tmp_path / "models" / "model.gguf").unlink()
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
+        mocker.patch.object(server, "_server_pid", return_value=None)
+
         with pytest.raises(typer.Exit):
             server.start(wait=0)
 
-    def test_start_success(self, tmp_config_server, fake_console, monkeypatch, _make_proc, mocker):
-        config, tmp_path = tmp_config_server
+    def test_start_uses_systemctl(self, tmp_config_server, fake_console, mocker):
+        """The unit owns the command line; start must not spawn llama-server itself."""
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
+        mocker.patch.object(server, "_server_pid", return_value=None)
+        mocker.patch.object(server, "_unit_main_pid", return_value=54321)
+        mocker.patch.object(server, "_nginx_ensure_running")
+        mocker.patch.object(server, "_start_monitor")
+        popen = mocker.patch("subprocess.Popen")
+        systemctl = mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
 
-        proc = MagicMock()
-        proc.pid = 54321
-
-        def fake_popen(cmd, **kw):
-            return proc
-
-        def fake_kill(pid, sig):
-            if sig == 0:
-                raise ProcessLookupError()
-            return None
-
-        def fake_run(cmd, **kw):
-            return _make_proc(0, "")
-
-        mocker.patch("subprocess.Popen", fake_popen)
-        mocker.patch("os.kill", fake_kill)
-        mocker.patch("time.monotonic", return_value=999999)
-        mocker.patch("subprocess.run", fake_run)
         server.start(wait=0)
 
-        # Check PID file was written
-        pid_file = tmp_path / ".server.pid"
-        assert pid_file.exists()
-        assert pid_file.read_text().strip() == "54321"
+        systemctl.assert_called_once_with("start")
+        popen.assert_not_called()
 
-    def test_start_with_extra_args(self, tmp_config_server, fake_console, monkeypatch, _make_proc, mocker):
-        config, tmp_path = tmp_config_server
-        # Add extra args
-        content = config.read_text()
-        content = content.replace("extra_args = []", 'extra_args = ["--jinja", "--flash-attn"]')
-        config.write_text(content)
+    def test_start_exits_when_systemctl_fails(self, tmp_config_server, fake_console, mocker):
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
+        mocker.patch.object(server, "_server_pid", return_value=None)
+        mocker.patch.object(server, "_llm_server_systemctl", return_value=False)
+        nginx = mocker.patch.object(server, "_nginx_ensure_running")
 
-        proc = MagicMock()
-        proc.pid = 54321
-        started_cmd = None
-
-        def fake_popen(cmd, **kw):
-            nonlocal started_cmd
-            if "--model" in cmd:  # server launch, not the memory monitor
-                started_cmd = cmd
-            return proc
-
-        def fake_kill(pid, sig):
-            if sig == 0:
-                raise ProcessLookupError()
-            return None
-
-        def fake_run(cmd, **kw):
-            return _make_proc(0, "")
-
-        mocker.patch("subprocess.Popen", fake_popen)
-        mocker.patch("os.kill", fake_kill)
-        mocker.patch("time.monotonic", return_value=999999)
-        mocker.patch("subprocess.run", fake_run)
-        server.start(wait=0)
-
-        assert started_cmd is not None
-        assert "--jinja" in started_cmd
-        assert "--flash-attn" in started_cmd
-
-    def test_start_binary_not_found(self, tmp_config_server, fake_console, monkeypatch, mocker):
-        config, tmp_path = tmp_config_server
-        content = config.read_text().replace('"llama-server"', '"/nonexistent/llama-server"')
-        config.write_text(content)
-
-        def fake_popen(cmd, **kw):
-            raise FileNotFoundError("no such file")
-
-        def fake_run(cmd, **kw):
-            # Return empty result so _read_pid finds no existing server
-            return MagicMock(returncode=0, stdout="")
-
-        mocker.patch("subprocess.Popen", fake_popen)
-        mocker.patch("subprocess.run", fake_run)
         with pytest.raises(typer.Exit):
             server.start(wait=0)
+        nginx.assert_not_called()
 
-    def test_start_waits_for_ready(
-        self, tmp_config_server, fake_console, mock_httpx_get, monkeypatch, _make_proc, mocker
-    ):
-        config, tmp_path = tmp_config_server
+    def test_start_waits_for_ready(self, tmp_config_server, fake_console, mock_httpx_get, mocker):
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
+        mocker.patch.object(server, "_server_pid", return_value=None)
+        mocker.patch.object(server, "_unit_main_pid", return_value=54321)
+        mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
+        mocker.patch.object(server, "_nginx_ensure_running")
+        wait_for_ready = mocker.patch.object(server, "_wait_until_ready")
 
-        proc = MagicMock()
-        proc.pid = 54321
+        server.start(wait=3)
 
-        def fake_popen(cmd, **kw):
-            return proc
-
-        def fake_kill(pid, sig):
-            if sig == 0:
-                raise ProcessLookupError()
-            return None
-
-        def fake_run(cmd, **kw):
-            return _make_proc(0, "")
-
-        ready_calls = []
-
-        def fake_monotonic():
-            ready_calls.append(time.time())
-            return 999999  # always "past deadline" for timeout test
-
-        mocker.patch("subprocess.Popen", fake_popen)
-        mocker.patch("os.kill", fake_kill)
-        mocker.patch("time.monotonic", fake_monotonic)
-        mocker.patch("subprocess.run", fake_run)
-        server.start(wait=1)
-
-        # Should have checked readiness
-        assert len(ready_calls) > 0
+        assert wait_for_ready.call_args.args[1] == 3
 
 
 # ── stop command ──────────────────────────────────────────────────────────────
@@ -309,161 +235,129 @@ class TestStartCommand:
 
 class TestStopCommand:
     def test_stop_not_running(self, tmp_config_server, fake_console, mocker):
-        mocker.patch.object(server, "_read_pid", return_value=None)
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_server_pid", return_value=None)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         with pytest.raises(typer.Exit):
             server.stop()
 
-    def test_stop_nginx_when_server_already_stopped(
-        self, tmp_config_server, fake_console, mocker, _make_proc
-    ):
+    def test_stop_nginx_when_server_already_stopped(self, tmp_config_server, fake_console, mocker):
         """nginx is still running after a previous failed stop; should stop it."""
-        mocker.patch.object(server, "_read_pid", return_value=None)
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_server_pid", return_value=None)
         mocker.patch.object(server, "_nginx_is_active", return_value=True)
-        mocker.patch.object(server, "_llm_server_disable", return_value=True)
+        mocker.patch.object(server, "_stop_monitor")
         nginx_stop = mocker.patch.object(server, "_nginx_stop", return_value=True)
+
         server.stop()
+
         nginx_stop.assert_called_once()
 
-    def test_stop_success(self, tmp_config_server, fake_console, mocker, monkeypatch, _make_proc):
-        _, tmp_path = tmp_config_server
-        pid_file = tmp_path / ".server.pid"
-        pid_file.write_text("12345")
-        stopped = False
+    def test_stop_actually_stops_the_unit(self, tmp_config_server, fake_console, mocker):
+        """The old implementation only disabled the unit, leaving the server running."""
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_server_pid", return_value=12345)
+        mocker.patch.object(server, "_nginx_is_active", return_value=False)
+        mocker.patch.object(server, "_stop_monitor")
+        systemctl = mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
 
-        def fake_kill(pid, sig):
-            if sig == signal.SIGTERM:
-                pass
-            if sig == 0:
-                nonlocal stopped
-                if not stopped:
-                    stopped = True
-                    raise ProcessLookupError()
-                return None
-
-        def fake_run(cmd, **kw):
-            return _make_proc(0, "inactive")
-
-        mocker.patch.object(server, "_read_pid", return_value=12345)
-        mocker.patch.object(server, "_llm_server_disable", return_value=True)
-        mocker.patch("os.kill", fake_kill)
-        monkeypatch.setattr(subprocess, "run", fake_run)
         server.stop()
 
-        assert not pid_file.exists()
+        systemctl.assert_called_once_with("stop")
 
-    def test_stop_removes_pid_file(self, tmp_config_server, fake_console, mocker, monkeypatch, _make_proc):
-        _, tmp_path = tmp_config_server
-        pid_file = tmp_path / ".server.pid"
-        pid_file.write_text("12345")
+    def test_stop_does_not_disable_the_unit(self, tmp_config_server, fake_console, mocker):
+        """Enablement controls start-on-boot and is owned by `server apply`."""
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_server_pid", return_value=12345)
+        mocker.patch.object(server, "_nginx_is_active", return_value=False)
+        mocker.patch.object(server, "_stop_monitor")
+        systemctl = mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
 
-        def fake_kill(pid, sig):
-            if sig == 0:
-                raise ProcessLookupError()
-            return None
-
-        def fake_run(cmd, **kw):
-            return _make_proc(0, "inactive")
-
-        mocker.patch.object(server, "_read_pid", return_value=12345)
-        mocker.patch.object(server, "_llm_server_disable", return_value=True)
-        mocker.patch("os.kill", fake_kill)
-        monkeypatch.setattr(subprocess, "run", fake_run)
         server.stop()
 
-        assert not pid_file.exists()
+        assert "disable" not in [c.args[0] for c in systemctl.call_args_list]
+
+    def test_stop_warns_about_a_server_it_cannot_stop(self, tmp_config_server, fake_console, mocker):
+        """systemctl reports success for an inactive unit, so a manually
+        started llama-server would otherwise be reported as stopped."""
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_server_pid", return_value=12345)
+        mocker.patch.object(server, "_nginx_is_active", return_value=False)
+        mocker.patch.object(server, "_stop_monitor")
+        mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
+
+        server.stop()
+
+        assert any("still running" in line for line in fake_console)
+
+    def test_stop_stops_the_monitor(self, tmp_config_server, fake_console, mocker):
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_server_pid", return_value=12345)
+        mocker.patch.object(server, "_nginx_is_active", return_value=False)
+        mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
+        stop_monitor = mocker.patch.object(server, "_stop_monitor")
+
+        server.stop()
+
+        stop_monitor.assert_called_once()
 
 
-class TestLlmServerDisable:
-    def test_noop_when_unit_not_installed(self, monkeypatch, mocker):
-        monkeypatch.setattr(server.Path, "exists", lambda self: False)
-        run = mocker.patch.object(server, "_run_sudo")
-        assert server._llm_server_disable() is True
-        run.assert_not_called()
-
-    def test_disables_when_unit_installed(self, monkeypatch, mocker, _make_proc):
-        monkeypatch.setattr(server.Path, "exists", lambda self: True)
+class TestSystemctlHelpers:
+    def test_runs_the_requested_action(self, mocker, _make_proc):
         run = mocker.patch.object(server, "_run_sudo", return_value=_make_proc(0, ""))
-        assert server._llm_server_disable() is True
-        run.assert_called_once_with(["sudo", "systemctl", "disable", "llm-server"])
+        assert server._llm_server_systemctl("restart") is True
+        run.assert_called_once_with(["sudo", "systemctl", "restart", "llm-server"])
 
-    def test_returns_false_on_failure(self, monkeypatch, mocker, _make_proc):
-        monkeypatch.setattr(server.Path, "exists", lambda self: True)
+    def test_returns_false_on_failure(self, mocker, _make_proc):
         mocker.patch.object(server, "_run_sudo", return_value=_make_proc(1, ""))
-        assert server._llm_server_disable() is False
+        assert server._llm_server_systemctl("start") is False
 
-
-class TestLlmServerEnable:
-    def test_noop_when_unit_not_installed(self, monkeypatch, mocker):
-        monkeypatch.setattr(server.Path, "exists", lambda self: False)
-        run = mocker.patch.object(server, "_run_sudo")
-        assert server._llm_server_enable() is True
-        run.assert_not_called()
-
-    def test_enables_when_unit_installed(self, monkeypatch, mocker, _make_proc):
-        monkeypatch.setattr(server.Path, "exists", lambda self: True)
-        run = mocker.patch.object(server, "_run_sudo", return_value=_make_proc(0, ""))
-        assert server._llm_server_enable() is True
-        run.assert_called_once_with(["sudo", "systemctl", "enable", "llm-server"])
-
-    def test_returns_false_on_failure(self, monkeypatch, mocker, _make_proc):
-        monkeypatch.setattr(server.Path, "exists", lambda self: True)
-        mocker.patch.object(server, "_run_sudo", return_value=_make_proc(1, ""))
-        assert server._llm_server_enable() is False
+    def test_unit_installed_reflects_the_unit_path(self, mocker):
+        mocker.patch.object(server._UNIT_PATH.__class__, "exists", lambda self: True)
+        assert server._llm_server_unit_installed() is True
 
 
 # ── restart command ───────────────────────────────────────────────────────────
 
 
 class TestRestartCommand:
-    def test_restart_calls_stop_then_start(
-        self, tmp_config_server, fake_console, mock_httpx_get, monkeypatch, mocker
-    ):
-        config, tmp_path = tmp_config_server
-
-        pid_file = tmp_path / ".server.pid"
-        pid_file.write_text("12345")
-        proc = MagicMock()
-        proc.pid = 54321
-
-        stop_calls = []
-        start_calls = []
-
-        def fake_stop():
-            stop_calls.append(True)
-            pid_file.unlink(missing_ok=True)
-
-        def fake_start(wait=5):
-            start_calls.append(True)
-
-        def fake_popen(cmd, **kw):
-            return proc
-
-        def fake_kill(pid, sig):
-            if sig == 0:
-                raise ProcessLookupError()
-            return None
-
-        enable_calls = []
-        mocker.patch.object(server, "_read_pid", return_value=12345)
-        mocker.patch.object(server, "_nginx_is_active", return_value=False)
-        mocker.patch.object(server, "_nginx_start", return_value=True)
+    def test_restart_uses_a_single_systemctl_restart(self, tmp_config_server, fake_console, mocker):
+        """systemctl restart is atomic; stop-then-start raced with the restart policy."""
         mocker.patch.object(server, "_ensure_sudo")
-        mocker.patch.object(server, "stop", fake_stop)
-        mocker.patch.object(server, "start", fake_start)
-        mocker.patch.object(
-            server,
-            "_llm_server_enable",
-            side_effect=lambda: enable_calls.append(True) or True,
-        )
-        mocker.patch("subprocess.Popen", fake_popen)
-        mocker.patch("os.kill", fake_kill)
-        mocker.patch("time.monotonic", return_value=999999)
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
+        mocker.patch.object(server, "_unit_main_pid", return_value=54321)
+        mocker.patch.object(server, "_stop_monitor")
+        mocker.patch.object(server, "_wait_until_ready")
+        mocker.patch.object(server, "_nginx_ensure_running")
+        systemctl = mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
+
         server.restart()
 
-        assert stop_calls
-        assert start_calls
-        assert enable_calls
+        systemctl.assert_called_once_with("restart")
+
+    def test_restart_ensures_nginx_is_running(self, tmp_config_server, fake_console, mocker):
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
+        mocker.patch.object(server, "_unit_main_pid", return_value=54321)
+        mocker.patch.object(server, "_stop_monitor")
+        mocker.patch.object(server, "_wait_until_ready")
+        mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
+        nginx = mocker.patch.object(server, "_nginx_ensure_running")
+
+        server.restart()
+
+        nginx.assert_called_once()
+
+    def test_restart_exits_when_systemctl_fails(self, tmp_config_server, fake_console, mocker):
+        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
+        mocker.patch.object(server, "_stop_monitor")
+        mocker.patch.object(server, "_llm_server_systemctl", return_value=False)
+        nginx = mocker.patch.object(server, "_nginx_ensure_running")
+
+        with pytest.raises(typer.Exit):
+            server.restart()
+        nginx.assert_not_called()
 
 
 # ── status command ────────────────────────────────────────────────────────────
@@ -483,14 +377,14 @@ class TestStatusCommand:
         content = config.read_text().replace('"model.gguf"', '"Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf"')
         config.write_text(content)
 
-        mocker.patch.object(server, "_read_pid", return_value=12345)
+        mocker.patch.object(server, "_server_pid", return_value=12345)
         mocker.patch.object(server, "_nginx_is_active", return_value=True)
         server.status()
 
     def test_status_stopped(self, tmp_config_server, fake_console, mocker):
         config, tmp_path = tmp_config_server
 
-        mocker.patch.object(server, "_read_pid", return_value=None)
+        mocker.patch.object(server, "_server_pid", return_value=None)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         server.status()
 
@@ -516,66 +410,22 @@ class TestUptimeHelpers:
 
 
 class TestLogsCommand:
-    def test_logs_no_file(self, tmp_config_server, mocker):
-        _, tmp_path = tmp_config_server
-        mocker.patch.object(server, "_log_file", return_value=tmp_path / "nonexistent.log")
-        with pytest.raises(typer.Exit):
-            server.logs(lines=50)
+    """Logs come from the journal now that systemd owns the process."""
 
-    def test_logs_show_lines(self, tmp_config_server, fake_console, mocker):
-        _, tmp_path = tmp_config_server
-        log_file = tmp_path / ".server.log"
-        log_file.write_text("line 1\nline 2\nline 3\n")
+    def test_reads_the_journal_for_the_unit(self, fake_console, mocker):
+        run = mocker.patch("subprocess.run")
 
-        captured = []
+        server.logs(lines=25)
 
-        def fake_run(cmd, **kw):
-            captured.append(list(cmd))
+        cmd = run.call_args.args[0]
+        assert cmd[:3] == ["journalctl", "-u", "llm-server"]
+        assert "-n" in cmd
+        assert "25" in cmd
+        assert "-f" not in cmd
 
-        mocker.patch.object(server, "_log_file", return_value=log_file)
-        mocker.patch("subprocess.run", fake_run)
-        server.logs(lines=2)
+    def test_follow_passes_f(self, fake_console, mocker):
+        run = mocker.patch("subprocess.run")
 
-        assert captured
-        assert "-2" in captured[0]
-        assert str(log_file) in captured[0]
-
-    def test_logs_follow(self, tmp_config_server, mocker):
-        _, tmp_path = tmp_config_server
-        log_file = tmp_path / ".server.log"
-        log_file.write_text("line 1\n")
-
-        captured = []
-
-        def fake_run(cmd, **kw):
-            captured.append(list(cmd))
-
-        mocker.patch.object(server, "_log_file", return_value=log_file)
-        mocker.patch("subprocess.run", fake_run)
         server.logs(follow=True)
 
-        assert captured
-        assert "-f" in captured[0]
-
-
-class TestReadPidWithCustomFile:
-    def test_reads_from_custom_pid_file(self, tmp_path, monkeypatch):
-        pid_file = tmp_path / "custom.pid"
-        pid_file.write_text("99999")
-        # Make os.kill think the process exists
-        monkeypatch.setattr("os.kill", lambda pid, sig: None)
-        result = server._read_pid(pid_file=pid_file)
-        assert result == 99999
-
-    def test_returns_none_when_custom_file_missing(self, tmp_path):
-        pid_file = tmp_path / "missing.pid"
-        result = server._read_pid(pid_file=pid_file)
-        assert result is None
-
-    def test_cleans_up_stale_pid_file(self, tmp_path, monkeypatch):
-        pid_file = tmp_path / "stale.pid"
-        pid_file.write_text("99999")
-        monkeypatch.setattr("os.kill", MagicMock(side_effect=ProcessLookupError))
-        result = server._read_pid(pid_file=pid_file)
-        assert result is None
-        assert not pid_file.exists()
+        assert "-f" in run.call_args.args[0]
