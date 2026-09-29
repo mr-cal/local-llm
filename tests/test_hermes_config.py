@@ -5,7 +5,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from llm.config import HermesSettings, Settings
+from llm.settings import HermesSettings, Settings
 
 
 class TestHermesSettings:

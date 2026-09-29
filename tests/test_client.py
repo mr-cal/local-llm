@@ -18,8 +18,8 @@ class TestHostSetup:
 
     def test_setup_with_config_applies_configs(self, fake_find_config, fake_console, monkeypatch, mocker):
         """With config.toml, host setup should apply client configs."""
-        mocker.patch("llm.config.apply_client_configs")
-        mocker.patch("llm.config.configure_shell_env_host", return_value=["action1"])
+        mocker.patch("llm.client.apply_client_configs")
+        mocker.patch("llm.client.configure_shell_env_host", return_value=["action1"])
         client.setup()
 
 

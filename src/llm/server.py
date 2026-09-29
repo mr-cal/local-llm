@@ -13,9 +13,13 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
-from llm.config import CONFIG_FILENAME, find_config, load_config
 from llm.core import fmt, http, proc
 from llm.core.console import console
+from llm.render.client_configs import apply_client_configs
+from llm.render.templates import apply_server_configs
+from llm.services.certs import detect_lan_ip, generate_api_key, generate_tls_cert
+from llm.services.shell import configure_shell_env_host
+from llm.settings import CONFIG_FILENAME, Settings, find_config, load_config, write_config_toml
 
 app = typer.Typer(help="Manage the llama-server process.", no_args_is_help=True)
 
@@ -67,15 +71,6 @@ def setup(
     renders nginx/systemd configs, and configures the local client
     (opencode, pi, shell env vars). Safe to re-run.
     """
-    from llm.config import (  # noqa: PLC0415
-        apply_client_configs,
-        apply_server_configs,
-        configure_shell_env_host,
-        detect_lan_ip,
-        generate_api_key,
-        generate_tls_cert,
-        write_config_toml,
-    )
 
     proc.ensure_sudo()
 
@@ -375,7 +370,6 @@ def _read_monitor_pid() -> int | None:
 
 def _start_monitor(cfg: object, server_pid: int) -> None:
     """Spawn the detached memory-monitor daemon for the running server."""
-    from llm.config import Settings  # noqa: PLC0415
 
     assert isinstance(cfg, Settings)
     if cfg.server.monitor_interval <= 0:
@@ -523,7 +517,6 @@ def start(
 
 def _wait_until_ready(cfg: object, wait: int) -> None:
     """Poll /health until the server answers or *wait* seconds elapse."""
-    from llm.config import Settings  # noqa: PLC0415
 
     assert isinstance(cfg, Settings)
     console.print(f"Waiting up to {wait}s for server to be ready...", end="")
@@ -714,7 +707,6 @@ def apply() -> None:
     /etc/nginx/sites-available/llm and /etc/systemd/system/llm-server.service.
     Reloads nginx if it is already running.
     """
-    from llm.config import apply_server_configs  # noqa: PLC0415
 
     cfg = load_config()
     proc.ensure_sudo()

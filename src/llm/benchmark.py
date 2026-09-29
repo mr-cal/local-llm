@@ -18,10 +18,10 @@ import httpx
 import typer
 from rich.table import Table
 
-from llm.config import find_config, load_config
 from llm.core import http
 from llm.core.console import console
 from llm.gpu import gpu_memory_status, gpu_used_mb
+from llm.settings import Settings, find_config, load_config
 
 app = typer.Typer(help="Benchmark inference speed.", no_args_is_help=True)
 
@@ -66,7 +66,6 @@ def _abort_if_server_running(cfg: object) -> None:
     the sweep look like it's out of memory even though there'd be plenty of
     headroom with the server stopped.
     """
-    from llm.config import Settings  # noqa: PLC0415
     from llm.server import _server_pid  # noqa: PLC0415
 
     assert isinstance(cfg, Settings)
@@ -450,7 +449,6 @@ def _run_single_benchmark(
     raw: bool = False,
 ) -> dict:
     """Run one API benchmark and return result dict. Also appends to history CSV."""
-    from llm.config import Settings  # noqa: PLC0415
 
     assert isinstance(cfg, Settings)
 
@@ -599,7 +597,6 @@ def _print_profile_comparison(results: list[tuple[str, dict]]) -> None:
 
 def _run_llama_bench_raw(cfg: object) -> None:
     """Run llama-bench for raw pp/tg throughput without HTTP overhead (used by `run --raw`)."""
-    from llm.config import Settings
 
     assert isinstance(cfg, Settings)
     bench_bin = _find_bench_bin()

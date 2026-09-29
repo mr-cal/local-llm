@@ -9,7 +9,6 @@ import click
 import pytest
 
 import llm.models as models
-from llm.config import ModelEntry
 from llm.models import (
     KNOWN_MODELS,
     _by_alias,
@@ -23,6 +22,7 @@ from llm.models import (
     _split_subfolder,
     _verify_size,
 )
+from llm.settings import ModelEntry
 
 # ── KNOWN_MODELS catalog ──────────────────────────────────────────────────────
 
@@ -495,7 +495,7 @@ class TestSwitch:
         assert 'active = "custom.gguf"' in catalogued.read_text()
 
     def test_the_new_active_model_loads_back(self, catalogued):
-        from llm.config import load_config
+        from llm.settings import load_config
 
         models.switch("coder", restart=False)
         assert load_config().models.active == "coder"

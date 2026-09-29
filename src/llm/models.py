@@ -12,9 +12,9 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
-from llm.config import ModelEntry, find_config, load_config
 from llm.core import fmt
 from llm.core.console import console
+from llm.settings import ModelEntry, find_config, load_config
 
 app = typer.Typer(help="Download, list, and switch GGUF models.", no_args_is_help=True)
 

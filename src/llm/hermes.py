@@ -7,9 +7,9 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from llm.config import find_config, load_config
 from llm.core import fmt
 from llm.core.console import console
+from llm.settings import find_config, load_config
 
 app = typer.Typer(help="Hermes agent VM management.", no_args_is_help=True)
 

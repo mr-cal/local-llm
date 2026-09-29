@@ -10,8 +10,8 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
-from llm.config import BuildProfile, load_config
 from llm.core.console import console
+from llm.settings import BuildProfile, find_config, load_config
 
 app = typer.Typer(help="Build llama.cpp and manage build profiles.", no_args_is_help=True)
 
@@ -21,7 +21,6 @@ _SUBMODULE_DIR = Path("llama.cpp")
 
 def _project_root() -> Path:
     """Return the project root (directory containing config.toml)."""
-    from llm.config import find_config  # noqa: PLC0415
 
     return find_config().parent
 

@@ -9,9 +9,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from llm import lxd
-from llm.config import _get_lxd_bridge_info
 from llm.core import proc
 from llm.core.errors import LlmError
+from llm.render.client_configs import _get_lxd_bridge_info
 
 # ── _get_lxd_bridge_info (shared impl used by lxd.py and config.py) ──────────
 

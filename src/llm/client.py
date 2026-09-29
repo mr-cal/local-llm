@@ -10,8 +10,10 @@ from typing import Annotated
 import typer
 from rich.markup import escape
 
-from llm.config import CONFIG_FILENAME, find_config, load_config
 from llm.core.console import console
+from llm.render.client_configs import _build_opencode_config_for_container, apply_client_configs
+from llm.services.shell import configure_shell_env_host
+from llm.settings import CONFIG_FILENAME, find_config, load_config
 
 app = typer.Typer(help="Client setup and management.", no_args_is_help=True)
 
@@ -21,10 +23,6 @@ app = typer.Typer(help="Client setup and management.", no_args_is_help=True)
 
 def _setup_host_client() -> None:
     """Set up the current machine as a client (opencode, pi, shell env)."""
-    from llm.config import (  # noqa: PLC0415
-        apply_client_configs,
-        configure_shell_env_host,
-    )
 
     config_path = find_config()
     if not config_path.exists():
@@ -63,7 +61,6 @@ def _setup_container_client(
     recreate: bool = False,
 ) -> None:
     """Create an LXD VM and fully configure it as a client."""
-    from llm.config import _build_opencode_config_for_container  # noqa: PLC0415
     from llm.lxd import (  # noqa: PLC0415
         CONTAINER_HOME,
         HOST_GID,

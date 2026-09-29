@@ -9,7 +9,7 @@ import pytest
 import tomli_w
 from click.exceptions import Exit as ClickExit
 
-from llm.config import BACKEND_FLAGS, BuildConfig, BuildProfile
+from llm.settings import BACKEND_FLAGS, BuildConfig, BuildProfile
 
 # ── BACKEND_FLAGS ───────────────────────────────────────────────────────────
 

@@ -570,7 +570,7 @@ class TestRunLlamaBenchRaw:
     def test_skips_when_no_bench(self, tmp_config_bench, fake_console, monkeypatch, mocker):
         monkeypatch.chdir(tmp_config_bench.parent)
 
-        from llm.config import load_config
+        from llm.settings import load_config
 
         cfg = load_config()
 
@@ -650,7 +650,7 @@ class TestRunSingleBenchmarkResponseHandling:
         monkeypatch.setattr(benchmark, "gpu_used_mb", lambda: None)
         monkeypatch.setattr(benchmark, "HISTORY_FILE", tmp_path / "history.csv")
 
-        from llm.config import load_config
+        from llm.settings import load_config
 
         return load_config()
 
@@ -683,7 +683,7 @@ class TestRunLlamaBenchRawFailure:
     def test_reports_nonzero_exit(self, tmp_config_bench, fake_console, monkeypatch, mocker):
         monkeypatch.chdir(tmp_config_bench.parent)
 
-        from llm.config import load_config
+        from llm.settings import load_config
 
         cfg = load_config()
         bench = tmp_path_bin = Path(tmp_config_bench.parent / "llama-bench")

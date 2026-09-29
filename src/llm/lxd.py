@@ -26,15 +26,14 @@ from tenacity import (
 )
 
 from llm import omp
-from llm.config import (
-    _build_omp_config_for_container,
-    _build_pi_config_for_container,
-    load_config,
-    try_load_lxd,
-)
 from llm.core.console import console
 from llm.core.errors import LlmError
 from llm.core.proc import redact
+from llm.render.client_configs import (
+    _build_omp_config_for_container,
+    _build_pi_config_for_container,
+)
+from llm.settings import load_config, try_load_lxd
 
 # Version stored in LXD container metadata for future compatibility handling.
 LOCAL_LLM_VERSION = 1
@@ -1418,7 +1417,6 @@ VM_SWAP_SIZE = "4G"
 
 def _refresh_omp_config(container: str, uid: int, gid: int) -> None:
     """Re-apply the oh-my-pi models.yml inside the container."""
-    from llm.config import load_config  # noqa: PLC0415
 
     cfg = load_config()
     omp_cfg = _build_omp_config_for_container(cfg, "local-llm")

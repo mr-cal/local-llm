@@ -15,7 +15,6 @@ import json
 import subprocess
 from typing import Any
 
-from llm.config import HermesSettings, Settings, load_config
 from llm.core.console import console
 from llm.core.proc import register_secrets
 
@@ -35,6 +34,7 @@ from llm.lxd import (
     run_capture,
     run_with_retry,
 )
+from llm.settings import HermesSettings, Settings, load_config
 
 # Hermes install script URL (official one-liner)
 _HERMES_INSTALL_URL = "https://hermes-agent.nousresearch.com/install.sh"
@@ -306,7 +306,6 @@ class HermesVmManager(_BaseVmManager):
 
             elif provider in ("openai", "local"):
                 # Probe the local llama-server endpoint
-                from llm.config import load_config  # noqa: PLC0415
 
                 all_cfg = load_config()
                 if all_cfg.proxy.enabled:

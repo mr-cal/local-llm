@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from llm.config import HermesSettings
 from llm.hermes import _format_credentials, _format_local_llm
 from llm.hermes_vm import HermesVmManager, _merge_env_file
+from llm.settings import HermesSettings
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -137,7 +137,7 @@ class TestConfigureCredentials:
     @patch.object(HermesVmManager, "_configure_local_llm")
     def test_local_llm_calls_configure_local_llm(self, mock_local):
         """When provider is local-llm, _configure_local_llm is called with all_cfg."""
-        from llm.config import AuthSettings, ProxySettings, ServerSettings, Settings
+        from llm.settings import AuthSettings, ProxySettings, ServerSettings, Settings
 
         all_cfg = Settings(
             auth=AuthSettings(api_key="test-api-key"),
@@ -172,7 +172,13 @@ class TestConfigureLocalLlm:
 
     @staticmethod
     def _cfg(**proxy_kwargs):
-        from llm.config import AuthSettings, ClientSettings, ProxySettings, ServerSettings, Settings
+        from llm.settings import (
+            AuthSettings,
+            ClientSettings,
+            ProxySettings,
+            ServerSettings,
+            Settings,
+        )
 
         return Settings(
             auth=AuthSettings(api_key="test-api-key"),
@@ -390,7 +396,7 @@ class TestGetStatus:
         """When provider is openai and proxy is disabled, probe http endpoint."""
         from unittest.mock import patch as real_patch
 
-        from llm.config import AuthSettings, ProxySettings, ServerSettings, Settings
+        from llm.settings import AuthSettings, ProxySettings, ServerSettings, Settings
 
         mgr = self._build_mgr()
 
@@ -414,7 +420,7 @@ class TestGetStatus:
 
         mock_cexec.side_effect = cexec_side_effect
 
-        with real_patch("llm.config.load_config") as mock_load:
+        with real_patch("llm.hermes_vm.load_config") as mock_load:
             mock_load.return_value = Settings(
                 auth=AuthSettings(api_key="test-key"),
                 proxy=ProxySettings(enabled=False),

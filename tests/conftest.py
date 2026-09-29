@@ -607,7 +607,7 @@ def fake_pi_config_path(tmp_path: Path):
     pi_dir.mkdir(parents=True)
     fake_path = pi_dir / "models.json"
 
-    from llm import config as config_mod  # noqa: PLC0415
+    from llm.render import client_configs as config_mod  # noqa: PLC0415
 
     orig_path = config_mod._PI_CONFIG_PATH
     config_mod._PI_CONFIG_PATH = fake_path
