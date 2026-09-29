@@ -389,15 +389,6 @@ class TestAbortIfServerRunning:
         with pytest.raises(click.exceptions.Exit):
             benchmark._abort_if_server_running(cfg)
 
-    def test_aborts_when_embed_server_running(self, tmp_config_bench, fake_console, monkeypatch):
-        monkeypatch.chdir(tmp_config_bench.parent)
-        cfg = benchmark.load_config()
-        monkeypatch.setattr(
-            "llm.server._read_pid", lambda port, pid_file: 5678 if port == cfg.embed.port else None
-        )
-        with pytest.raises(click.exceptions.Exit):
-            benchmark._abort_if_server_running(cfg)
-
 
 # ── _apply_config ─────────────────────────────────────────────────────────────
 

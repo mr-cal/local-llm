@@ -331,8 +331,6 @@ def _warn_if_stale() -> None:
 # Both are gitignored.
 _PID_FILE = Path(".server.pid")
 _LOG_FILE = Path(".server.log")
-_EMBED_PID_FILE = Path(".embed.pid")
-_EMBED_LOG_FILE = Path(".embed.log")
 _MONITOR_PID_FILE = Path(".server-monitor.pid")
 _MONITOR_LOG_FILE = Path(".server-monitor.log")
 
@@ -344,14 +342,6 @@ def _pid_file() -> Path:
 
 def _log_file() -> Path:
     return _LOG_FILE
-
-
-def _embed_pid_file() -> Path:
-    return _EMBED_PID_FILE
-
-
-def _embed_log_file() -> Path:
-    return _EMBED_LOG_FILE
 
 
 def _read_pid(port: int | None = None, pid_file: Path | None = None) -> int | None:
@@ -421,7 +411,7 @@ def _read_monitor_pid() -> int | None:
         return None
 
 
-def _start_monitor(cfg: object, server_pid: int, embed_pid: int | None) -> None:
+def _start_monitor(cfg: object, server_pid: int) -> None:
     """Spawn the detached memory-monitor daemon for the running server."""
     from llm.config import Settings  # noqa: PLC0415
 
@@ -439,8 +429,6 @@ def _start_monitor(cfg: object, server_pid: int, embed_pid: int | None) -> None:
         "--retention-days",
         str(cfg.server.monitor_retention_days),
     ]
-    if embed_pid is not None:
-        cmd += ["--embed-pid", str(embed_pid)]
 
     log_fh = _MONITOR_LOG_FILE.open("a")
     try:
@@ -538,57 +526,6 @@ def _format_uptime(secs: int) -> str:
     return f"{secs}s"
 
 
-def _start_embed_server(cfg: object, bin_path: str) -> None:
-    """Start the embedding llama-server as a background process."""
-    from llm.config import Settings  # noqa: PLC0415
-
-    assert isinstance(cfg, Settings)
-
-    existing = _read_pid(cfg.embed.port, _embed_pid_file())
-    if existing:
-        console.print(f"[yellow]Embed server already running[/yellow] (PID {existing})")
-        return
-
-    embed_model_entry = cfg.models.by_alias(cfg.embed.active)
-    if embed_model_entry is None:
-        console.print(f"[yellow]Embed model not found in catalog:[/yellow] {cfg.embed.active!r} — skipping")
-        return
-
-    embed_model_path = cfg.models_path / Path(embed_model_entry.filename).name
-    if not embed_model_path.exists():
-        console.print(f"[yellow]Embed model file not found:[/yellow] {embed_model_path} — skipping")
-        console.print(f"  Download it: [bold]uv run llm model download {cfg.embed.active}[/bold]")
-        return
-
-    cmd: list[str] = [
-        bin_path,
-        "--model",
-        str(embed_model_path),
-        "--port",
-        str(cfg.embed.port),
-        "--n-gpu-layers",
-        "0",  # embedding models are fast on CPU; keep VRAM for the chat model
-        *cfg.embed.extra_args,
-    ]
-
-    log_path = _embed_log_file()
-    log_fh = log_path.open("a")
-    try:
-        proc = subprocess.Popen(
-            cmd, stdout=log_fh, stderr=log_fh, stdin=subprocess.DEVNULL, start_new_session=True
-        )
-    except FileNotFoundError:
-        log_fh.close()
-        console.print(f"[yellow]Embed server binary not found:[/yellow] {bin_path} — skipping")
-        return
-
-    _embed_pid_file().write_text(str(proc.pid))
-    console.print(f"[green]Started[/green] embed-server  (PID {proc.pid})")
-    console.print(f"  Model  : {cfg.embed.active}")
-    console.print(f"  Port   : {cfg.embed.port}")
-    console.print(f"  Logs   : {log_path.resolve()}")
-
-
 @app.command("start")
 def start(
     wait: Annotated[int, typer.Option("--wait", help="Seconds to wait for server to be ready.")] = 5,
@@ -601,7 +538,7 @@ def start(
         ),
     ] = None,
 ) -> None:
-    """Start llama-server (and embedding server if enabled) using settings from config.toml."""
+    """Start llama-server using settings from config.toml."""
     _ensure_sudo()
     _warn_if_stale()
     cfg = load_config()
@@ -697,28 +634,22 @@ def start(
         else:
             console.print(" [yellow]timeout (server may still be loading)[/yellow]")
 
-    # ── Embedding server ──────────────────────────────────────────────────
-    if cfg.embed.enabled:
-        _start_embed_server(cfg, bin_path)
-
     # ── Memory monitor ────────────────────────────────────────────────────
     if cfg.server.monitor:
-        embed_pid = _read_pid(cfg.embed.port, _embed_pid_file()) if cfg.embed.enabled else None
-        _start_monitor(cfg, proc.pid, embed_pid)
+        _start_monitor(cfg, proc.pid)
 
     _nginx_ensure_running()
 
 
 @app.command("stop")
 def stop() -> None:
-    """Stop llama-server, embedding server, and nginx, and disable the systemd service."""
+    """Stop llama-server and nginx, and disable the systemd service."""
     _ensure_sudo()
     cfg = load_config()
     pid = _read_pid(cfg.server.port)
-    embed_pid = _read_pid(cfg.embed.port, _embed_pid_file())
     nginx_active = _nginx_is_active()
 
-    if pid is None and embed_pid is None and not nginx_active:
+    if pid is None and not nginx_active:
         console.print("[yellow]Server is not running[/yellow]")
         raise typer.Exit(1)
 
@@ -733,17 +664,6 @@ def stop() -> None:
                 break
         _pid_file().unlink(missing_ok=True)
         console.print(f"[green]Stopped[/green] llama-server (PID {pid})")
-
-    if embed_pid is not None:
-        os.kill(embed_pid, signal.SIGTERM)
-        for _ in range(20):
-            time.sleep(0.25)
-            try:
-                os.kill(embed_pid, 0)
-            except ProcessLookupError:
-                break
-        _embed_pid_file().unlink(missing_ok=True)
-        console.print(f"[green]Stopped[/green] embed-server  (PID {embed_pid})")
 
     if nginx_active:
         if _nginx_stop():
@@ -820,23 +740,6 @@ def status() -> None:
         console.print("[red]● llama-server[/red] stopped")
         console.print("  Run [bold]uv run llm server start[/bold] to start.")
 
-    # Embed server status
-    if cfg.embed.enabled:
-        embed_pid = _read_pid(cfg.embed.port, _embed_pid_file())
-        if embed_pid:
-            embed_ready = _server_is_ready(cfg.embed.port)
-            embed_icon = "[green]●[/green]" if embed_ready else "[yellow]●[/yellow] loading"
-            embed_uptime = _process_uptime_seconds(embed_pid)
-            console.print(f"{embed_icon} embed-server  PID {embed_pid} port {cfg.embed.port}")
-            console.print(f"  Model  : {cfg.embed.active}")
-            if embed_uptime is not None:
-                console.print(f"  Uptime : {_format_uptime(embed_uptime)}")
-            embed_log = _embed_log_file().resolve()
-            console.print(f"  Logs   : {embed_log}  [dim](uv run llm server logs --embed -f)[/dim]")
-        else:
-            console.print("[red]● embed-server[/red] stopped")
-            console.print("  Run [bold]uv run llm server start[/bold] to start.")
-
     # Memory monitor status
     monitor_pid = _read_monitor_pid()
     if monitor_pid:
@@ -854,10 +757,9 @@ def status() -> None:
 def logs(
     lines: Annotated[int, typer.Option("-n", help="Number of lines to show.")] = 50,
     follow: Annotated[bool, typer.Option("-f", "--follow", help="Follow log output.")] = False,
-    embed: Annotated[bool, typer.Option("--embed", help="Show embedding server logs.")] = False,
 ) -> None:
     """Show server logs."""
-    log_path = _embed_log_file() if embed else _log_file()
+    log_path = _log_file()
     if not log_path.exists():
         console.print(f"[yellow]No log file found:[/yellow] {log_path}")
         raise typer.Exit(1)

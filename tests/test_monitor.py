@@ -27,11 +27,10 @@ class TestSample:
         )
         monkeypatch.setattr(monitor, "read_gpu_memory", lambda: GpuMemory(2.0, 8.0, 5.0, 6.0))
 
-        row = monitor.sample(1234, 5678)
+        row = monitor.sample(1234)
 
         assert row["event"] == "sample"
         assert row["pid"] == 1234
-        assert row["embed_pid"] == 5678
         assert row["mem_total_kb"] == 1000
         assert row["mem_avail_kb"] == 500
         assert row["rss_kb"] == 123
@@ -43,10 +42,9 @@ class TestSample:
         monkeypatch.setattr(monitor, "_read_proc_status", lambda pid: {})
         monkeypatch.setattr(monitor, "read_gpu_memory", lambda: None)
 
-        row = monitor.sample(1234, None, event="exited")
+        row = monitor.sample(1234, event="exited")
 
         assert row["event"] == "exited"
-        assert row["embed_pid"] == ""
         assert row["mem_avail_kb"] == ""
         assert row["rss_kb"] == ""
         assert row["gpu_gtt_used_mb"] == ""
@@ -97,7 +95,7 @@ class TestRunMonitor:
         monkeypatch.setattr(monitor, "_read_proc_status", lambda pid: {"rss_kb": 100})
         monkeypatch.setattr(monitor, "read_gpu_memory", lambda: None)
 
-        monitor.run_monitor(1234, None, interval=30, retention_days=90, csv_path=path)
+        monitor.run_monitor(1234, interval=30, retention_days=90, csv_path=path)
 
         rows = monitor.read_recent_rows(path, 100)
         assert len(rows) == 3  # two samples + one exit row

@@ -558,23 +558,6 @@ class TestLogsCommand:
         assert "-f" in captured[0]
 
 
-# ── embed server helpers ──────────────────────────────────────────────────────
-
-
-class TestEmbedPidLogFiles:
-    def test_embed_pid_file_path(self):
-        assert server._embed_pid_file() == server._EMBED_PID_FILE
-
-    def test_embed_log_file_path(self):
-        assert server._embed_log_file() == server._EMBED_LOG_FILE
-
-    def test_embed_pid_file_distinct_from_chat(self):
-        assert server._embed_pid_file() != server._pid_file()
-
-    def test_embed_log_file_distinct_from_chat(self):
-        assert server._embed_log_file() != server._log_file()
-
-
 class TestReadPidWithCustomFile:
     def test_reads_from_custom_pid_file(self, tmp_path, monkeypatch):
         pid_file = tmp_path / "custom.pid"
@@ -596,68 +579,3 @@ class TestReadPidWithCustomFile:
         result = server._read_pid(pid_file=pid_file)
         assert result is None
         assert not pid_file.exists()
-
-
-class TestStartEmbedServer:
-    def test_skips_when_model_not_in_catalog(self, tmp_config_server, fake_console, mocker):
-        """Embed server start is skipped gracefully when model alias is not in catalog."""
-        from llm.config import EmbedSettings
-
-        config, tmp_path = tmp_config_server
-        cfg = server.load_config()
-        # Patch embed.active to something not in the catalog
-        object.__setattr__(cfg, "embed", EmbedSettings(enabled=True, active="nonexistent-model"))
-        mocker.patch.object(server, "_read_pid", return_value=None)
-        # Should not raise
-        server._start_embed_server(cfg, "llama-server")
-
-    def test_skips_when_model_file_missing(self, tmp_config_server, fake_console, mocker):
-        """Embed server start is skipped when the GGUF file doesn't exist on disk."""
-        from llm.config import EmbedSettings, ModelEntry
-
-        config, tmp_path = tmp_config_server
-        cfg = server.load_config()
-        # Give it a catalog entry but no file on disk
-        embed_entry = ModelEntry(alias="mxbai-embed-large", repo="x/y", filename="mxbai.gguf")
-        object.__setattr__(cfg.models, "entries", [embed_entry])
-        object.__setattr__(cfg, "embed", EmbedSettings(enabled=True, active="mxbai-embed-large"))
-        mocker.patch.object(server, "_read_pid", return_value=None)
-        # Should not raise
-        server._start_embed_server(cfg, "llama-server")
-
-    def test_skips_when_already_running(self, tmp_config_server, fake_console, mocker):
-        """Embed server start is a no-op if the process is already running."""
-        from llm.config import EmbedSettings
-
-        config, tmp_path = tmp_config_server
-        cfg = server.load_config()
-        object.__setattr__(cfg, "embed", EmbedSettings(enabled=True, active="mxbai-embed-large"))
-        mocker.patch.object(server, "_read_pid", return_value=42)
-        mock_popen = mocker.patch("subprocess.Popen")
-        server._start_embed_server(cfg, "llama-server")
-        mock_popen.assert_not_called()
-
-
-class TestLogsEmbedFlag:
-    def test_logs_embed_uses_embed_log_file(self, tmp_config_server, mocker):
-        _, tmp_path = tmp_config_server
-        log_file = tmp_path / ".embed.log"
-        log_file.write_text("embed line\n")
-
-        captured = []
-
-        def fake_run(cmd, **kw):
-            captured.append(list(cmd))
-
-        mocker.patch.object(server, "_embed_log_file", return_value=log_file)
-        mocker.patch("subprocess.run", fake_run)
-        server.logs(embed=True)
-
-        assert captured
-        assert str(log_file) in captured[0]
-
-    def test_logs_embed_missing_file(self, tmp_config_server, mocker):
-        _, tmp_path = tmp_config_server
-        mocker.patch.object(server, "_embed_log_file", return_value=tmp_path / "nonexistent.log")
-        with pytest.raises(typer.Exit):
-            server.logs(embed=True)

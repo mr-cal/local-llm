@@ -55,26 +55,6 @@ monitor_retention_days = 90
 
 
 
-# ── EMBEDDING SERVER ──────────────────────────────────────────────────────────
-# Optional second llama-server instance for embedding models.
-# When enabled, nginx routes /v1/embeddings to this server automatically -
-# clients use the same base URL for both chat and embeddings.
-
-[embed]
-enabled = false
-
-# Internal port for the embedding server (must differ from [server] port).
-port = 8081
-
-# Active embedding model alias (from [[models.list]]).
-active = "mxbai-embed-large"
-
-# Extra flags. --embedding restricts the server to embedding use only.
-# --pooling cls is correct for mxbai-embed-large.
-extra_args = ["--embedding", "--pooling", "cls"]
-
-
-
 # ── BUILD ─────────────────────────────────────────────────────────────────────
 # llama.cpp build system - compile from source with one or more profiles.
 # Run `uv run llm build init` to initialize the submodule, then
@@ -173,19 +153,6 @@ cost.output = 15.00
 cost.cache_write = 3.75
 cost.cache_read = 0.30
 
-[[models.list]]
-alias = "mxbai-embed-large"
-repo  = "mixedbread-ai/mxbai-embed-large-v1"
-filename = "gguf/mxbai-embed-large-v1-f16.gguf"
-size = "~670 MB"
-description = "mxbai-embed-large v1 — high-quality general-purpose embeddings, 512 dim"
-max_output = 512
-
-
-
-# ── PROXY ─────────────────────────────────────────────────────────────────────
-# nginx TLS proxy - allows remote clients to reach llama-server securely.
-# Skip [proxy] on a client-only machine.
 
 [proxy]
 enabled = true

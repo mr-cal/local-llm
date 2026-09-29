@@ -58,7 +58,7 @@ def _find_bench_bin() -> Path | None:
 
 
 def _abort_if_server_running(cfg: object) -> None:
-    """Abort `tune` if a chat or embedding llama-server is already running.
+    """Abort `tune` if a llama-server is already running.
 
     A running server already holds a full copy of the model in system RAM
     and/or GPU memory (VRAM/GTT). llama-bench loading a second copy on top of
@@ -67,17 +67,13 @@ def _abort_if_server_running(cfg: object) -> None:
     headroom with the server stopped.
     """
     from llm.config import Settings  # noqa: PLC0415
-    from llm.server import _embed_pid_file, _pid_file, _read_pid  # noqa: PLC0415
+    from llm.server import _pid_file, _read_pid  # noqa: PLC0415
 
     assert isinstance(cfg, Settings)
     server_pid = _read_pid(cfg.server.port, _pid_file())
-    embed_pid = _read_pid(cfg.embed.port, _embed_pid_file())
-    if server_pid or embed_pid:
+    if server_pid:
         console.print("[red]A llama-server is already running.[/red]")
-        if server_pid:
-            console.print(f"  chat server  : PID {server_pid} (port {cfg.server.port})")
-        if embed_pid:
-            console.print(f"  embed server : PID {embed_pid} (port {cfg.embed.port})")
+        console.print(f"  chat server  : PID {server_pid} (port {cfg.server.port})")
         console.print(
             "\nIt already holds a copy of the model in system RAM and/or GPU memory, "
             "so llama-bench competes for the same memory instead of having it free.\n"

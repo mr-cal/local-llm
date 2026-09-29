@@ -24,7 +24,6 @@ HEADERS = [
     "timestamp",
     "event",
     "pid",
-    "embed_pid",
     "mem_total_kb",
     "mem_avail_kb",
     "mem_free_kb",
@@ -90,7 +89,7 @@ def _read_proc_status(pid: int) -> dict[str, int]:
     return result
 
 
-def sample(server_pid: int, embed_pid: int | None, event: str = "sample") -> dict[str, object]:
+def sample(server_pid: int, event: str = "sample") -> dict[str, object]:
     """Build one CSV row from current system, process, and GPU state."""
     mem = _read_meminfo()
     proc = _read_proc_status(server_pid)
@@ -99,7 +98,6 @@ def sample(server_pid: int, embed_pid: int | None, event: str = "sample") -> dic
         "timestamp": _now_iso(),
         "event": event,
         "pid": server_pid,
-        "embed_pid": embed_pid if embed_pid is not None else "",
         "mem_total_kb": mem.get("MemTotal", ""),
         "mem_avail_kb": mem.get("MemAvailable", ""),
         "mem_free_kb": mem.get("MemFree", ""),
@@ -169,7 +167,6 @@ def read_recent_rows(path: Path, n: int) -> list[dict[str, str]]:
 
 def run_monitor(
     server_pid: int,
-    embed_pid: int | None,
     interval: int,
     retention_days: int,
     csv_path: Path = MONITOR_CSV,
@@ -183,24 +180,23 @@ def run_monitor(
     prune_old_rows(csv_path, retention_days)
     last_prune = time.monotonic()
     while _pid_alive(server_pid):
-        append_row(csv_path, sample(server_pid, embed_pid))
+        append_row(csv_path, sample(server_pid))
         if time.monotonic() - last_prune >= _PRUNE_INTERVAL_S:
             prune_old_rows(csv_path, retention_days)
             last_prune = time.monotonic()
         time.sleep(interval)
-    append_row(csv_path, sample(server_pid, embed_pid, event="exited"))
+    append_row(csv_path, sample(server_pid, event="exited"))
 
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point for the detached ``python -m llm.monitor`` daemon."""
     parser = argparse.ArgumentParser(prog="llm.monitor", description="Sample memory while llama-server runs.")
     parser.add_argument("server_pid", type=int)
-    parser.add_argument("--embed-pid", type=int, default=None)
     parser.add_argument("--interval", type=int, default=30)
     parser.add_argument("--retention-days", type=int, default=90)
     parser.add_argument("--csv", type=Path, default=MONITOR_CSV)
     args = parser.parse_args(argv)
-    run_monitor(args.server_pid, args.embed_pid, args.interval, args.retention_days, args.csv)
+    run_monitor(args.server_pid, args.interval, args.retention_days, args.csv)
     return 0
 
 
