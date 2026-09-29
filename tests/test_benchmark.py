@@ -348,6 +348,8 @@ class TestRunLlamaBench:
             n_prompt=512,
             n_gen=128,
             repetitions=2,
+            mem_probe=lambda: 64_000.0,
+            gpu_probe=lambda: (0.0, 16_000.0),
         )
         assert len(rows) == 2
 

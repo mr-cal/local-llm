@@ -9,6 +9,7 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -173,6 +174,8 @@ def _run_one_bench(
     cmd: list[str],
     min_available_mb: float,
     min_gpu_free_mb: float = _MIN_GPU_FREE_MB,
+    mem_probe: Callable[[], float | None] = _available_memory_mb,
+    gpu_probe: Callable[[], tuple[float, float] | None] = gpu_memory_status,
 ) -> tuple[list[dict[str, str]], bool]:
     """Run a single llama-bench invocation with a memory watchdog.
 
@@ -180,6 +183,9 @@ def _run_one_bench(
     and available GPU memory (VRAM/GTT), killing the process before either one
     runs low enough to freeze the system or crash the GPU driver (see notes
     above on low-ngl CPU RAM and high-ngl GPU memory exhaustion).
+
+    ``mem_probe``/``gpu_probe`` are injectable so tests can drive the watchdog
+    deterministically instead of depending on the host's real memory pressure.
     """
     console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
 
@@ -189,7 +195,7 @@ def _run_one_bench(
 
     def _watch_memory() -> None:
         while not stop_event.is_set():
-            available_mb = _available_memory_mb()
+            available_mb = mem_probe()
             if available_mb is not None and available_mb < min_available_mb:
                 console.print(
                     f"[red]Low system memory ({available_mb:.0f} MiB available, "
@@ -199,7 +205,7 @@ def _run_one_bench(
                 killed.set()
                 break
 
-            gpu_status = gpu_memory_status()
+            gpu_status = gpu_probe()
             if gpu_status is not None:
                 gpu_used_mb, gpu_total_mb = gpu_status
                 gpu_free_mb = gpu_total_mb - gpu_used_mb
@@ -246,6 +252,8 @@ def _run_llama_bench(
     repetitions: int = 2,
     min_available_mb: float = _MIN_AVAILABLE_MB,
     min_gpu_free_mb: float = _MIN_GPU_FREE_MB,
+    mem_probe: Callable[[], float | None] = _available_memory_mb,
+    gpu_probe: Callable[[], tuple[float, float] | None] = gpu_memory_status,
 ) -> list[dict[str, str]]:
     """Run llama-bench across ngl values; return parsed CSV rows.
 
@@ -279,7 +287,7 @@ def _run_llama_bench(
             "-ctk",
             ",".join(ctk_values),
         ]
-        rows, killed = _run_one_bench(cmd, min_available_mb, min_gpu_free_mb)
+        rows, killed = _run_one_bench(cmd, min_available_mb, min_gpu_free_mb, mem_probe, gpu_probe)
         if killed:
             console.print(
                 f"[yellow]Skipping ngl={ngl_val} - too little memory available. "
