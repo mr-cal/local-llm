@@ -66,7 +66,7 @@ Safe to re-run (detects existing config and offers to update).
 
 ```bash
 uv run llm model list
-uv run llm model download qwen2.5-coder-14b-q4
+uv run llm model download qwen3.6-35b-moe-q4
 ```
 
 ### 5 - Start the server
@@ -136,61 +136,87 @@ host = "~/.config/opencode"
 
 ## All Commands
 
+Every command is `uv run llm <group> <command>`; the `uv run` prefix is omitted
+below. Add `--help` to any group or command for its full options.
+
 ```
-Server
-  uv run llm server setup          Guided setup wizard (config, cert, nginx, systemd, client)
-  uv run llm server start          Start llama-server (also starts nginx)
-  uv run llm server stop           Stop llama-server and nginx
-  uv run llm server restart        Restart llama-server
-  uv run llm server status         Show running status
-  uv run llm server logs [-f]      Tail server logs from the journal
-  uv run llm server apply          Re-render and install nginx + systemd configs
+server setup            Guided setup for the server (and local client)
+server start            Start llama-server via its systemd unit
+server stop             Stop llama-server and nginx
+server restart          Restart llama-server and make sure nginx is running
+server status           Show whether llama-server and nginx are running
+server logs [-f]        Show server logs from the systemd journal
+server memory           Show recent memory samples recorded by the monitor
+server apply            Render nginx/systemd templates and install them
 
-Client
-  uv run llm client setup          Set up this machine as a client (opencode, pi, shell env)
-  uv run llm client setup -c NAME  Create an LXD VM and set it up as a client
-  uv run llm client check          Test connectivity to the server
-  uv run llm client show           Print current client connection info
-  uv run llm client list           List managed LXD VMs
-  uv run llm client refresh [NAME] Update packages + re-apply config in client VMs
-  uv run llm client crafts NAME    Run make setup in craft directories inside a VM
+client setup [-c NAME]  Set up a client: the current host, or an LXD VM
+client check            Test connectivity to the configured LLM server
+client show             Print current client connection info (URL, model, cert)
+client list             List managed LXD VMs with kind, status and version
+client refresh [NAME]   Update packages and re-apply config in managed VMs
+client crafts NAME      Run 'make setup' in configured craft dirs inside a VM
 
-Models
-  uv run llm model list            List downloaded models
-  uv run llm model download <id>   Download a model from HuggingFace
-                                   (skips models already present; --force re-downloads)
-  uv run llm model switch <name>   Set active model + restart
+model list              List known models, with download and active status
+model download <id>     Download a GGUF model from HuggingFace
+                        (skips models already present; --force re-downloads)
+model switch <name>     Set the active model (accepts alias or filename)
+model show <name>       Show detailed info for a model
 
-Config
-  uv run llm config show           Print current settings + opencode/pi config
+hermes setup            Create and configure the hermes agent VM
+hermes refresh          Update packages and the agent, re-apply credentials
+hermes status           Show VM and gateway service status
 
-Build
-  uv run llm build init            Initialize llama.cpp submodule
-  uv run llm build run             Build llama.cpp with active profile
-  uv run llm build update          Update llama.cpp to latest commit
-  uv run llm build clean           Clean build artifacts
-  uv run llm build info            Show build info
+build init              Initialize the llama.cpp git submodule
+build run               Build llama.cpp with a profile and install binaries
+build update            Pull the latest llama.cpp and rebuild
+build clean             Remove profile build directories
+build info              Show submodule commit, profiles and binary paths
 
-Benchmark
-  uv run llm benchmark run         Run API benchmark
-  uv run llm benchmark history     Show past benchmark results
+benchmark run           Run an end-to-end API benchmark and record results
+benchmark tune          3-phase sweep: GPU layers -> flash-attn -> KV quant
+benchmark history       Display benchmark history
+
+config init             Create a minimal client-only config.toml interactively
+config show             Print current config (credentials masked) + client config
 ```
+
+---
+
+## Hermes agent VM
+
+`hermes` manages a separate LXD VM that runs the Hermes agent gateway against
+this server. It is tagged with a different `user.local-llm-kind` value than dev
+client VMs, so `llm client refresh` never touches it.
+
+```bash
+uv run llm hermes setup     # create the VM and install the agent
+uv run llm hermes status    # VM state + gateway service status
+uv run llm hermes refresh   # update packages/agent and re-apply credentials
+```
+
+Credentials live in `config.toml` under `[hermes]` (OpenRouter key, Telegram
+token, GitHub token). They are passed into the VM over stdin rather than
+interpolated into shell commands, and are masked by `llm config show`.
 
 ---
 
 ## Security Notes
 
-- `config.toml` is **gitignored** (contains your API key, LAN IP, and HF token).
-- nginx enforces both a Bearer token and a source-IP subnet allowlist.
-- TLS (self-signed) encrypts traffic on the LAN.
-- The server only listens internally (`127.0.0.1`); nginx handles the LAN exposure.
+- `config.toml` is **gitignored**; it holds your API key, HF token and any
+  Hermes credentials.
+- `llm config show` masks every secret-bearing field.
+- Generated files that embed a credential (the rendered nginx conf, the client
+  configs, the shell env files) are written `0600`.
+- nginx enforces both a Bearer-token check and a source-IP subnet allowlist.
+- TLS (self-signed, with a correct SubjectAltName) encrypts traffic on the LAN.
+- `llama-server` only listens on `127.0.0.1`; nginx handles the LAN exposure.
 
 ---
 
 ## Development
 
 ```bash
-uv run ruff check src/
-uv run ruff format src/
-uv run pytest tests/
+make lint      # ruff check + ty
+make format    # ruff format
+make test      # pytest
 ```
