@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -68,10 +69,23 @@ class BuildConfig(BaseModel):
     enabled: bool = True
     repo: str = "https://github.com/ggerganov/llama.cpp"
     commit: str = "HEAD"
-    install_dir: str = "~/.local/bin"
+    install_dir: str = "~/.local/lib/local-llm"
     jobs: str = "auto"  # "auto" = nproc; number for specific count
     release: bool = True
     profiles: list[BuildProfile] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_jobs(self) -> BuildConfig:
+        if self.jobs != "auto":
+            try:
+                count = int(self.jobs)
+            except ValueError:
+                raise ValueError(
+                    f"build.jobs must be 'auto' or a positive integer, got {self.jobs!r}"
+                ) from None
+            if count < 1:
+                raise ValueError(f"build.jobs must be at least 1, got {count}")
+        return self
 
     @model_validator(mode="after")
     def validate_unique_profile_names(self) -> BuildConfig:
@@ -114,27 +128,28 @@ class ServerSettings(BaseModel):
     # Name of the build profile whose binary to use when llama_server_bin is empty.
     # If both are empty, falls back to 'llama-server' on PATH.
     profile: str = ""
-    port: int = 8080
-    n_gpu_layers: int = 20
-    n_ctx: int = 4096
-    n_threads: int = 12
+    port: int = Field(default=8080, ge=1, le=65535)
+    n_gpu_layers: int = Field(default=20, ge=0)
+    n_ctx: int = Field(default=131072, gt=0)
+    n_threads: int = Field(default=12, gt=0)
     extra_args: list[str] = Field(default_factory=list)
     monitor: bool = True
-    monitor_interval: int = 30
-    monitor_retention_days: int = 90
+    monitor_interval: int = Field(default=30, gt=0)
+    monitor_retention_days: int = Field(default=90, gt=0)
 
 
 class ModelCost(BaseModel):
-    """Per-token cost for a single model.
+    """Token pricing for a single model.
 
-    Prices are in USD per token.  Defaults are zero because local models
-    are free - override for cloud-hosted APIs or when you want cost tracking.
+    Prices are in USD per *million* tokens, matching how model providers quote
+    them and how the config template is written. Defaults are zero because
+    local models are free - override for cost tracking against cloud APIs.
     """
 
-    input: float = 0.0  # $ per input token
-    output: float = 0.0  # $ per output token
-    cache_write: float = 0.0  # $ per cached (KV cache) token write
-    cache_read: float = 0.0  # $ per cached (KV cache) token read
+    input: float = Field(default=0.0, ge=0)  # USD per million input tokens
+    output: float = Field(default=0.0, ge=0)  # USD per million output tokens
+    cache_write: float = Field(default=0.0, ge=0)  # USD per million KV-cache writes
+    cache_read: float = Field(default=0.0, ge=0)  # USD per million KV-cache reads
 
     def to_cost_dict(self) -> dict:  # type: ignore[type-arg]
         return {
@@ -159,12 +174,12 @@ class AuthSettings(BaseModel):
 class ModelEntry(BaseModel):
     """One model in the [[models.list]] catalog."""
 
-    alias: str
-    repo: str
-    filename: str
+    alias: str = Field(min_length=1)
+    repo: str = Field(min_length=1)
+    filename: str = Field(min_length=1)
     size: str = ""
     description: str = ""
-    max_output: int = 8192
+    max_output: int = Field(default=8192, gt=0)
     cost: ModelCost = Field(default_factory=ModelCost)
 
     @property
@@ -177,19 +192,35 @@ class ModelsSettings(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     dir: str = "~/models"
-    active: str = "qwen2.5-coder-14b-q4"  # alias, not filename
+    active: str = "qwen3.6-35b-moe-q4"  # alias, not filename
     hf_token: str = Field(default="", json_schema_extra=SECRET)
     entries: list[ModelEntry] = Field(default_factory=list, alias="list")
 
     @model_validator(mode="after")
-    def validate_active(self) -> ModelsSettings:
-        # If active is an alias, check it exists in the list (for non-custom models)
-        if self.entries and self.active:
-            by_alias = {m.alias for m in self.entries}
-            if self.active not in by_alias:
-                # Allow custom/uncatalogued models referenced by filename
-                pass
+    def validate_unique_aliases(self) -> ModelsSettings:
+        aliases = [m.alias for m in self.entries]
+        dupes = sorted({a for a in aliases if aliases.count(a) > 1})
+        if dupes:
+            raise ValueError(f"Duplicate model aliases in [[models.list]]: {dupes}")
         return self
+
+    @model_validator(mode="after")
+    def validate_active(self) -> ModelsSettings:
+        """Reject an `active` that names nothing installable.
+
+        A bare filename is allowed so an uncatalogued .gguf can be used
+        directly; anything else must match a catalog alias or filename.
+        """
+        if not self.active or not self.entries:
+            return self
+        if self.active.endswith(".gguf"):
+            return self
+        if self.by_alias(self.active) or self.by_filename(self.active):
+            return self
+        known = ", ".join(sorted(m.alias for m in self.entries))
+        raise ValueError(
+            f"models.active = {self.active!r} is not a known alias or filename. Known aliases: {known}"
+        )
 
     @property
     def models_path(self) -> Path:
@@ -224,10 +255,22 @@ class ModelsSettings(BaseModel):
 
 class ProxySettings(BaseModel):
     enabled: bool = True
-    port: int = 8443
+    port: int = Field(default=8443, ge=1, le=65535)
     lan_ip: str = "192.168.1.100"
     lan_subnet: str = "192.168.1.0/24"
     cert_path: str = "/etc/ssl/local-llm/cert.pem"
+
+    @model_validator(mode="after")
+    def validate_network(self) -> ProxySettings:
+        try:
+            ipaddress.ip_address(self.lan_ip)
+        except ValueError:
+            raise ValueError(f"proxy.lan_ip = {self.lan_ip!r} is not a valid IP address") from None
+        try:
+            ipaddress.ip_network(self.lan_subnet, strict=False)
+        except ValueError:
+            raise ValueError(f"proxy.lan_subnet = {self.lan_subnet!r} is not a valid CIDR network") from None
+        return self
 
 
 class GitHubSettings(BaseModel):
@@ -327,6 +370,24 @@ class Settings(BaseModel):
     build: BuildConfig = Field(default_factory=BuildConfig)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
     hermes: HermesSettings = Field(default_factory=HermesSettings)
+
+    @model_validator(mode="after")
+    def validate_ports_do_not_collide(self) -> Settings:
+        if self.proxy.enabled and self.server.port == self.proxy.port:
+            raise ValueError(
+                f"server.port and proxy.port are both {self.server.port}; "
+                "the proxy cannot listen on the port it forwards to"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_server_profile_exists(self) -> Settings:
+        if self.server.profile and self.build.profiles and not self.build.get_profile(self.server.profile):
+            known = ", ".join(sorted(self.build.profile_names()))
+            raise ValueError(
+                f"server.profile = {self.server.profile!r} is not a build profile. Known: {known}"
+            )
+        return self
 
     @property
     def has_local_server(self) -> bool:

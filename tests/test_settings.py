@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import tomllib
+
 import pytest
 import typer
+from pydantic import ValidationError
 
 from llm.settings import (
     AuthSettings,
+    BuildConfig,
+    BuildProfile,
     ClientSettings,
     GitHubSettings,
     LxdSettings,
@@ -21,6 +26,7 @@ from llm.settings import (
     load_config,
     try_load_lxd,
 )
+from llm.settings.loader import CONFIG_TEMPLATE
 
 
 class TestServerSettings:
@@ -30,7 +36,7 @@ class TestServerSettings:
         assert s.llama_server_bin == "llama-server"
         assert s.port == 8080
         assert s.n_gpu_layers == 20
-        assert s.n_ctx == 4096
+        assert s.n_ctx == 131072
         assert s.n_threads == 12
         assert s.extra_args == []
         assert s.monitor is True
@@ -49,7 +55,7 @@ class TestModelsSettings:
     def test_defaults(self):
         m = ModelsSettings()
         assert m.dir == "~/models"
-        assert m.active == "qwen2.5-coder-14b-q4"
+        assert m.active == "qwen3.6-35b-moe-q4"
         assert m.hf_token == ""
 
     def test_custom_hf_token(self):
@@ -64,7 +70,7 @@ class TestModelsSettings:
         models = [
             ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
         ]
-        m = ModelsSettings(entries=models)  # ty: ignore[unknown-argument]
+        m = ModelsSettings(active="test", entries=models)  # ty: ignore[unknown-argument]
         assert m.has_catalog is True
 
     def test_by_alias(self):
@@ -72,7 +78,7 @@ class TestModelsSettings:
             ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
             ModelEntry(alias="other", repo="other/repo", filename="other.gguf"),
         ]
-        m = ModelsSettings(entries=models)  # ty: ignore[unknown-argument]
+        m = ModelsSettings(active="test", entries=models)  # ty: ignore[unknown-argument]
         assert m.by_alias("test") is not None
         assert m.by_alias("test").alias == "test"  # ty: ignore[unresolved-attribute]
         assert m.by_alias("other") is not None
@@ -83,7 +89,7 @@ class TestModelsSettings:
         models = [
             ModelEntry(alias="test", repo="test/repo", filename="test.gguf"),
         ]
-        m = ModelsSettings(entries=models)  # ty: ignore[unknown-argument]
+        m = ModelsSettings(active="test", entries=models)  # ty: ignore[unknown-argument]
         assert m.by_filename("test.gguf") is not None
         assert m.by_filename("test.gguf").alias == "test"  # ty: ignore[unresolved-attribute]
         assert m.by_filename("missing.gguf") is None
@@ -471,3 +477,135 @@ class TestTryLoadLxd:
 
 
 # ── _build_opencode_config / _build_pi_config ──────────────────────────────────
+
+
+class TestServerSettingsValidation:
+    """Values that cannot work should be rejected at load, not at start."""
+
+    @pytest.mark.parametrize("port", [0, -1, 65536, 99999])
+    def test_rejects_out_of_range_ports(self, port):
+        with pytest.raises(ValidationError):
+            ServerSettings(port=port)
+
+    @pytest.mark.parametrize("field", ["n_ctx", "n_threads", "monitor_interval", "monitor_retention_days"])
+    def test_rejects_non_positive_counts(self, field):
+        with pytest.raises(ValidationError):
+            ServerSettings(**{field: 0})  # ty: ignore[invalid-argument-type]
+
+    def test_rejects_negative_gpu_layers(self):
+        with pytest.raises(ValidationError):
+            ServerSettings(n_gpu_layers=-1)
+
+    def test_accepts_zero_gpu_layers_for_cpu_only(self):
+        assert ServerSettings(n_gpu_layers=0).n_gpu_layers == 0
+
+
+class TestProxySettingsValidation:
+    @pytest.mark.parametrize("lan_ip", ["not-an-ip", "", "192.168.1.999", "192.168.1.0/24"])
+    def test_rejects_invalid_lan_ip(self, lan_ip):
+        with pytest.raises(ValidationError):
+            ProxySettings(lan_ip=lan_ip)
+
+    @pytest.mark.parametrize("subnet", ["nonsense", "", "192.168.1.0/33"])
+    def test_rejects_invalid_lan_subnet(self, subnet):
+        with pytest.raises(ValidationError):
+            ProxySettings(lan_subnet=subnet)
+
+    def test_accepts_a_host_address_in_the_subnet_field(self):
+        # strict=False, so 192.168.1.5/24 is accepted and means 192.168.1.0/24.
+        assert ProxySettings(lan_subnet="192.168.1.5/24").lan_subnet == "192.168.1.5/24"
+
+    def test_rejects_out_of_range_port(self):
+        with pytest.raises(ValidationError):
+            ProxySettings(port=0)
+
+
+class TestActiveModelValidation:
+    def _entries(self):
+        return [ModelEntry(alias="known", repo="r/r", filename="known.gguf")]
+
+    def test_rejects_an_active_alias_that_is_not_in_the_catalog(self):
+        with pytest.raises(ValidationError, match="not a known alias"):
+            ModelsSettings(active="typo", entries=self._entries())  # ty: ignore[unknown-argument]
+
+    def test_accepts_a_catalog_alias(self):
+        assert ModelsSettings(active="known", entries=self._entries()).active == "known"  # ty: ignore[unknown-argument]
+
+    def test_accepts_a_catalog_filename(self):
+        m = ModelsSettings(active="known.gguf", entries=self._entries())  # ty: ignore[unknown-argument]
+        assert m.active == "known.gguf"
+
+    def test_accepts_an_uncatalogued_gguf_filename(self):
+        m = ModelsSettings(active="something-else.gguf", entries=self._entries())  # ty: ignore[unknown-argument]
+        assert m.active == "something-else.gguf"
+
+    def test_an_empty_catalog_validates_nothing(self):
+        assert ModelsSettings(active="anything").active == "anything"
+
+    def test_rejects_duplicate_aliases(self):
+        entries = [
+            ModelEntry(alias="dupe", repo="r/r", filename="a.gguf"),
+            ModelEntry(alias="dupe", repo="r/r", filename="b.gguf"),
+        ]
+        with pytest.raises(ValidationError, match="Duplicate model aliases"):
+            ModelsSettings(active="dupe", entries=entries)  # ty: ignore[unknown-argument]
+
+    def test_rejects_an_empty_alias(self):
+        with pytest.raises(ValidationError):
+            ModelEntry(alias="", repo="r/r", filename="a.gguf")
+
+
+class TestCrossFieldValidation:
+    def test_rejects_the_proxy_listening_on_the_server_port(self):
+        with pytest.raises(ValidationError, match="cannot listen on the port it forwards to"):
+            Settings(server=ServerSettings(port=8443), proxy=ProxySettings(port=8443))
+
+    def test_allows_the_collision_when_the_proxy_is_disabled(self):
+        s = Settings(server=ServerSettings(port=8443), proxy=ProxySettings(port=8443, enabled=False))
+        assert s.proxy.port == 8443
+
+    def test_rejects_a_server_profile_that_does_not_exist(self):
+        with pytest.raises(ValidationError, match="is not a build profile"):
+            Settings(
+                server=ServerSettings(profile="typo"),
+                build=BuildConfig(profiles=[BuildProfile(name="vulkan", backend="vulkan")]),
+            )
+
+    def test_accepts_a_server_profile_that_exists(self):
+        s = Settings(
+            server=ServerSettings(profile="vulkan"),
+            build=BuildConfig(profiles=[BuildProfile(name="vulkan", backend="vulkan")]),
+        )
+        assert s.server.profile == "vulkan"
+
+    def test_an_empty_profile_list_validates_nothing(self):
+        assert Settings(server=ServerSettings(profile="anything")).server.profile == "anything"
+
+
+class TestBuildJobsValidation:
+    @pytest.mark.parametrize("jobs", ["many", "", "0", "-4", "1.5"])
+    def test_rejects_non_positive_integer_jobs(self, jobs):
+        with pytest.raises(ValidationError):
+            BuildConfig(jobs=jobs)
+
+    @pytest.mark.parametrize("jobs", ["auto", "1", "16"])
+    def test_accepts_auto_and_positive_integers(self, jobs):
+        assert BuildConfig(jobs=jobs).jobs == jobs
+
+
+class TestShippedTemplate:
+    """The template `llm config init` writes must stay loadable.
+
+    Defaults drifted apart before this test existed: the template's `active`
+    named a model that no longer appeared in its own [[models.list]].
+    """
+
+    def test_the_template_validates(self):
+        Settings.model_validate(tomllib.loads(CONFIG_TEMPLATE))
+
+    def test_the_template_agrees_with_the_schema_defaults(self):
+        parsed = Settings.model_validate(tomllib.loads(CONFIG_TEMPLATE))
+        defaults = Settings()
+        assert parsed.models.active == defaults.models.active
+        assert parsed.server.n_ctx == defaults.server.n_ctx
+        assert parsed.build.install_dir == defaults.build.install_dir

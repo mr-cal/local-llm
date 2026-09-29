@@ -127,7 +127,7 @@ def setup(
     # ── Step 4: Model ─────────────────────────────────────────────────────
     console.print("\n[bold]Step 4/6[/bold] - Model")
     models_dir = _prompt("  Models directory", _get("models", "dir", "~/models"))
-    active_model = _get("models", "active", "qwen2.5-coder-14b-q4")
+    active_model = _get("models", "active", "qwen3.6-35b-moe-q4")
     console.print(f"  Active model: [bold]{active_model}[/bold]")
     console.print("  [dim](Change models later with: llm model switch)[/dim]")
 

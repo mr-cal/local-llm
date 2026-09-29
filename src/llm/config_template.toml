@@ -94,9 +94,10 @@ extra_flags = ["-DGGML_FLASH_ATTN=ON"]
 # Directory containing GGUF model files.
 dir = "~/models"
 
-# Active model - use the alias from [[models.list]] below.
+# Active model - must be an alias from [[models.list]] below, or a bare
+# .gguf filename for a model that is not in the catalog.
 # Run `uv run llm model list` to see options.
-active = "qwen2.5-coder-14b-q4"
+active = "qwen3.6-35b-moe-q4"
 
 # HuggingFace token - only needed for gated/private models.
 # Generate at: https://huggingface.co/settings/tokens
@@ -104,6 +105,10 @@ hf_token = ""
 
 # Each [[models.list]] entry defines one downloadable model.
 # Edit, add, or remove entries as needed. The `active` alias above selects one.
+#
+# cost.* values are USD per MILLION tokens, matching how providers quote
+# prices. They are only used to populate the generated client configs, so
+# leave them at zero unless you want cost estimates in your agent UI.
 
 [[models.list]]
 alias = "gemma-4-31b-q4"
