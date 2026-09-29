@@ -27,7 +27,9 @@ from llm.lxd import (
     HOST_UID,
     _BaseVmManager,
     _cexec,
+    add_hosts_entry,
     container_exists,
+    register_secrets,
     run,
     run_capture,
     run_with_retry,
@@ -54,6 +56,27 @@ _PREREQ_PACKAGES = [
     "systemd",
     "libatomic1",
 ]
+
+
+def _merge_env_file(existing: str, updates: dict[str, str]) -> str:
+    """Merge *updates* into the contents of a KEY=VALUE env file.
+
+    Keys already present are replaced in place so unrelated entries and their
+    ordering survive a re-run; new keys are appended. Returns the full file
+    contents, ready to be written over stdin.
+    """
+    remaining = dict(updates)
+    lines_out: list[str] = []
+
+    for line in existing.splitlines():
+        key = line.split("=", 1)[0].strip()
+        if key in remaining:
+            lines_out.append(f"{key}={remaining.pop(key)}")
+        else:
+            lines_out.append(line)
+
+    lines_out.extend(f"{key}={value}" for key, value in remaining.items())
+    return "\n".join(lines_out).strip("\n") + "\n"
 
 
 class HermesVmManager(_BaseVmManager):
@@ -376,14 +399,7 @@ class HermesVmManager(_BaseVmManager):
             server_ip = urlparse(cfg.client.server_url).hostname or cfg.proxy.lan_ip
         else:
             server_ip = cfg.proxy.lan_ip
-        console.print(f"  Adding /etc/hosts entry: {server_ip} local-llm...")
-        hosts_cmd = (
-            f"grep -qxF '{server_ip} local-llm' /etc/hosts || echo '{server_ip} local-llm' >> /etc/hosts"
-        )
-        subprocess.run(
-            ["lxc", "exec", self.container, "--", "bash", "-c", hosts_cmd],
-            check=True,
-        )
+        add_hosts_entry(self.container, server_ip, "local-llm")
 
         # Determine endpoint based on whether the proxy is enabled
         if cfg.proxy.enabled:
@@ -441,62 +457,35 @@ class HermesVmManager(_BaseVmManager):
                     )
                 else:
                     console.print("  [green]✓[/green] combined CA bundle built")
-                    env_path = f"{CONTAINER_HOME}/.hermes/.env"
-                    run(
-                        _cexec(
-                            self.container,
-                            self.uid,
-                            self.gid,
-                            "bash",
-                            "-c",
-                            f"mkdir -p {CONTAINER_HOME}/.hermes && "
-                            f"grep -qF 'SSL_CERT_FILE=' {env_path} 2>/dev/null "
-                            f"&& sed -i 's|^SSL_CERT_FILE=.*|SSL_CERT_FILE={bundle_dst}|' {env_path} "
-                            f"|| echo 'SSL_CERT_FILE={bundle_dst}' >> {env_path}",
-                        ),
+                    self._write_env_vars(
+                        {"SSL_CERT_FILE": bundle_dst},
                         desc="set SSL_CERT_FILE to combined CA bundle",
                     )
         else:
             local_url = f"http://local-llm:{cfg.server.port}/v1"
 
         local_api_key = cfg.auth.api_key
+        register_secrets(local_api_key)
 
         self._hermes_run("config", "set", "model.provider", "openai", desc="set openai provider (local)")
         self._hermes_run("config", "set", "model.endpoint", local_url, desc="set local endpoint")
         self._hermes_run("config", "set", "model.api_key", local_api_key, desc="set local api key")
 
-    def _configure_credentials(self, cfg: HermesSettings, all_cfg: Settings | None = None) -> None:
-        """Write API keys and tokens into ~/.hermes/.env inside the VM.
+    def _read_env_file(self, env_path: str) -> str:
+        """Return the current contents of *env_path* in the VM, or "" if absent."""
+        result = run_capture(_cexec(self.container, self.uid, self.gid, "cat", env_path))
+        return result.stdout if result.returncode == 0 else ""
 
-        Writes each configured secret directly to the Hermes env file.
-        Running ``hermes config set`` non-interactively is fragile; writing
-        .env directly is the reliable approach.
+    def _write_env_vars(self, updates: dict[str, str], desc: str) -> str:
+        """Merge *updates* into the VM's Hermes env file and return its path.
+
+        The merged contents are sent over stdin rather than interpolated into a
+        shell command, so credential values never appear in the process
+        arguments (visible to ``ps``) or in echoed output, and tokens
+        containing quotes, pipes or newlines cannot corrupt the command.
         """
-        env_lines: list[str] = []
-
-        if cfg.has_openrouter():
-            env_lines.append(f"OPENROUTER_API_KEY={cfg.openrouter_key}")
-            # Set OpenRouter as default provider via config.yaml
-            self._hermes_run("config", "set", "model.provider", "openrouter", desc="set openrouter provider")
-
-        if cfg.has_local_llm() and all_cfg is not None:
-            self._configure_local_llm(all_cfg)
-
-        if cfg.telegram_token:
-            env_lines.append(f"TELEGRAM_BOT_TOKEN={cfg.telegram_token}")
-        if cfg.telegram_allowed_users:
-            env_lines.append(f"TELEGRAM_ALLOWED_USERS={cfg.telegram_allowed_users}")
-
-        if cfg.has_github():
-            env_lines.append(f"GITHUB_TOKEN={cfg.github_token}")
-
-        if not env_lines:
-            console.print("  [yellow]⚠[/yellow] No credentials configured — skipping.")
-            console.print("  Set openrouter_key, telegram_token, etc. in [hermes] config.toml")
-            return
-
-        # Merge into ~/.hermes/.env (append or create)
         env_path = f"{CONTAINER_HOME}/.hermes/.env"
+        merged = _merge_env_file(self._read_env_file(env_path), updates)
         run(
             _cexec(
                 self.container,
@@ -504,17 +493,44 @@ class HermesVmManager(_BaseVmManager):
                 self.gid,
                 "bash",
                 "-c",
-                # Ensure the .hermes dir exists, then write/replace each key
-                f"mkdir -p {CONTAINER_HOME}/.hermes && "
-                + " && ".join(
-                    f"grep -qF '{line.split('=')[0]}=' {env_path} 2>/dev/null "
-                    f"&& sed -i 's|^{line.split('=')[0]}=.*|{line}|' {env_path} "
-                    f"|| echo '{line}' >> {env_path}"
-                    for line in env_lines
-                ),
+                # env_path is a constant, not user input. 0600 keeps the
+                # credentials out of reach of other users in the VM.
+                f"mkdir -p {CONTAINER_HOME}/.hermes && cat > {env_path} && chmod 600 {env_path}",
             ),
-            desc="write hermes credentials",
+            desc=desc,
+            input=merged,
+            text=True,
         )
+        return env_path
+
+    def _configure_credentials(self, cfg: HermesSettings, all_cfg: Settings | None = None) -> None:
+        """Write API keys and tokens into ~/.hermes/.env inside the VM."""
+        register_secrets(cfg.openrouter_key, cfg.telegram_token, cfg.github_token)
+
+        env_vars: dict[str, str] = {}
+
+        if cfg.has_openrouter():
+            env_vars["OPENROUTER_API_KEY"] = cfg.openrouter_key
+            # Set OpenRouter as default provider via config.yaml
+            self._hermes_run("config", "set", "model.provider", "openrouter", desc="set openrouter provider")
+
+        if cfg.has_local_llm() and all_cfg is not None:
+            self._configure_local_llm(all_cfg)
+
+        if cfg.telegram_token:
+            env_vars["TELEGRAM_BOT_TOKEN"] = cfg.telegram_token
+        if cfg.telegram_allowed_users:
+            env_vars["TELEGRAM_ALLOWED_USERS"] = cfg.telegram_allowed_users
+
+        if cfg.has_github():
+            env_vars["GITHUB_TOKEN"] = cfg.github_token
+
+        if not env_vars:
+            console.print("  [yellow]⚠[/yellow] No credentials configured — skipping.")
+            console.print("  Set openrouter_key, telegram_token, etc. in [hermes] config.toml")
+            return
+
+        env_path = self._write_env_vars(env_vars, desc="write hermes credentials")
         console.print(f"  [green]✓[/green] credentials written to {env_path}")
         if cfg.has_openrouter():
             console.print("  [green]✓[/green] OpenRouter set as default provider")

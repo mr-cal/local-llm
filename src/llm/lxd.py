@@ -8,8 +8,10 @@ compatibility.
 from __future__ import annotations
 
 import inspect
+import ipaddress
 import json
 import os
+import string
 import subprocess
 import time
 from collections.abc import Callable
@@ -1121,14 +1123,7 @@ class LxdVmManager(_BaseVmManager):
             server_ip = urlparse(cfg.client.server_url).hostname or cfg.proxy.lan_ip
         else:
             server_ip = cfg.proxy.lan_ip
-        console.print(f"  Adding /etc/hosts entry: {server_ip} local-llm...")
-        hosts_cmd = (
-            f"grep -qxF '{server_ip} local-llm' /etc/hosts || echo '{server_ip} local-llm' >> /etc/hosts"
-        )
-        subprocess.run(
-            ["lxc", "exec", self.container, "--", "bash", "-c", hosts_cmd],
-            check=True,
-        )
+        add_hosts_entry(self.container, server_ip, "local-llm")
 
         # Step 2: Generate models.json
         console.print("  Generating models.json with proxy URL...")
@@ -1465,23 +1460,86 @@ def _cexec(container: str, uid: int, gid: int, *cmd: str) -> list[str]:
     ]
 
 
+# Credential values registered here are scrubbed from every echoed command and
+# captured output. Registration is belt-and-braces: secrets should reach the
+# container over stdin rather than in argv, but anything that does slip into a
+# command line must not also be printed to the terminal or CI logs.
+_SECRET_VALUES: set[str] = set()
+
+# Shorter values are too likely to collide with ordinary command text (and are
+# not plausible credentials), so redacting them would corrupt the output.
+_MIN_REDACTABLE_LEN = 8
+
+
+def register_secrets(*values: str | None) -> None:
+    """Register credential values to scrub from echoed commands and output."""
+    for value in values:
+        if value and len(value) >= _MIN_REDACTABLE_LEN:
+            _SECRET_VALUES.add(value)
+
+
+def redact(text: str) -> str:
+    """Replace every registered credential in *text* with a placeholder."""
+    for secret in _SECRET_VALUES:
+        text = text.replace(secret, "***")
+    return text
+
+
+# A permissive but shell-safe hostname: letters, digits, dots and hyphens only.
+# Anything outside this set (quotes, spaces, ``;``, ``$(...)``) could break out
+# of the single-quoted /etc/hosts command below.
+_HOSTNAME_CHARS = set(string.ascii_letters + string.digits + ".-")
+
+
+def validate_host(value: str) -> str:
+    """Return *value* if it is a usable IP address or hostname, else raise."""
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        if not value or not set(value) <= _HOSTNAME_CHARS:
+            raise ValueError(
+                f"{value!r} is not a valid IP address or hostname; "
+                "check client.server_url and proxy.lan_ip in config.toml"
+            ) from None
+    return value
+
+
+def add_hosts_entry(container: str, address: str, hostname: str) -> None:
+    """Idempotently map *hostname* to *address* in the container's /etc/hosts."""
+    address = validate_host(address)
+    console.print(f"  Adding /etc/hosts entry: {address} {hostname}...")
+    entry = f"{address} {hostname}"
+    subprocess.run(
+        [
+            "lxc",
+            "exec",
+            container,
+            "--",
+            "bash",
+            "-c",
+            f"grep -qxF '{entry}' /etc/hosts || echo '{entry}' >> /etc/hosts",
+        ],
+        check=True,
+    )
+
+
 def run(cmd, desc: str | None = None, **kwargs):
-    console.print(f"  $ {' '.join(str(a) for a in cmd)}")
+    console.print(f"  $ {redact(' '.join(str(a) for a in cmd))}")
     try:
         result = subprocess.run(cmd, check=True, **kwargs)
     except subprocess.CalledProcessError as e:
         # When callers opt into capture_output, echo it back since it wasn't
         # streamed live to the terminal.
         if e.stdout:
-            console.print(e.stdout)
+            console.print(redact(e.stdout))
         if e.stderr:
-            console.print(e.stderr)
+            console.print(redact(e.stderr))
         label = desc or " ".join(str(a) for a in cmd[:3])
         raise subprocess.CalledProcessError(e.returncode, e.cmd, e.output, e.stderr) from Exception(
             f"Command failed ({label}): exit {e.returncode}"
         )
     if kwargs.get("capture_output") and result.stdout:
-        console.print(result.stdout)
+        console.print(redact(result.stdout))
 
 
 @retry(

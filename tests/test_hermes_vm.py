@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from llm.config import HermesSettings
 from llm.hermes import _format_credentials, _format_local_llm, _format_uptime
-from llm.hermes_vm import HermesVmManager
+from llm.hermes_vm import HermesVmManager, _merge_env_file
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -34,52 +34,43 @@ def _make_cfg(
 class TestConfigureCredentials:
     """Tests for HermesVmManager._configure_credentials."""
 
-    @patch("llm.hermes_vm.run")
-    def test_no_credentials_skips(self, mock_run):
-        """When no credentials are set, the method should log a warning and skip."""
-        mgr = MagicMock()
+    def _mgr(self, existing_env: str = ""):
+        """Build a manager whose VM-side reads/writes are captured in memory."""
+        mgr = HermesVmManager.__new__(HermesVmManager)
         mgr.container = "hermes"
         mgr.uid = 1000
         mgr.gid = 1000
-        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
-            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
-        )
-        HermesVmManager._configure_credentials(mgr, _make_cfg())
+        mgr._hermes_run = MagicMock()
+        mgr._read_env_file = MagicMock(return_value=existing_env)
+        return mgr
+
+    @staticmethod
+    def _written(mock_run) -> str:
+        """Return the env-file contents sent to the VM over stdin."""
+        assert mock_run.call_count == 1
+        return mock_run.call_args.kwargs["input"]
+
+    @patch("llm.hermes_vm.run")
+    def test_no_credentials_skips(self, mock_run):
+        """When no credentials are set, the method should log a warning and skip."""
+        HermesVmManager._configure_credentials(self._mgr(), _make_cfg())
         mock_run.assert_not_called()
 
     @patch("llm.hermes_vm.run")
     def test_single_credential_openrouter(self, mock_run):
-        """When only openrouter_key is set, provider config and env write occur."""
-        mgr = MagicMock()
-        mgr.container = "hermes"
-        mgr.uid = 1000
-        mgr.gid = 1000
-        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
-            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
-        )
+        """Only the configured credential is written, and the provider is set."""
+        mgr = self._mgr()
         cfg = _make_cfg(provider="openrouter", openrouter_key="sk-or-v1-test")
         HermesVmManager._configure_credentials(mgr, cfg)
-        # One call for setting provider, one for writing env
-        assert mock_run.call_count == 2
-        provider_call = mock_run.call_args_list[0]
-        cmd = provider_call.args[0]
-        cmd_str = " ".join(str(c) for c in cmd)
-        assert "hermes" in cmd_str
-        assert "config" in cmd_str
-        assert "set" in cmd_str
-        assert "model.provider" in cmd_str
-        assert "openrouter" in cmd_str
+
+        assert self._written(mock_run) == "OPENROUTER_API_KEY=sk-or-v1-test\n"
+        mgr._hermes_run.assert_called_once_with(
+            "config", "set", "model.provider", "openrouter", desc="set openrouter provider"
+        )
 
     @patch("llm.hermes_vm.run")
     def test_all_credentials_written(self, mock_run):
-        """When all credentials are set, all are written to .env."""
-        mgr = MagicMock()
-        mgr.container = "hermes"
-        mgr.uid = 1000
-        mgr.gid = 1000
-        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
-            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
-        )
+        """Every configured credential lands in the env file."""
         cfg = _make_cfg(
             provider="openrouter",
             openrouter_key="sk-or-v1-test",
@@ -87,68 +78,78 @@ class TestConfigureCredentials:
             telegram_allowed_users="987654321",
             github_token="ghp_test",
         )
-        HermesVmManager._configure_credentials(mgr, cfg)
-        # One call for provider config, one for env write
-        assert mock_run.call_count == 2
+        HermesVmManager._configure_credentials(self._mgr(), cfg)
+
+        assert self._written(mock_run).splitlines() == [
+            "OPENROUTER_API_KEY=sk-or-v1-test",
+            "TELEGRAM_BOT_TOKEN=123:ABC",
+            "TELEGRAM_ALLOWED_USERS=987654321",
+            "GITHUB_TOKEN=ghp_test",
+        ]
 
     @patch("llm.hermes_vm.run")
     def test_github_uses_has_github(self, mock_run):
         """Verify github_token uses has_github() guard (not raw truthiness)."""
-        mgr = MagicMock()
-        mgr.container = "hermes"
-        mgr.uid = 1000
-        mgr.gid = 1000
-        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
-            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
-        )
-        # Whitespace-only token should be treated as not set
-        cfg = _make_cfg(github_token="   ")
-        HermesVmManager._configure_credentials(mgr, cfg)
+        HermesVmManager._configure_credentials(self._mgr(), _make_cfg(github_token="   "))
         mock_run.assert_not_called()
 
     @patch("llm.hermes_vm.run")
     def test_github_token_in_env_when_set(self, mock_run):
         """Verify GITHUB_TOKEN appears in env write when token is set."""
-        mgr = MagicMock()
-        mgr.container = "hermes"
-        mgr.uid = 1000
-        mgr.gid = 1000
-        mgr._hermes_run = lambda *a, desc=None, **kw: mock_run(
-            ["lxc", "exec", mgr.container, "--", "hermes", *a], desc=desc, **kw
+        HermesVmManager._configure_credentials(self._mgr(), _make_cfg(github_token="ghp_real"))
+        assert self._written(mock_run) == "GITHUB_TOKEN=ghp_real\n"
+
+    @patch("llm.hermes_vm.run")
+    def test_secrets_never_appear_in_the_command(self, mock_run):
+        """Credentials travel over stdin, never in argv where `ps` can see them."""
+        cfg = _make_cfg(
+            provider="openrouter",
+            openrouter_key="sk-or-v1-secret",
+            telegram_token="123:SECRETTOKEN",
+            github_token="ghp_secretvalue",
         )
-        cfg = _make_cfg(github_token="ghp_real")
-        HermesVmManager._configure_credentials(mgr, cfg)
-        env_call = mock_run.call_args_list[-1]
-        cmd_str = " ".join(str(a) for a in env_call.args[0])
-        assert "GITHUB_TOKEN=" in cmd_str
+        HermesVmManager._configure_credentials(self._mgr(), cfg)
+
+        argv = " ".join(str(a) for a in mock_run.call_args.args[0])
+        assert "sk-or-v1-secret" not in argv
+        assert "123:SECRETTOKEN" not in argv
+        assert "ghp_secretvalue" not in argv
+
+    @patch("llm.hermes_vm.run")
+    def test_shell_metacharacters_survive_verbatim(self, mock_run):
+        """A token containing shell syntax must be stored literally, not executed."""
+        nasty = "tok'en|rm -rf /;$(whoami)"
+        HermesVmManager._configure_credentials(self._mgr(), _make_cfg(github_token=nasty))
+        assert self._written(mock_run) == f"GITHUB_TOKEN={nasty}\n"
+
+    @patch("llm.hermes_vm.run")
+    def test_existing_keys_replaced_unrelated_preserved(self, mock_run):
+        """Re-running updates known keys in place and leaves other entries alone."""
+        existing = "SSL_CERT_FILE=/home/dev/.hermes/ca-bundle.pem\nGITHUB_TOKEN=ghp_old\n"
+        HermesVmManager._configure_credentials(self._mgr(existing), _make_cfg(github_token="ghp_new"))
+        assert self._written(mock_run).splitlines() == [
+            "SSL_CERT_FILE=/home/dev/.hermes/ca-bundle.pem",
+            "GITHUB_TOKEN=ghp_new",
+        ]
 
     @patch.object(HermesVmManager, "_configure_local_llm")
     def test_local_llm_calls_configure_local_llm(self, mock_local):
         """When provider is local-llm, _configure_local_llm is called with all_cfg."""
         from llm.config import AuthSettings, ProxySettings, ServerSettings, Settings
 
-        mgr = HermesVmManager.__new__(HermesVmManager)
-        mgr.container = "hermes"
-        mgr.uid = 1000
-        mgr.gid = 1000
         all_cfg = Settings(
             auth=AuthSettings(api_key="test-api-key"),
             proxy=ProxySettings(enabled=False),
             server=ServerSettings(port=8080),
         )
         cfg = _make_cfg(provider="local-llm")
-        HermesVmManager._configure_credentials(mgr, cfg, all_cfg)
+        HermesVmManager._configure_credentials(self._mgr(), cfg, all_cfg)
         mock_local.assert_called_once_with(all_cfg)
 
     @patch.object(HermesVmManager, "_configure_local_llm")
     def test_local_llm_skipped_without_all_cfg(self, mock_local):
         """When all_cfg is None, _configure_local_llm should not be called."""
-        mgr = HermesVmManager.__new__(HermesVmManager)
-        mgr.container = "hermes"
-        mgr.uid = 1000
-        mgr.gid = 1000
-        cfg = _make_cfg(provider="local-llm")
-        HermesVmManager._configure_credentials(mgr, cfg)
+        HermesVmManager._configure_credentials(self._mgr(), _make_cfg(provider="local-llm"))
         mock_local.assert_not_called()
 
 
@@ -586,3 +587,36 @@ class TestStatusCommand:
         printed = " ".join(str(c.args[0]) for c in mock_console.print.call_args_list)
         assert "Credentials: invalid" in printed
         assert "Local LLM:" not in printed
+
+
+# ── _merge_env_file ───────────────────────────────────────────────────────────
+
+
+class TestMergeEnvFile:
+    """The env file is rewritten wholesale, so the merge must not lose entries."""
+
+    def test_creates_file_from_nothing(self):
+        assert _merge_env_file("", {"A": "1"}) == "A=1\n"
+
+    def test_replaces_in_place_preserving_order(self):
+        existing = "A=old\nB=keep\n"
+        assert _merge_env_file(existing, {"A": "new"}) == "A=new\nB=keep\n"
+
+    def test_appends_unknown_keys(self):
+        assert _merge_env_file("A=1\n", {"B": "2"}) == "A=1\nB=2\n"
+
+    def test_preserves_unrelated_lines(self):
+        existing = "# comment\nSSL_CERT_FILE=/x/y.pem\n"
+        merged = _merge_env_file(existing, {"GITHUB_TOKEN": "t"})
+        assert merged == "# comment\nSSL_CERT_FILE=/x/y.pem\nGITHUB_TOKEN=t\n"
+
+    def test_values_containing_equals_are_kept_whole(self):
+        assert _merge_env_file("", {"A": "b=c=d"}) == "A=b=c=d\n"
+
+    def test_is_idempotent(self):
+        first = _merge_env_file("", {"A": "1", "B": "2"})
+        assert _merge_env_file(first, {"A": "1", "B": "2"}) == first
+
+    def test_ends_with_a_single_trailing_newline(self):
+        """Repeated writes must not accumulate blank lines at the end of the file."""
+        assert _merge_env_file("A=1\n\n\n", {"A": "1"}) == "A=1\n"

