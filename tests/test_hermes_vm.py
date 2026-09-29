@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from llm.config import HermesSettings
-from llm.hermes import _format_credentials, _format_local_llm, _format_uptime
+from llm.hermes import _format_credentials, _format_local_llm
 from llm.hermes_vm import HermesVmManager, _merge_env_file
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -506,53 +506,6 @@ class TestGetStatus:
 
 
 # ── Formatting helpers ─────────────────────────────────────────────────────────
-
-
-class TestFormatUptime:
-    """Tests for hermes._format_uptime."""
-
-    def _import_helpers(self):
-        return _format_uptime
-
-    def test_zero_seconds(self):
-        f = self._import_helpers()
-        assert f(0) == "0s"
-
-    def test_seconds(self):
-        f = self._import_helpers()
-        assert f(45) == "45s"
-
-    def test_minutes(self):
-        f = self._import_helpers()
-        assert f(120) == "2m 0s"
-
-    def test_minutes_with_remainder(self):
-        f = self._import_helpers()
-        assert f(125) == "2m 5s"
-
-    def test_hours(self):
-        f = self._import_helpers()
-        assert f(3600) == "1h 0m 0s"
-
-    def test_hours_with_minutes(self):
-        f = self._import_helpers()
-        assert f(7200) == "2h 0m 0s"
-
-    def test_hours_minutes_seconds(self):
-        f = self._import_helpers()
-        assert f(3725) == "1h 2m 5s"
-
-    def test_days(self):
-        f = self._import_helpers()
-        assert f(86400) == "1d 0h 0m"
-
-    def test_days_hours(self):
-        f = self._import_helpers()
-        assert f(180000) == "2d 2h 0m"
-
-    def test_large_days(self):
-        f = self._import_helpers()
-        assert f(2592000) == "30d 0h 0m"
 
 
 class TestFormatCredentials:

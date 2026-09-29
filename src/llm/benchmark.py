@@ -16,14 +16,14 @@ from typing import Annotated, NamedTuple
 
 import httpx
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from llm.config import find_config, load_config
+from llm.core import http
+from llm.core.console import console
 from llm.gpu import gpu_memory_status, gpu_used_mb
 
 app = typer.Typer(help="Benchmark inference speed.", no_args_is_help=True)
-console = Console()
 
 HISTORY_FILE = Path("logs/benchmark-history.csv")
 # Extended columns: profile, flags_hash, gtt_mb added to existing headers.
@@ -464,16 +464,7 @@ def _run_single_benchmark(
     # Wait for the server to finish loading the model before benchmarking.
     health_url = f"{cfg.internal_url}/health"
     console.print("Waiting for server to be ready...", end=" ")
-    deadline = time.monotonic() + 300
-    while time.monotonic() < deadline:
-        try:
-            r = httpx.get(health_url, timeout=2)
-            if r.status_code == 200:
-                break
-        except httpx.HTTPError:
-            pass
-        time.sleep(1)
-    else:
+    if not http.wait_until_healthy(health_url, timeout=300, interval=1):
         console.print("[red]timed out[/red]")
         console.print("  Start it: [bold]uv run llm server start[/bold]")
         raise typer.Exit(1)

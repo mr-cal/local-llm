@@ -161,7 +161,7 @@ class TestStartCommand:
 
     def test_start_requires_installed_unit(self, tmp_config_server, fake_console, mocker):
         """Without the unit there is nothing to start, so say so rather than fail opaquely."""
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=False)
         systemctl = mocker.patch.object(server, "_llm_server_systemctl")
 
@@ -170,7 +170,7 @@ class TestStartCommand:
         systemctl.assert_not_called()
 
     def test_start_server_already_running(self, tmp_config_server, fake_console, mocker):
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
         mocker.patch.object(server, "_server_pid", return_value=12345)
         systemctl = mocker.patch.object(server, "_llm_server_systemctl")
@@ -182,7 +182,7 @@ class TestStartCommand:
     def test_start_model_not_found(self, tmp_config_server, fake_console, mocker):
         config, tmp_path = tmp_config_server
         (tmp_path / "models" / "model.gguf").unlink()
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
         mocker.patch.object(server, "_server_pid", return_value=None)
 
@@ -191,7 +191,7 @@ class TestStartCommand:
 
     def test_start_uses_systemctl(self, tmp_config_server, fake_console, mocker):
         """The unit owns the command line; start must not spawn llama-server itself."""
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
         mocker.patch.object(server, "_server_pid", return_value=None)
         mocker.patch.object(server, "_unit_main_pid", return_value=54321)
@@ -206,7 +206,7 @@ class TestStartCommand:
         popen.assert_not_called()
 
     def test_start_exits_when_systemctl_fails(self, tmp_config_server, fake_console, mocker):
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
         mocker.patch.object(server, "_server_pid", return_value=None)
         mocker.patch.object(server, "_llm_server_systemctl", return_value=False)
@@ -217,7 +217,7 @@ class TestStartCommand:
         nginx.assert_not_called()
 
     def test_start_waits_for_ready(self, tmp_config_server, fake_console, mock_httpx_get, mocker):
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
         mocker.patch.object(server, "_server_pid", return_value=None)
         mocker.patch.object(server, "_unit_main_pid", return_value=54321)
@@ -235,7 +235,7 @@ class TestStartCommand:
 
 class TestStopCommand:
     def test_stop_not_running(self, tmp_config_server, fake_console, mocker):
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_server_pid", return_value=None)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         with pytest.raises(typer.Exit):
@@ -243,7 +243,7 @@ class TestStopCommand:
 
     def test_stop_nginx_when_server_already_stopped(self, tmp_config_server, fake_console, mocker):
         """nginx is still running after a previous failed stop; should stop it."""
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_server_pid", return_value=None)
         mocker.patch.object(server, "_nginx_is_active", return_value=True)
         mocker.patch.object(server, "_stop_monitor")
@@ -255,7 +255,7 @@ class TestStopCommand:
 
     def test_stop_actually_stops_the_unit(self, tmp_config_server, fake_console, mocker):
         """The old implementation only disabled the unit, leaving the server running."""
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_server_pid", return_value=12345)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         mocker.patch.object(server, "_stop_monitor")
@@ -267,7 +267,7 @@ class TestStopCommand:
 
     def test_stop_does_not_disable_the_unit(self, tmp_config_server, fake_console, mocker):
         """Enablement controls start-on-boot and is owned by `server apply`."""
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_server_pid", return_value=12345)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         mocker.patch.object(server, "_stop_monitor")
@@ -280,7 +280,7 @@ class TestStopCommand:
     def test_stop_warns_about_a_server_it_cannot_stop(self, tmp_config_server, fake_console, mocker):
         """systemctl reports success for an inactive unit, so a manually
         started llama-server would otherwise be reported as stopped."""
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_server_pid", return_value=12345)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         mocker.patch.object(server, "_stop_monitor")
@@ -291,7 +291,7 @@ class TestStopCommand:
         assert any("still running" in line for line in fake_console)
 
     def test_stop_stops_the_monitor(self, tmp_config_server, fake_console, mocker):
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_server_pid", return_value=12345)
         mocker.patch.object(server, "_nginx_is_active", return_value=False)
         mocker.patch.object(server, "_llm_server_systemctl", return_value=True)
@@ -304,12 +304,12 @@ class TestStopCommand:
 
 class TestSystemctlHelpers:
     def test_runs_the_requested_action(self, mocker, _make_proc):
-        run = mocker.patch.object(server, "_run_sudo", return_value=_make_proc(0, ""))
+        run = mocker.patch.object(server.proc, "sudo", return_value=_make_proc(0, ""))
         assert server._llm_server_systemctl("restart") is True
-        run.assert_called_once_with(["sudo", "systemctl", "restart", "llm-server"])
+        run.assert_called_once_with(["systemctl", "restart", "llm-server"])
 
     def test_returns_false_on_failure(self, mocker, _make_proc):
-        mocker.patch.object(server, "_run_sudo", return_value=_make_proc(1, ""))
+        mocker.patch.object(server.proc, "sudo", return_value=_make_proc(1, ""))
         assert server._llm_server_systemctl("start") is False
 
     def test_unit_installed_reflects_the_unit_path(self, mocker):
@@ -323,7 +323,7 @@ class TestSystemctlHelpers:
 class TestRestartCommand:
     def test_restart_uses_a_single_systemctl_restart(self, tmp_config_server, fake_console, mocker):
         """systemctl restart is atomic; stop-then-start raced with the restart policy."""
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
         mocker.patch.object(server, "_unit_main_pid", return_value=54321)
         mocker.patch.object(server, "_stop_monitor")
@@ -336,7 +336,7 @@ class TestRestartCommand:
         systemctl.assert_called_once_with("restart")
 
     def test_restart_ensures_nginx_is_running(self, tmp_config_server, fake_console, mocker):
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
         mocker.patch.object(server, "_unit_main_pid", return_value=54321)
         mocker.patch.object(server, "_stop_monitor")
@@ -349,7 +349,7 @@ class TestRestartCommand:
         nginx.assert_called_once()
 
     def test_restart_exits_when_systemctl_fails(self, tmp_config_server, fake_console, mocker):
-        mocker.patch.object(server, "_ensure_sudo")
+        mocker.patch.object(server.proc, "ensure_sudo")
         mocker.patch.object(server, "_llm_server_unit_installed", return_value=True)
         mocker.patch.object(server, "_stop_monitor")
         mocker.patch.object(server, "_llm_server_systemctl", return_value=False)
@@ -390,13 +390,6 @@ class TestStatusCommand:
 
 
 class TestUptimeHelpers:
-    def test_format_uptime_branches(self):
-        assert server._format_uptime(0) == "0s"
-        assert server._format_uptime(59) == "59s"
-        assert server._format_uptime(60) == "1m 0s"
-        assert server._format_uptime(3661) == "1h 1m"
-        assert server._format_uptime(90061) == "1d 1h"
-
     def test_process_uptime_seconds_unknown_pid(self):
         assert server._process_uptime_seconds(2_147_483_647) is None
 

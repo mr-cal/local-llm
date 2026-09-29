@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import Annotated
 
 import typer
-from rich.console import Console
 from rich.markup import escape
 
 from llm.config import find_config, load_config
+from llm.core import fmt
+from llm.core.console import console
 
 app = typer.Typer(help="Hermes agent VM management.", no_args_is_help=True)
-console = Console()
 
 
 @app.command("setup")
@@ -73,17 +73,6 @@ def refresh() -> None:
         raise typer.Exit(1) from None
 
 
-def _format_uptime(secs: int) -> str:
-    """Format seconds into a human-readable uptime string."""
-    if secs >= 86400:
-        return f"{secs // 86400}d {secs % 86400 // 3600}h {secs % 3600 // 60}m"
-    if secs >= 3600:
-        return f"{secs // 3600}h {secs % 3600 // 60}m {secs % 60}s"
-    if secs >= 60:
-        return f"{secs // 60}m {secs % 60}s"
-    return f"{secs}s"
-
-
 def _format_credentials(cred: str) -> tuple[str, str]:
     """Return (label, color) for the credentials status string."""
     if cred == "True":
@@ -127,7 +116,7 @@ def status() -> None:
     console.print(f"  Version:     {ver}")
 
     uptime_secs = int(s.get("uptime", "0"))
-    console.print(f"  Uptime:      {_format_uptime(uptime_secs)}")
+    console.print(f"  Uptime:      {fmt.duration(uptime_secs)}")
 
     # The "Credentials" check probes different things depending on the
     # configured provider: OpenRouter API key validity, or reachability of

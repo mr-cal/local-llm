@@ -197,11 +197,8 @@ def fake_console(monkeypatch):
     def _print(*args, **kwargs):
         calls.append(str(args[0]) if args else "")
 
-    monkeypatch.setattr("llm.config.console.print", lambda *a, **kw: _print(*a, **kw))
-    monkeypatch.setattr("llm.server.console.print", lambda *a, **kw: _print(*a, **kw))
-    monkeypatch.setattr("llm.benchmark.console.print", lambda *a, **kw: _print(*a, **kw))
-    monkeypatch.setattr("llm.client.console.print", lambda *a, **kw: _print(*a, **kw))
-    monkeypatch.setattr("llm.models.console.print", lambda *a, **kw: _print(*a, **kw))
+    # Every module prints through the same Console, so one patch covers them all.
+    monkeypatch.setattr("llm.core.console.console.print", lambda *a, **kw: _print(*a, **kw))
     return calls
 
 

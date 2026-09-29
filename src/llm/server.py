@@ -7,18 +7,17 @@ import re
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from llm.config import CONFIG_FILENAME, find_config, load_config
+from llm.core import fmt, http, proc
+from llm.core.console import console
 
 app = typer.Typer(help="Manage the llama-server process.", no_args_is_help=True)
-console = Console()
 
 # systemd is the only supervisor for llama-server: it owns the process, the
 # restart policy and the logs. The unit is rendered from config.toml and
@@ -78,7 +77,7 @@ def setup(
         write_config_toml,
     )
 
-    _ensure_sudo()
+    proc.ensure_sudo()
 
     project_root = Path.cwd()
     config_path = project_root / CONFIG_FILENAME
@@ -204,65 +203,24 @@ def setup(
 
 
 def _nginx_is_active() -> bool:
-    return _unit_is_active("nginx")
-
-
-def _unit_is_active(unit: str) -> bool:
-    """Return True when *unit* is active according to systemd."""
-    result = subprocess.run(
-        ["systemctl", "is-active", unit],
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip() == "active"
-
-
-def _run_sudo(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run a sudo command, restoring the terminal if interrupted mid-prompt.
-
-    sudo disables terminal echo while reading the password; if this process
-    is killed (e.g. via Ctrl+C) before sudo restores it, the terminal is
-    left unusable until ``stty sane`` is run. Do that ourselves so an
-    interrupted prompt doesn't leave the shell in a broken state.
-    """
-    try:
-        return subprocess.run(cmd, capture_output=True, text=True)
-    except KeyboardInterrupt:
-        subprocess.run(["stty", "sane"], check=False)
-        raise
-
-
-def _ensure_sudo() -> None:
-    """Prompt for the sudo password up front, before any other work.
-
-    Without this, the password prompt only appears once nginx actually
-    needs to be started/stopped/reloaded - e.g. after already waiting for
-    the server to become ready - which is surprising. Authenticating first
-    caches the credential so later sudo calls in the same command don't
-    prompt again.
-    """
-    try:
-        subprocess.run(["sudo", "-v"], check=False)
-    except KeyboardInterrupt:
-        subprocess.run(["stty", "sane"], check=False)
-        raise
+    return proc.unit_is_active("nginx")
 
 
 def _nginx_start() -> bool:
     """Start nginx via systemctl. Returns True on success."""
-    result = _run_sudo(["sudo", "systemctl", "start", "nginx"])
+    result = proc.sudo(["systemctl", "start", "nginx"])
     return result.returncode == 0
 
 
 def _nginx_reload() -> bool:
     """Reload nginx config. Returns True on success."""
-    result = _run_sudo(["sudo", "systemctl", "reload", "nginx"])
+    result = proc.sudo(["systemctl", "reload", "nginx"])
     return result.returncode == 0
 
 
 def _nginx_stop() -> bool:
     """Stop nginx via systemctl. Returns True on success."""
-    result = _run_sudo(["sudo", "systemctl", "stop", "nginx"])
+    result = proc.sudo(["systemctl", "stop", "nginx"])
     return result.returncode == 0
 
 
@@ -282,7 +240,7 @@ def _require_unit_installed() -> None:
 
 def _llm_server_systemctl(action: str) -> bool:
     """Run ``systemctl <action> llm-server``. Returns True on success."""
-    result = _run_sudo(["sudo", "systemctl", action, SERVICE_UNIT])
+    result = proc.sudo(["systemctl", action, SERVICE_UNIT])
     if result.returncode != 0 and result.stderr.strip():
         console.print(f"  [dim]{result.stderr.strip()}[/dim]")
     return result.returncode == 0
@@ -398,14 +356,7 @@ def _server_is_ready(port: int) -> bool:
     Returns True if the server responds with 200 OK on the /health
     endpoint, False otherwise (still loading, crashed, etc.).
     """
-    import httpx  # noqa: PLC0415
-
-    url = f"http://127.0.0.1:{port}/health"
-    try:
-        resp = httpx.get(url, timeout=2)
-        return resp.status_code == 200
-    except Exception:
-        return False
+    return http.is_healthy(f"http://127.0.0.1:{port}/health")
 
 
 def _read_monitor_pid() -> int | None:
@@ -491,19 +442,6 @@ def _check_oom() -> None:
         console.print(f"  {ln}")
 
 
-def _fmt_mib(value: str, unit: str) -> str:
-    """Format a kB/MB string value as MiB, or '-' when missing."""
-    if value == "":
-        return "-"
-    try:
-        number = float(value)
-    except ValueError:
-        return value
-    if unit == "kb":
-        number /= 1024
-    return f"{number:,.0f} MiB"
-
-
 def _process_uptime_seconds(pid: int) -> int | None:
     """Return how long *pid* has been running in seconds, or None if unknown."""
     try:
@@ -526,17 +464,6 @@ def _process_uptime_seconds(pid: int) -> int | None:
     return max(0, int(boot_uptime - start_since_boot))
 
 
-def _format_uptime(secs: int) -> str:
-    """Format seconds as a compact human-readable duration."""
-    if secs >= 86400:
-        return f"{secs // 86400}d {secs % 86400 // 3600}h"
-    if secs >= 3600:
-        return f"{secs // 3600}h {secs % 3600 // 60}m"
-    if secs >= 60:
-        return f"{secs // 60}m {secs % 60}s"
-    return f"{secs}s"
-
-
 @app.command("start")
 def start(
     wait: Annotated[int, typer.Option("--wait", help="Seconds to wait for server to be ready.")] = 5,
@@ -547,7 +474,7 @@ def start(
     change settings (including the build profile) in config.toml and re-apply
     rather than passing overrides here.
     """
-    _ensure_sudo()
+    proc.ensure_sudo()
     _warn_if_stale()
     cfg = load_config()
 
@@ -596,28 +523,20 @@ def start(
 
 def _wait_until_ready(cfg: object, wait: int) -> None:
     """Poll /health until the server answers or *wait* seconds elapse."""
-    import httpx  # noqa: PLC0415
-
     from llm.config import Settings  # noqa: PLC0415
 
     assert isinstance(cfg, Settings)
     console.print(f"Waiting up to {wait}s for server to be ready...", end="")
-    deadline = time.monotonic() + wait
-    while time.monotonic() < deadline:
-        time.sleep(0.5)
-        try:
-            httpx.get(f"{cfg.internal_url}/health", timeout=1).raise_for_status()
-            console.print(" [green]ready[/green]")
-            return
-        except Exception:
-            pass
-    console.print(" [yellow]timeout (server may still be loading)[/yellow]")
+    if http.wait_until_healthy(f"{cfg.internal_url}/health", timeout=wait, probe_timeout=1):
+        console.print(" [green]ready[/green]")
+    else:
+        console.print(" [yellow]timeout (server may still be loading)[/yellow]")
 
 
 @app.command("stop")
 def stop() -> None:
     """Stop llama-server and nginx."""
-    _ensure_sudo()
+    proc.ensure_sudo()
     cfg = load_config()
     pid = _server_pid(cfg.server.port)
     nginx_active = _nginx_is_active()
@@ -653,7 +572,7 @@ def stop() -> None:
 @app.command("restart")
 def restart() -> None:
     """Restart llama-server and make sure nginx is running."""
-    _ensure_sudo()
+    proc.ensure_sudo()
     _warn_if_stale()
     cfg = load_config()
     _require_unit_installed()
@@ -706,7 +625,7 @@ def status() -> None:
         console.print(f"{status_icon} llama-server  PID {pid} port {cfg.server.port}")
         console.print(f"  Model  : {display}  [dim]({cfg.models.active})[/dim]")
         if uptime is not None:
-            console.print(f"  Uptime : {_format_uptime(uptime)}")
+            console.print(f"  Uptime : {fmt.duration(uptime)}")
         console.print(f"  Layers : {cfg.server.n_gpu_layers}")
         if cfg.server.extra_args:
             console.print(f"  Extra  : {' '.join(cfg.server.extra_args)}")
@@ -780,9 +699,9 @@ def memory(
         table.add_row(
             row.get("timestamp", ""),
             row.get("event", ""),
-            _fmt_mib(row.get("mem_avail_kb", ""), "kb"),
-            _fmt_mib(row.get("rss_kb", ""), "kb"),
-            _fmt_mib(row.get("gpu_gtt_used_mb", ""), "mb"),
+            fmt.mib(row.get("mem_avail_kb", ""), "kb"),
+            fmt.mib(row.get("rss_kb", ""), "kb"),
+            fmt.mib(row.get("gpu_gtt_used_mb", ""), "mb"),
         )
     console.print(table)
 
@@ -798,5 +717,5 @@ def apply() -> None:
     from llm.config import apply_server_configs  # noqa: PLC0415
 
     cfg = load_config()
-    _ensure_sudo()
+    proc.ensure_sudo()
     apply_server_configs(cfg, _project_root())

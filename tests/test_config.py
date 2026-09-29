@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -31,8 +30,6 @@ from llm.config import (
     _build_pi_config,
     _build_pi_config_for_container,
     _mask_api_keys,
-    _sudo,
-    _systemctl_is_active,
     _validate_opencode_config,
     config_show,
     find_config,
@@ -486,29 +483,6 @@ class TestTryLoadLxd:
         assert len(lxd.mounts) == 2
         assert lxd.mounts[0].host == "~/.agents"
         assert lxd.mounts[1].host == "~/dev"
-
-
-# ── _sudo and _systemctl_is_active ─────────────────────────────────────────────
-
-
-class TestSudo:
-    def test_sudo_success(self, monkeypatch, tmp_path, fake_console, _make_proc):
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, ""))
-        assert _sudo("echo", "hello", desc="test cmd") is True
-
-    def test_sudo_failure(self, monkeypatch, _make_proc):
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(1, "permission denied"))
-        assert _sudo("echo", "hello", desc="test cmd") is False
-
-
-class TestSystemctlIsActive:
-    def test_active(self, monkeypatch, _make_proc):
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(0, "active"))
-        assert _systemctl_is_active("nginx") is True
-
-    def test_inactive(self, monkeypatch, _make_proc):
-        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: _make_proc(1, "inactive"))
-        assert _systemctl_is_active("nginx") is False
 
 
 # ── config_init ────────────────────────────────────────────────────────────────

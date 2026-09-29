@@ -8,13 +8,12 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from llm.config import BuildProfile, load_config
+from llm.core.console import console
 
 app = typer.Typer(help="Build llama.cpp and manage build profiles.", no_args_is_help=True)
-console = Console()
 
 # Path to the llama.cpp submodule directory (relative to project root, resolved at runtime).
 _SUBMODULE_DIR = Path("llama.cpp")

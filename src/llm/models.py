@@ -10,13 +10,13 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from llm.config import ModelEntry, find_config, load_config
+from llm.core import fmt
+from llm.core.console import console
 
 app = typer.Typer(help="Download, list, and switch GGUF models.", no_args_is_help=True)
-console = Console()
 
 
 # ── KNOWN_MODELS catalog (default fallback) ───────────────────────────────────
@@ -212,8 +212,7 @@ def _models_dir() -> Path:
 
 
 def _fmt_size(path: Path) -> str:
-    gb = path.stat().st_size / 1_073_741_824
-    return f"{gb:.1f} GB"
+    return fmt.file_size(path)
 
 
 def _catalog_table(title: str) -> Table:

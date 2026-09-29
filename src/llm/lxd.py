@@ -18,7 +18,6 @@ from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
-from rich.console import Console
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -33,6 +32,9 @@ from llm.config import (
     load_config,
     try_load_lxd,
 )
+from llm.core.console import console
+from llm.core.errors import LlmError
+from llm.core.proc import redact
 
 # Version stored in LXD container metadata for future compatibility handling.
 LOCAL_LLM_VERSION = 1
@@ -67,8 +69,6 @@ PYLSP_LSP_CONFIG = {
         }
     }
 }
-
-console = Console()
 
 
 # ── LxdVmManager class ──────────────────────────────────────────────────────
@@ -1477,27 +1477,6 @@ def _cexec(container: str, uid: int, gid: int, *cmd: str) -> list[str]:
 # captured output. Registration is belt-and-braces: secrets should reach the
 # container over stdin rather than in argv, but anything that does slip into a
 # command line must not also be printed to the terminal or CI logs.
-_SECRET_VALUES: set[str] = set()
-
-# Shorter values are too likely to collide with ordinary command text (and are
-# not plausible credentials), so redacting them would corrupt the output.
-_MIN_REDACTABLE_LEN = 8
-
-
-def register_secrets(*values: str | None) -> None:
-    """Register credential values to scrub from echoed commands and output."""
-    for value in values:
-        if value and len(value) >= _MIN_REDACTABLE_LEN:
-            _SECRET_VALUES.add(value)
-
-
-def redact(text: str) -> str:
-    """Replace every registered credential in *text* with a placeholder."""
-    for secret in _SECRET_VALUES:
-        text = text.replace(secret, "***")
-    return text
-
-
 # A permissive but shell-safe hostname: letters, digits, dots and hyphens only.
 # Anything outside this set (quotes, spaces, ``;``, ``$(...)``) could break out
 # of the single-quoted /etc/hosts command below.
@@ -1510,7 +1489,7 @@ def validate_host(value: str) -> str:
         ipaddress.ip_address(value)
     except ValueError:
         if not value or not set(value) <= _HOSTNAME_CHARS:
-            raise ValueError(
+            raise LlmError(
                 f"{value!r} is not a valid IP address or hostname; "
                 "check client.server_url and proxy.lan_ip in config.toml"
             ) from None

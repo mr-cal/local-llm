@@ -10,10 +10,10 @@ from pathlib import Path
 
 import typer
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from rich.console import Console
 from rich.syntax import Syntax
 
-console = Console()
+from llm.core import http, proc
+from llm.core.console import console
 
 CONFIG_FILENAME = "config.toml"
 
@@ -579,31 +579,6 @@ def config_init() -> None:
     )
 
 
-def _sudo(*args: str, desc: str) -> bool:
-    """Run a sudo command, printing what runs. Returns True on success.
-
-    Restores terminal echo if interrupted mid-password-prompt.
-    """
-    cmd = ["sudo", *args]
-    console.print(f"  [dim]$ {' '.join(cmd)}[/dim]")
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-    except KeyboardInterrupt:
-        subprocess.run(["stty", "sane"], check=False)
-        raise
-    if result.returncode != 0:
-        msg = (result.stderr or result.stdout).strip()
-        console.print(f"  [red]✗[/red]  {desc}" + (f": {msg}" if msg else ""))
-        return False
-    console.print(f"  [green]✓[/green]  {desc}")
-    return True
-
-
-def _systemctl_is_active(unit: str) -> bool:
-    result = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True)
-    return result.stdout.strip() == "active"
-
-
 # ── Pydantic models for config builders ──────────────────────────────────────
 # These models provide runtime validation at construction time and
 # self-document the config schema. The builder functions construct instances
@@ -782,15 +757,7 @@ def _get_server_model_info(cfg: Settings) -> dict | None:
     Returns ``None`` if the server is unreachable or the endpoint is unavailable
     (e.g. old llama.cpp version without this endpoint).
     """
-    import httpx  # noqa: PLC0415
-
-    url = f"{cfg.internal_url}/model_info"
-    try:
-        resp = httpx.get(url, timeout=2)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception:
-        return None
+    return http.get_json(f"{cfg.internal_url}/model_info")
 
 
 def _resolve_model_info(
@@ -1209,18 +1176,18 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
     if not nginx_src.exists():
         console.print("  [yellow]nginx/llm-proxy.conf not found - skipping[/yellow]")
     else:
-        if _sudo("cp", str(nginx_src), str(nginx_avail), desc="install conf"):
+        if proc.sudo_step(["cp", str(nginx_src), str(nginx_avail)], desc="install conf"):
             if not nginx_enabled.exists():
-                _sudo("ln", "-sf", str(nginx_avail), str(nginx_enabled), desc="enable site")
+                proc.sudo_step(["ln", "-sf", str(nginx_avail), str(nginx_enabled)], desc="enable site")
             test = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
             if test.returncode != 0:
                 console.print(f"  [red]✗[/red]  nginx -t failed:\n{test.stderr.strip()}")
             else:
                 console.print("  [green]✓[/green]  nginx -t passed")
-                if _systemctl_is_active("nginx"):
-                    _sudo("systemctl", "reload", "nginx", desc="reload nginx")
+                if proc.unit_is_active("nginx"):
+                    proc.sudo_step(["systemctl", "reload", "nginx"], desc="reload nginx")
                 else:
-                    _sudo("systemctl", "start", "nginx", desc="start nginx")
+                    proc.sudo_step(["systemctl", "start", "nginx"], desc="start nginx")
 
     # ── systemd ───────────────────────────────────────────────────────────
     console.print("\n[bold]systemd[/bold]")
@@ -1229,10 +1196,10 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
     if not svc_src.exists():
         console.print("  [yellow]systemd/llm-server.service not found - skipping[/yellow]")
     else:
-        if _sudo("cp", str(svc_src), str(svc_dst), desc="install service"):
-            _sudo("systemctl", "daemon-reload", desc="daemon-reload")
-            _sudo("systemctl", "enable", "llm-server", desc="enable llm-server")
-            if _systemctl_is_active("llm-server"):
+        if proc.sudo_step(["cp", str(svc_src), str(svc_dst)], desc="install service"):
+            proc.sudo_step(["systemctl", "daemon-reload"], desc="daemon-reload")
+            proc.sudo_step(["systemctl", "enable", "llm-server"], desc="enable llm-server")
+            if proc.unit_is_active("llm-server"):
                 console.print(
                     "  [dim]llm-server is running - restart to pick up changes:[/dim]\n"
                     "    [bold]uv run llm server restart[/bold]"

@@ -8,13 +8,12 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from rich.console import Console
 from rich.markup import escape
 
 from llm.config import CONFIG_FILENAME, find_config, load_config
+from llm.core.console import console
 
 app = typer.Typer(help="Client setup and management.", no_args_is_help=True)
-console = Console()
 
 
 # ── client setup ──────────────────────────────────────────────────────────────

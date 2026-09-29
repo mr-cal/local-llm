@@ -15,9 +15,9 @@ import json
 import subprocess
 from typing import Any
 
-from rich.console import Console
-
 from llm.config import HermesSettings, Settings, load_config
+from llm.core.console import console
+from llm.core.proc import register_secrets
 
 # Import shared LXD infrastructure from lxd.py
 from llm.lxd import (
@@ -31,13 +31,10 @@ from llm.lxd import (
     _cexec,
     add_hosts_entry,
     container_exists,
-    register_secrets,
     run,
     run_capture,
     run_with_retry,
 )
-
-console = Console()
 
 # Hermes install script URL (official one-liner)
 _HERMES_INSTALL_URL = "https://hermes-agent.nousresearch.com/install.sh"

@@ -5,6 +5,8 @@ from __future__ import annotations
 import typer
 
 from llm import benchmark, build, client, config, hermes, models, server
+from llm.core.console import console
+from llm.core.errors import LlmError
 
 app = typer.Typer(
     name="llm",
@@ -22,4 +24,9 @@ app.add_typer(hermes.app, name="hermes")
 
 
 def main() -> None:
-    app()
+    """Run the CLI, reporting expected failures without a traceback."""
+    try:
+        app()
+    except LlmError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise SystemExit(1) from None
