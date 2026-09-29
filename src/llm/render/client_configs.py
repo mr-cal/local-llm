@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from llm.core import http
 from llm.core.console import console
+from llm.core.files import write_atomic
 from llm.settings import Settings
 
 # ── Pydantic models for config builders ──────────────────────────────────────
@@ -497,7 +498,8 @@ def apply_client_configs(cfg: Settings) -> None:
         **existing,
         "providers": {**existing.get("providers", {}), **pi_cfg.get("providers", {})},
     }
-    pi_path.write_text(json.dumps(merged, indent=2) + "\n")
+    # 0600: the rendered config embeds the server API key.
+    write_atomic(pi_path, json.dumps(merged, indent=2) + "\n", mode=0o600)
     console.print(f"[green]Rendered[/green] {pi_path}")
 
     # ── Opencode config ───────────────────────────────────────────────────
@@ -520,5 +522,5 @@ def apply_client_configs(cfg: Settings) -> None:
     else:
         console.print("  [green]✓[/green] Schema valid")
 
-    opencode_path.write_text(json.dumps(opencode_cfg, indent=2) + "\n")
+    write_atomic(opencode_path, json.dumps(opencode_cfg, indent=2) + "\n", mode=0o600)
     console.print(f"[green]Rendered[/green] {opencode_path}")

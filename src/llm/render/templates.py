@@ -8,6 +8,7 @@ from pathlib import Path
 
 from llm.core import proc
 from llm.core.console import console
+from llm.core.files import write_atomic
 from llm.render.client_configs import _get_lxd_bridge_info
 from llm.settings import Settings
 
@@ -85,7 +86,7 @@ def apply_server_configs(cfg: Settings, project_root: Path) -> None:
         text = src.read_text()
         for placeholder, value in replacements.items():
             text = text.replace(placeholder, value)
-        dst.write_text(text)
+        write_atomic(dst, text)
         console.print(f"[green]Rendered[/green] {dst}")
 
     # ── nginx ─────────────────────────────────────────────────────────────

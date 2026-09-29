@@ -15,6 +15,7 @@ from rich.table import Table
 
 from llm.core import fmt, http, proc
 from llm.core.console import console
+from llm.core.files import write_atomic
 from llm.render.client_configs import apply_client_configs
 from llm.render.templates import apply_server_configs
 from llm.services.certs import detect_lan_ip, generate_api_key, generate_tls_cert
@@ -400,7 +401,7 @@ def _start_monitor(cfg: object, server_pid: int) -> None:
         console.print("[yellow]Could not start memory monitor[/yellow]")
         return
 
-    _MONITOR_PID_FILE.write_text(str(proc.pid))
+    write_atomic(_MONITOR_PID_FILE, str(proc.pid))
     console.print(
         f"[dim]Memory monitor started[/dim] (PID {proc.pid}, every "
         f"{cfg.server.monitor_interval}s → logs/memory-monitor.csv)"

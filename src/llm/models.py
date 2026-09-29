@@ -14,6 +14,7 @@ from rich.table import Table
 
 from llm.core import fmt
 from llm.core.console import console
+from llm.core.files import write_atomic
 from llm.settings import ModelEntry, find_config, load_config
 
 app = typer.Typer(help="Download, list, and switch GGUF models.", no_args_is_help=True)
@@ -483,7 +484,7 @@ def switch(
     if updated is None:
         console.print(f"[red]Could not find an 'active' key under [models] in {config_path}.[/red]")
         raise typer.Exit(1)
-    config_path.write_text(updated)
+    write_atomic(config_path, updated)
     label = f"{entry.alias} ({model_name})" if entry else model_name
     console.print(f"[green]Active model set to[/green] {label}")
 

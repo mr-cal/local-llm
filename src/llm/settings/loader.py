@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 
 from llm.core.console import console
+from llm.core.files import write_atomic
 from llm.settings.models import CONFIG_FILENAME, LxdSettings, Settings
 
 # Template written by `llm config init` - loaded from config_template.toml.
@@ -61,5 +62,5 @@ def write_config_toml(cfg_dict: dict, path: Path | None = None) -> Path:  # type
 
     if path is None:
         path = Path.cwd() / CONFIG_FILENAME
-    path.write_text(tomli_w.dumps(cfg_dict))
+    write_atomic(path, tomli_w.dumps(cfg_dict))
     return path

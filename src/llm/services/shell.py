@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from llm.core.files import write_atomic
+
 
 def _ensure_line_in_file(path: Path, line: str) -> bool:
     """Ensure *line* is present in *path*. Creates the file if needed.
@@ -48,7 +50,8 @@ def configure_shell_env_host(
         f'export OPENAI_API_KEY="{api_key}"\n'
         f'export NODE_EXTRA_CA_CERTS="{cert_path}"\n'
     )
-    env_file.write_text(env_content)
+    # 0600: the env file exports OPENAI_API_KEY.
+    write_atomic(env_file, env_content, mode=0o600)
     actions.append(f"Wrote {env_file}")
 
     # Source from ~/.bashrc if not already present
@@ -67,7 +70,7 @@ def configure_shell_env_host(
         f'set -gx NODE_EXTRA_CA_CERTS "{cert_path}"\n'
     )
     fish_conf.parent.mkdir(parents=True, exist_ok=True)
-    fish_conf.write_text(fish_content)
+    write_atomic(fish_conf, fish_content, mode=0o600)
     actions.append(f"Wrote {fish_conf}")
 
     return actions

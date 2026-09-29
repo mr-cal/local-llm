@@ -20,6 +20,7 @@ from rich.table import Table
 
 from llm.core import http
 from llm.core.console import console
+from llm.core.files import write_atomic
 from llm.gpu import gpu_memory_status, gpu_used_mb
 from llm.settings import Settings, find_config, load_config
 
@@ -335,7 +336,7 @@ def _apply_config(n_gpu_layers: int, flash_attn: bool, ctk: str) -> None:
     text = re.sub(r"^n_gpu_layers\s*=\s*\d+", f"n_gpu_layers = {n_gpu_layers}", text, flags=re.MULTILINE)
     text = re.sub(r"^extra_args\s*=\s*\[.*?\]", f"extra_args = {new_extra!r}", text, flags=re.MULTILINE)
 
-    config_path.write_text(text)
+    write_atomic(config_path, text)
 
     console.print("[green]Config updated:[/green]")
     if old_ngl != n_gpu_layers:
