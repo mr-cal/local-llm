@@ -17,6 +17,11 @@ console = Console()
 
 CONFIG_FILENAME = "config.toml"
 
+# Marks a field as holding a credential. `llm config show` masks every field
+# tagged this way, so adding a new secret to a model is enough to keep it out
+# of the printed configuration - there is no separate list to keep in sync.
+SECRET: dict[str, object] = {"secret": True}
+
 # Template written by `llm config init` - loaded from config_template.toml.
 # Every option is a commented example so the file is self-documenting.
 _CONFIG_TEMPLATE = resources.files("llm").joinpath("config_template.toml").read_text(encoding="utf-8")
@@ -160,7 +165,8 @@ class ModelCost(BaseModel):
 class AuthSettings(BaseModel):
     """Bearer token used by remote clients to authenticate with this server."""
 
-    api_key: str = ""  # Generate: python -c "import secrets; print(secrets.token_hex(32))"
+    # Generate: python -c "import secrets; print(secrets.token_hex(32))"
+    api_key: str = Field(default="", json_schema_extra=SECRET)
 
 
 class ModelEntry(BaseModel):
@@ -185,7 +191,7 @@ class ModelsSettings(BaseModel):
 
     dir: str = "~/models"
     active: str = "qwen2.5-coder-14b-q4"  # alias, not filename
-    hf_token: str = ""
+    hf_token: str = Field(default="", json_schema_extra=SECRET)
     entries: list[ModelEntry] = Field(default_factory=list, alias="list")
 
     @model_validator(mode="after")
@@ -240,8 +246,10 @@ class ProxySettings(BaseModel):
 class GitHubSettings(BaseModel):
     """GitHub CLI (gh) authentication and git identity settings."""
 
-    token: str = ""  # GitHub personal access token for gh CLI auth
-    git_pat: str = ""  # Separate PAT used for git push (HTTPS credential)
+    # GitHub personal access token for gh CLI auth
+    token: str = Field(default="", json_schema_extra=SECRET)
+    # Separate PAT used for git push (HTTPS credential)
+    git_pat: str = Field(default="", json_schema_extra=SECRET)
     git_username: str = "mr-cal-bot"
     git_email: str = "callahanlovesshopping@gmail.com"
 
@@ -293,17 +301,17 @@ class HermesSettings(BaseModel):
 
     # OpenRouter API key (used when provider = "openrouter").
     # https://openrouter.ai/keys
-    openrouter_key: str = ""
+    openrouter_key: str = Field(default="", json_schema_extra=SECRET)
 
     # Telegram bot token from @BotFather.
-    telegram_token: str = ""
+    telegram_token: str = Field(default="", json_schema_extra=SECRET)
 
     # Comma-separated numeric Telegram user IDs allowed to talk to the bot.
     # Get your ID from @userinfobot on Telegram.
     telegram_allowed_users: str = ""
 
     # GitHub PAT for Hermes GitHub MCP tool (needs repo + read:org scope).
-    github_token: str = ""
+    github_token: str = Field(default="", json_schema_extra=SECRET)
 
     def has_openrouter(self) -> bool:
         """True when OpenRouter backend is selected with a key."""
@@ -1378,18 +1386,55 @@ def configure_shell_env_host(
     return actions
 
 
+def _is_secret_field(field: object) -> bool:
+    """True when a pydantic field was tagged with the SECRET marker."""
+    extra = getattr(field, "json_schema_extra", None)
+    return isinstance(extra, dict) and bool(extra.get("secret"))
+
+
+def mask_secrets(model: BaseModel) -> dict:  # type: ignore[type-arg]
+    """Dump *model* with every SECRET-tagged field replaced by a placeholder.
+
+    Walks nested models so a credential added anywhere in the settings tree is
+    masked automatically. Empty values are left empty rather than masked, so
+    "unset" stays visually distinct from "set but hidden".
+    """
+    out: dict[str, object] = {}
+    for name, field in type(model).model_fields.items():
+        value = getattr(model, name)
+        key = field.alias or name
+        if isinstance(value, BaseModel):
+            out[key] = mask_secrets(value)
+        elif isinstance(value, list):
+            out[key] = [mask_secrets(v) if isinstance(v, BaseModel) else v for v in value]
+        elif _is_secret_field(field):
+            out[key] = "***" if value else ""
+        else:
+            out[key] = value
+    return out
+
+
+def _mask_api_keys(obj: object) -> object:
+    """Recursively mask apiKey/api_key values in a generated client config.
+
+    The opencode and pi configs embed the live API key. `config show` prints
+    them for inspection, so mask the credential without disturbing the rest of
+    the structure (the unmasked config is what actually gets written to disk).
+    """
+    if isinstance(obj, dict):
+        return {k: ("***" if k in ("apiKey", "api_key") and v else _mask_api_keys(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_mask_api_keys(v) for v in obj]
+    return obj
+
+
 @app.command("show")
 def config_show() -> None:
-    """Print current configuration (masks api_key and hf_token) and opencode config."""
+    """Print current configuration (credentials are masked) and opencode config."""
     import json  # noqa: PLC0415
 
     cfg = load_config()
-    # Build a display-safe version by masking secrets
-
-    masked = cfg.model_dump()
-    masked["auth"]["api_key"] = "***"
-    masked["models"]["hf_token"] = "***" if masked["models"]["hf_token"] else ""
-    masked["github"]["token"] = "***" if masked["github"]["token"] else ""
+    masked = mask_secrets(cfg)
 
     def _to_toml_ish(d: dict, indent: int = 0) -> str:  # type: ignore[type-arg]
         lines_out: list[str] = []
@@ -1422,7 +1467,7 @@ def config_show() -> None:
 
     opencode_cfg = _build_opencode_config(cfg)
     console.print("\n[bold]opencode config[/bold] (~/.config/opencode/config.json):")
-    console.print(Syntax(json.dumps(opencode_cfg, indent=2), "json", theme="monokai"))
+    console.print(Syntax(json.dumps(_mask_api_keys(opencode_cfg), indent=2), "json", theme="monokai"))
 
     console.print("\n[dim]Validating against opencode.ai/config.json schema…[/dim]")
     errors = _validate_opencode_config(opencode_cfg)
@@ -1438,4 +1483,4 @@ def config_show() -> None:
 
     pi_cfg = _build_pi_config(cfg)
     console.print("\n[bold]pi config[/bold] (~/.pi/agent/models.json):")
-    console.print(Syntax(json.dumps(pi_cfg, indent=2), "json", theme="monokai"))
+    console.print(Syntax(json.dumps(_mask_api_keys(pi_cfg), indent=2), "json", theme="monokai"))

@@ -170,8 +170,8 @@ def _run_one_bench(
     cmd: list[str],
     min_available_mb: float,
     min_gpu_free_mb: float = _MIN_GPU_FREE_MB,
-    mem_probe: Callable[[], float | None] = _available_memory_mb,
-    gpu_probe: Callable[[], tuple[float, float] | None] = gpu_memory_status,
+    mem_probe: Callable[[], float | None] | None = None,
+    gpu_probe: Callable[[], tuple[float, float] | None] | None = None,
 ) -> tuple[list[dict[str, str]], bool]:
     """Run a single llama-bench invocation with a memory watchdog.
 
@@ -182,7 +182,12 @@ def _run_one_bench(
 
     ``mem_probe``/``gpu_probe`` are injectable so tests can drive the watchdog
     deterministically instead of depending on the host's real memory pressure.
+    They default to None (rather than to the functions themselves) so the
+    module-level probes stay patchable - binding them as default values would
+    capture the original functions at import time.
     """
+    probe_mem = mem_probe or _available_memory_mb
+    probe_gpu = gpu_probe or gpu_memory_status
     console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
 
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
@@ -191,7 +196,7 @@ def _run_one_bench(
 
     def _watch_memory() -> None:
         while not stop_event.is_set():
-            available_mb = mem_probe()
+            available_mb = probe_mem()
             if available_mb is not None and available_mb < min_available_mb:
                 console.print(
                     f"[red]Low system memory ({available_mb:.0f} MiB available, "
@@ -201,7 +206,7 @@ def _run_one_bench(
                 killed.set()
                 break
 
-            gpu_status = gpu_probe()
+            gpu_status = probe_gpu()
             if gpu_status is not None:
                 gpu_used_mb, gpu_total_mb = gpu_status
                 gpu_free_mb = gpu_total_mb - gpu_used_mb
@@ -248,8 +253,8 @@ def _run_llama_bench(
     repetitions: int = 2,
     min_available_mb: float = _MIN_AVAILABLE_MB,
     min_gpu_free_mb: float = _MIN_GPU_FREE_MB,
-    mem_probe: Callable[[], float | None] = _available_memory_mb,
-    gpu_probe: Callable[[], tuple[float, float] | None] = gpu_memory_status,
+    mem_probe: Callable[[], float | None] | None = None,
+    gpu_probe: Callable[[], tuple[float, float] | None] | None = None,
 ) -> list[dict[str, str]]:
     """Run llama-bench across ngl values; return parsed CSV rows.
 
