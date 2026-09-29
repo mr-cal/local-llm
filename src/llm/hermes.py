@@ -26,7 +26,7 @@ def setup(
     Installs the Nous Research Hermes agent and configures it using the
     [hermes] section of config.toml (OpenRouter key, Telegram token, etc.).
     """
-    from llm.hermes_vm import HermesVmManager  # noqa: PLC0415
+    from llm.provision.hermes_vm import HermesVmManager  # noqa: PLC0415
 
     cfg_path = find_config()
     if not cfg_path.exists():
@@ -48,8 +48,8 @@ def setup(
 @app.command("refresh")
 def refresh() -> None:
     """Update packages and Hermes agent, and re-apply credentials."""
-    from llm.hermes_vm import HermesVmManager  # noqa: PLC0415
-    from llm.lxd import container_exists  # noqa: PLC0415
+    from llm.provision.exec import container_exists  # noqa: PLC0415
+    from llm.provision.hermes_vm import HermesVmManager  # noqa: PLC0415
 
     cfg_path = find_config()
     if not cfg_path.exists():
@@ -94,8 +94,8 @@ def _format_local_llm(ok: str) -> tuple[str, str]:
 @app.command("status")
 def status() -> None:
     """Show VM and gateway service status for the hermes VM."""
-    from llm.hermes_vm import HermesVmManager  # noqa: PLC0415
-    from llm.lxd import container_exists  # noqa: PLC0415
+    from llm.provision.exec import container_exists  # noqa: PLC0415
+    from llm.provision.hermes_vm import HermesVmManager  # noqa: PLC0415
 
     mgr = HermesVmManager()
 

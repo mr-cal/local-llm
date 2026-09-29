@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -12,6 +13,7 @@ from llm.render.client_configs import (
     _build_opencode_config,
     _build_pi_config,
     _build_pi_config_for_container,
+    _get_lxd_bridge_info,
     _get_server_model_info,
     _resolve_model_info,
     _validate_opencode_config,
@@ -741,3 +743,77 @@ def _settings_with_all_secrets() -> Settings:
         section, field = path.split(".")
         object.__setattr__(getattr(s, section), field, sentinel)
     return s
+
+
+class TestGetLxdBridgeInfo:
+    """Tests for _get_lxd_bridge_info which underpins both config and lxd modules."""
+
+    _IP_OUTPUT = (
+        "3: lxdbr0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP\n"
+        "    link/ether 00:16:3e:xx:xx:xx brd ff:ff:ff:ff:ff:ff\n"
+        "    inet 10.113.167.1/24 scope global lxdbr0\n"
+        "       valid_lft forever preferred_lft forever\n"
+    )
+
+    def test_parses_bridge_ip(self, monkeypatch):
+        def _run(cmd, **kw):
+            p = MagicMock()
+            p.returncode = 0
+            p.stdout = self._IP_OUTPUT
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _run)
+        ip, subnet = _get_lxd_bridge_info()
+        assert ip == "10.113.167.1"
+
+    def test_parses_bridge_subnet(self, monkeypatch):
+        def _run(cmd, **kw):
+            p = MagicMock()
+            p.returncode = 0
+            p.stdout = self._IP_OUTPUT
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _run)
+        ip, subnet = _get_lxd_bridge_info()
+        assert subnet == "10.113.167.0/24"
+
+    def test_returns_empty_when_no_bridge(self, monkeypatch):
+        def _run(cmd, **kw):
+            p = MagicMock()
+            p.returncode = 1
+            p.stdout = ""
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _run)
+        ip, subnet = _get_lxd_bridge_info()
+        assert ip == ""
+        assert subnet == ""
+
+    def test_returns_empty_when_no_inet_line(self, monkeypatch):
+        def _run(cmd, **kw):
+            p = MagicMock()
+            p.returncode = 0
+            p.stdout = "3: lxdbr0: <BROADCAST,MULTICAST,UP>\n"
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _run)
+        ip, subnet = _get_lxd_bridge_info()
+        assert ip == ""
+        assert subnet == ""
+
+    def test_handles_different_subnet_size(self, monkeypatch):
+        """/16 subnets should also parse correctly."""
+
+        def _run(cmd, **kw):
+            p = MagicMock()
+            p.returncode = 0
+            p.stdout = "    inet 172.16.0.1/16 scope global lxdbr0\n"
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _run)
+        ip, subnet = _get_lxd_bridge_info()
+        assert ip == "172.16.0.1"
+        assert subnet == "172.16.0.0/16"
+
+
+# ── setup_pi_in_container ─────────────────────────────────────────────────────

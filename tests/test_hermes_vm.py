@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from llm.hermes import _format_credentials, _format_local_llm
-from llm.hermes_vm import HermesVmManager, _merge_env_file
+from llm.provision.hermes_vm import HermesVmManager, _merge_env_file
 from llm.settings import HermesSettings
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -52,13 +52,13 @@ class TestConfigureCredentials:
         assert mock_run.call_count == 1
         return mock_run.call_args.kwargs["input"]
 
-    @patch("llm.hermes_vm.run")
+    @patch("llm.provision.hermes_vm.run")
     def test_no_credentials_skips(self, mock_run):
         """When no credentials are set, the method should log a warning and skip."""
         HermesVmManager._configure_credentials(self._mgr(), _make_cfg())
         mock_run.assert_not_called()
 
-    @patch("llm.hermes_vm.run")
+    @patch("llm.provision.hermes_vm.run")
     def test_single_credential_openrouter(self, mock_run):
         """Only the configured credential is written, and the provider is set."""
         mgr = self._mgr()
@@ -70,7 +70,7 @@ class TestConfigureCredentials:
             "config", "set", "model.provider", "openrouter", desc="set openrouter provider"
         )
 
-    @patch("llm.hermes_vm.run")
+    @patch("llm.provision.hermes_vm.run")
     def test_all_credentials_written(self, mock_run):
         """Every configured credential lands in the env file."""
         cfg = _make_cfg(
@@ -89,19 +89,19 @@ class TestConfigureCredentials:
             "GITHUB_TOKEN=ghp_test",
         ]
 
-    @patch("llm.hermes_vm.run")
+    @patch("llm.provision.hermes_vm.run")
     def test_github_uses_has_github(self, mock_run):
         """Verify github_token uses has_github() guard (not raw truthiness)."""
         HermesVmManager._configure_credentials(self._mgr(), _make_cfg(github_token="   "))
         mock_run.assert_not_called()
 
-    @patch("llm.hermes_vm.run")
+    @patch("llm.provision.hermes_vm.run")
     def test_github_token_in_env_when_set(self, mock_run):
         """Verify GITHUB_TOKEN appears in env write when token is set."""
         HermesVmManager._configure_credentials(self._mgr(), _make_cfg(github_token="ghp_real"))
         assert self._written(mock_run) == "GITHUB_TOKEN=ghp_real\n"
 
-    @patch("llm.hermes_vm.run")
+    @patch("llm.provision.hermes_vm.run")
     def test_secrets_never_appear_in_the_command(self, mock_run):
         """Credentials travel over stdin, never in argv where `ps` can see them."""
         cfg = _make_cfg(
@@ -117,14 +117,14 @@ class TestConfigureCredentials:
         assert "123:SECRETTOKEN" not in argv
         assert "ghp_secretvalue" not in argv
 
-    @patch("llm.hermes_vm.run")
+    @patch("llm.provision.hermes_vm.run")
     def test_shell_metacharacters_survive_verbatim(self, mock_run):
         """A token containing shell syntax must be stored literally, not executed."""
         nasty = "tok'en|rm -rf /;$(whoami)"
         HermesVmManager._configure_credentials(self._mgr(), _make_cfg(github_token=nasty))
         assert self._written(mock_run) == f"GITHUB_TOKEN={nasty}\n"
 
-    @patch("llm.hermes_vm.run")
+    @patch("llm.provision.hermes_vm.run")
     def test_existing_keys_replaced_unrelated_preserved(self, mock_run):
         """Re-running updates known keys in place and leaves other entries alone."""
         existing = "SSL_CERT_FILE=/home/dev/.hermes/ca-bundle.pem\nGITHUB_TOKEN=ghp_old\n"
@@ -187,7 +187,7 @@ class TestConfigureLocalLlm:
             server=ServerSettings(port=8080),
         )
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm.subprocess.run")
     def test_adds_etc_hosts_entry_proxy_disabled(self, mock_subprocess):
         """The 'local-llm' hostname must resolve inside the VM via /etc/hosts."""
         mgr = self._mgr()
@@ -197,7 +197,7 @@ class TestConfigureLocalLlm:
         assert len(hosts_calls) == 1
         assert "192.168.1.50 local-llm" in " ".join(str(a) for a in hosts_calls[0].args[0])
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm.subprocess.run")
     def test_adds_etc_hosts_entry_uses_server_url_host(self, mock_subprocess):
         """When client.server_url is set, its hostname is used for the hosts entry."""
         mgr = self._mgr()
@@ -208,7 +208,7 @@ class TestConfigureLocalLlm:
         assert len(hosts_calls) == 1
         assert "10.0.0.5 local-llm" in " ".join(str(a) for a in hosts_calls[0].args[0])
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm.subprocess.run")
     def test_ca_bundle_installed_only_when_proxy_enabled(self, mock_subprocess):
         """A plain HTTP endpoint needs no CA cert."""
         mgr = self._mgr()
@@ -233,7 +233,7 @@ class TestInstallCaBundle:
         mgr._write_env_vars = MagicMock()
         return mgr
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm.subprocess.run")
     def test_raises_when_cert_push_fails(self, mock_subprocess):
         """Without the cert every request to the proxy fails, so don't report success."""
         mock_subprocess.return_value = MagicMock(returncode=1, stderr="no such file")
@@ -241,8 +241,8 @@ class TestInstallCaBundle:
         with pytest.raises(RuntimeError, match="Failed to copy CA cert"):
             HermesVmManager._install_ca_bundle(self._mgr(), "/etc/ssl/local-llm/cert.pem")
 
-    @patch("llm.hermes_vm.run_capture")
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm.run_capture")
+    @patch("llm.provision.hermes_vm.subprocess.run")
     def test_raises_when_bundle_build_fails(self, mock_subprocess, mock_capture):
         """A pushed cert that isn't in the trust bundle is still unusable."""
         mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
@@ -253,8 +253,8 @@ class TestInstallCaBundle:
             HermesVmManager._install_ca_bundle(mgr, "/etc/ssl/local-llm/cert.pem")
         mgr._write_env_vars.assert_not_called()
 
-    @patch("llm.hermes_vm.run_capture")
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm.run_capture")
+    @patch("llm.provision.hermes_vm.subprocess.run")
     def test_points_ssl_cert_file_at_the_bundle(self, mock_subprocess, mock_capture):
         """httpx reads SSL_CERT_FILE, so it must point at the combined bundle."""
         mock_subprocess.return_value = MagicMock(returncode=0, stderr="")
@@ -281,7 +281,7 @@ class TestGetStatus:
         mgr.gid = 1000
         return mgr
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm.subprocess.run")
     def test_vm_not_running_returns_defaults(self, mock_run):
         """When VM is not running, all fields should be 'unknown' or 0."""
         mgr = self._build_mgr()
@@ -296,8 +296,8 @@ class TestGetStatus:
         assert result["uptime"] == "0"
         assert result["credentials_ok"] == "False"
 
-    @patch("llm.hermes_vm.subprocess.run")
-    @patch("llm.hermes_vm._cexec")
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm._cexec")
     def test_vm_running_gathering_all_fields(self, mock_cexec, mock_run):
         """When VM is Running, all fields should be populated."""
         mgr = self._build_mgr()
@@ -329,8 +329,8 @@ class TestGetStatus:
         assert int(result["uptime"]) > 0
         assert result["credentials_ok"] == "True"
 
-    @patch("llm.hermes_vm.subprocess.run")
-    @patch("llm.hermes_vm._cexec")
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm._cexec")
     def test_gateway_inactive(self, mock_cexec, mock_run):
         """Gateway in inactive state should still report correctly."""
         mgr = self._build_mgr()
@@ -361,8 +361,8 @@ class TestGetStatus:
         assert result["version"] == "hermes 2.5.0"
         assert result["credentials_ok"] == "True"
 
-    @patch("llm.hermes_vm.subprocess.run")
-    @patch("llm.hermes_vm._cexec")
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm._cexec")
     def test_credentials_invalid_when_curl_fails(self, mock_cexec, mock_run):
         """When curl to OpenRouter returns non-zero, credentials_ok is False."""
         mgr = self._build_mgr()
@@ -390,8 +390,8 @@ class TestGetStatus:
         result = mgr.get_status()
         assert result["credentials_ok"] == "False"
 
-    @patch("llm.hermes_vm.subprocess.run")
-    @patch("llm.hermes_vm._cexec")
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm._cexec")
     def test_local_llm_probe_http(self, mock_cexec, mock_run):
         """When provider is openai and proxy is disabled, probe http endpoint."""
         from unittest.mock import patch as real_patch
@@ -420,7 +420,7 @@ class TestGetStatus:
 
         mock_cexec.side_effect = cexec_side_effect
 
-        with real_patch("llm.hermes_vm.load_config") as mock_load:
+        with real_patch("llm.provision.hermes_vm.load_config") as mock_load:
             mock_load.return_value = Settings(
                 auth=AuthSettings(api_key="test-key"),
                 proxy=ProxySettings(enabled=False),
@@ -435,7 +435,7 @@ class TestGetStatus:
         assert "http://local-llm:8080" in cmd_str
         assert result["credentials_ok"] == "True"
 
-    @patch("llm.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm.subprocess.run")
     def test_bad_json_in_lxc_list(self, mock_run):
         """When lxc list returns invalid JSON, vm should default to 'unknown'."""
         mgr = self._build_mgr()
@@ -450,8 +450,8 @@ class TestGetStatus:
         assert result["uptime"] == "0"
         assert result["credentials_ok"] == "False"
 
-    @patch("llm.hermes_vm.subprocess.run")
-    @patch("llm.hermes_vm._cexec")
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm._cexec")
     def test_version_empty_defaults_to_unknown(self, mock_cexec, mock_run):
         """When hermes --version returns empty, version is 'unknown'."""
         mgr = self._build_mgr()
@@ -479,8 +479,8 @@ class TestGetStatus:
         result = mgr.get_status()
         assert result["version"] == "unknown"
 
-    @patch("llm.hermes_vm.subprocess.run")
-    @patch("llm.hermes_vm._cexec")
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm._cexec")
     def test_return_keys_match_expected(self, mock_cexec, mock_run):
         """Verify get_status returns exactly the expected keys."""
         mgr = self._build_mgr()
@@ -562,7 +562,7 @@ class TestStatusCommand:
     """Tests for hermes.status() displaying local LLM connectivity."""
 
     @patch("llm.hermes.console")
-    @patch("llm.lxd.container_exists", return_value=True)
+    @patch("llm.provision.exec.container_exists", return_value=True)
     @patch.object(HermesVmManager, "get_status")
     def test_status_shows_local_llm_line_for_local_provider(self, mock_get_status, mock_exists, mock_console):
         """When hermes is configured for the local llama-server, show 'Local LLM'."""
@@ -583,7 +583,7 @@ class TestStatusCommand:
         assert "Credentials:" not in printed
 
     @patch("llm.hermes.console")
-    @patch("llm.lxd.container_exists", return_value=True)
+    @patch("llm.provision.exec.container_exists", return_value=True)
     @patch.object(HermesVmManager, "get_status")
     def test_status_shows_credentials_line_for_openrouter(self, mock_get_status, mock_exists, mock_console):
         """When hermes is configured for OpenRouter, show 'Credentials'."""

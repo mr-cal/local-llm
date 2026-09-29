@@ -61,15 +61,17 @@ def _setup_container_client(
     recreate: bool = False,
 ) -> None:
     """Create an LXD VM and fully configure it as a client."""
-    from llm.lxd import (  # noqa: PLC0415
+    from llm.provision.client_vm import (  # noqa: PLC0415
+        create_and_setup,
+        load_lxd_settings,
+        setup_git_config_in_container,
+    )
+    from llm.provision.exec import (  # noqa: PLC0415
         CONTAINER_HOME,
         HOST_GID,
         HOST_UID,
         LOCAL_LLM_VERSION,
         _cexec,
-        create_and_setup,
-        load_lxd_settings,
-        setup_git_config_in_container,
     )
 
     config_path = find_config()
@@ -122,7 +124,7 @@ def _setup_container_client(
 
     # Authenticate gh CLI inside the container
     gh_token = cfg.github.token if cfg.github.is_authenticated() else ""
-    from llm.lxd import setup_gh_auth_in_container  # noqa: PLC0415
+    from llm.provision.client_vm import setup_gh_auth_in_container  # noqa: PLC0415
 
     setup_gh_auth_in_container(
         container_name,
@@ -287,7 +289,7 @@ def show() -> None:
 @app.command("list")
 def list_containers() -> None:
     """List all managed LXD containers with their kind, status and version."""
-    from llm.lxd import _list_managed_containers, get_container_kind  # noqa: PLC0415
+    from llm.provision.exec import _list_managed_containers, get_container_kind  # noqa: PLC0415
 
     managed = _list_managed_containers(kind=None)
     if not managed:
@@ -340,7 +342,7 @@ def refresh(
 
     Without arguments, refreshes all VMs tagged as managed.
     """
-    from llm.lxd import refresh_containers  # noqa: PLC0415
+    from llm.provision.client_vm import refresh_containers  # noqa: PLC0415
 
     # Read cert and github config from config.toml
     cert_pem: str | None = None
@@ -384,7 +386,7 @@ def crafts(
     ],
 ) -> None:
     """Run 'make setup' in all configured craft directories inside a VM."""
-    from llm.lxd import do_setup_crafts, load_lxd_settings  # noqa: PLC0415
+    from llm.provision.client_vm import do_setup_crafts, load_lxd_settings  # noqa: PLC0415
 
     _, craft_dirs = load_lxd_settings()
 

@@ -19,14 +19,13 @@ from llm.core.console import console
 from llm.core.proc import register_secrets
 
 # Import shared LXD infrastructure from lxd.py
-from llm.lxd import (
+from llm.provision.exec import (
     CONTAINER_HOME,
     CONTAINER_USER,
     HERMES_CONTAINER_NAME,
     HOST_GID,
     HOST_UID,
     KIND_HERMES,
-    _BaseVmManager,
     _cexec,
     add_hosts_entry,
     container_exists,
@@ -34,6 +33,7 @@ from llm.lxd import (
     run_capture,
     run_with_retry,
 )
+from llm.provision.vm import _BaseVmManager
 from llm.settings import HermesSettings, Settings, load_config
 
 # Hermes install script URL (official one-liner)
