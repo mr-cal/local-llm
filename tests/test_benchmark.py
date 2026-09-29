@@ -368,8 +368,71 @@ class TestRunLlamaBench:
             ngl_values=[20],
             flash_attn_values=[0],
             ctk_values=["f16"],
+            mem_probe=lambda: 64_000.0,
+            gpu_probe=lambda: (0.0, 16_000.0),
         )
         assert rows == []
+
+    def test_discards_rows_from_a_failed_run(self, tmp_path, fake_console):
+        """A crashed llama-bench may still have emitted partial CSV; it is not a result."""
+        bench = tmp_path / "llama-bench"
+        bench.write_text(
+            "#!/bin/bash\necho 'n_gpu_layers,n_prompt,n_gen,avg_ts'\necho '20,512,0,10.0'\nexit 3\n"
+        )
+        bench.chmod(0o755)
+
+        model = tmp_path / "model.gguf"
+        model.touch()
+
+        rows = benchmark._run_llama_bench(
+            bench_bin=bench,
+            model_path=model,
+            n_threads=12,
+            ngl_values=[20],
+            flash_attn_values=[0],
+            ctk_values=["f16"],
+            mem_probe=lambda: 64_000.0,
+            gpu_probe=lambda: (0.0, 16_000.0),
+        )
+        assert rows == []
+
+    def test_one_failing_ngl_does_not_abort_the_sweep(self, tmp_path, fake_console):
+        bench = tmp_path / "llama-bench"
+        # Fail for ngl=20, succeed for ngl=48.
+        bench.write_text(
+            "#!/bin/bash\n"
+            'if [[ "$*" == *"-ngl 20"* ]]; then exit 1; fi\n'
+            "echo 'n_gpu_layers,n_prompt,n_gen,avg_ts'\n"
+            "echo '48,512,0,10.0'\n"
+        )
+        bench.chmod(0o755)
+
+        model = tmp_path / "model.gguf"
+        model.touch()
+
+        rows = benchmark._run_llama_bench(
+            bench_bin=bench,
+            model_path=model,
+            n_threads=12,
+            ngl_values=[20, 48],
+            flash_attn_values=[0],
+            ctk_values=["f16"],
+            mem_probe=lambda: 64_000.0,
+            gpu_probe=lambda: (0.0, 16_000.0),
+        )
+        assert [r["n_gpu_layers"] for r in rows] == ["48"]
+
+
+class TestBenchRun:
+    def test_nonzero_exit_is_a_failure(self):
+        assert benchmark.BenchRun(rows=[], killed=False, returncode=1).failed
+
+    def test_clean_exit_is_not_a_failure(self):
+        assert not benchmark.BenchRun(rows=[], killed=False, returncode=0).failed
+
+    def test_watchdog_kill_is_not_reported_as_a_failure(self):
+        """We terminated it deliberately, so its exit code is ours, not llama-bench's."""
+        assert not benchmark.BenchRun(rows=[], killed=True, returncode=-15).failed
 
 
 # ── _abort_if_server_running ───────────────────────────────────────────────────
@@ -516,6 +579,119 @@ class TestRunLlamaBenchRaw:
 
         mocker.patch.object(benchmark, "_find_bench_bin", fake_find)
         benchmark._run_llama_bench_raw(cfg)
+
+
+class TestRunCommandRawFlag:
+    """`--raw` must reach the raw bench regardless of how profiles were selected."""
+
+    @pytest.fixture
+    def cfg_with_profiles(self, tmp_config_bench, monkeypatch):
+        with tmp_config_bench.open("a") as fh:
+            fh.write(
+                "\n[build]\nactive_profile_name = 'vulkan'\n"
+                "[[build.profiles]]\nname = 'vulkan'\nbackend = 'vulkan'\n"
+                "[[build.profiles]]\nname = 'cpu'\n"
+            )
+        monkeypatch.chdir(tmp_config_bench.parent)
+        return tmp_config_bench
+
+    def _record_raw(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(
+            benchmark,
+            "_run_single_benchmark",
+            lambda *a, raw=False, **kw: seen.append(raw) or {"tg_tps": 1.0, "pp_tps": 1.0},
+        )
+        return seen
+
+    def test_raw_is_honoured_for_a_single_run(self, cfg_with_profiles, fake_console, monkeypatch):
+        seen = self._record_raw(monkeypatch)
+        benchmark.run(raw=True)
+        assert seen == [True]
+
+    def test_raw_is_honoured_for_every_profile_in_a_sweep(self, cfg_with_profiles, fake_console, monkeypatch):
+        seen = self._record_raw(monkeypatch)
+        benchmark.run(raw=True, all_profiles=True)
+        assert seen == [True, True]
+
+    def test_raw_is_honoured_for_named_profiles(self, cfg_with_profiles, fake_console, monkeypatch):
+        seen = self._record_raw(monkeypatch)
+        benchmark.run(raw=True, profile=["cpu"])
+        assert seen == [True]
+
+    def test_raw_defaults_off(self, cfg_with_profiles, fake_console, monkeypatch):
+        seen = self._record_raw(monkeypatch)
+        benchmark.run(all_profiles=True)
+        assert seen == [False, False]
+
+
+class _FakeResponse:
+    def __init__(self, payload=None, text="", status_code=200):
+        self._payload = payload
+        self.text = text
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not json")
+        return self._payload
+
+
+class TestRunSingleBenchmarkResponseHandling:
+    """The benchmark must fail cleanly on bad responses rather than traceback."""
+
+    @pytest.fixture
+    def ready_server(self, tmp_config_bench, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_config_bench.parent)
+        monkeypatch.setattr(benchmark.httpx, "get", lambda *a, **kw: _FakeResponse({}))
+        monkeypatch.setattr(benchmark, "gpu_used_mb", lambda: None)
+        monkeypatch.setattr(benchmark, "HISTORY_FILE", tmp_path / "history.csv")
+
+        from llm.config import load_config
+
+        return load_config()
+
+    def test_malformed_json_exits(self, ready_server, fake_console, monkeypatch):
+        monkeypatch.setattr(benchmark.httpx, "post", lambda *a, **kw: _FakeResponse(None, text="<html>oops"))
+        with pytest.raises(click.exceptions.Exit):
+            benchmark._run_single_benchmark(ready_server, "hi", 10)
+
+    def test_non_object_json_exits(self, ready_server, fake_console, monkeypatch):
+        monkeypatch.setattr(benchmark.httpx, "post", lambda *a, **kw: _FakeResponse([1, 2, 3]))
+        with pytest.raises(click.exceptions.Exit):
+            benchmark._run_single_benchmark(ready_server, "hi", 10)
+
+    def test_timeout_exits(self, ready_server, fake_console, monkeypatch):
+        def _timeout(*a, **kw):
+            raise benchmark.httpx.ReadTimeout("too slow")
+
+        monkeypatch.setattr(benchmark.httpx, "post", _timeout)
+        with pytest.raises(click.exceptions.Exit):
+            benchmark._run_single_benchmark(ready_server, "hi", 10)
+
+    def test_empty_choices_does_not_crash(self, ready_server, fake_console, monkeypatch):
+        payload = {"usage": {"prompt_tokens": 3, "completion_tokens": 5}, "choices": []}
+        monkeypatch.setattr(benchmark.httpx, "post", lambda *a, **kw: _FakeResponse(payload))
+        row = benchmark._run_single_benchmark(ready_server, "hi", 10)
+        assert row["n_tokens"] == 5
+
+
+class TestRunLlamaBenchRawFailure:
+    def test_reports_nonzero_exit(self, tmp_config_bench, fake_console, monkeypatch, mocker):
+        monkeypatch.chdir(tmp_config_bench.parent)
+
+        from llm.config import load_config
+
+        cfg = load_config()
+        bench = tmp_path_bin = Path(tmp_config_bench.parent / "llama-bench")
+        bench.write_text("#!/bin/bash\nexit 4\n")
+        bench.chmod(0o755)
+        mocker.patch.object(benchmark, "_find_bench_bin", lambda: tmp_path_bin)
+
+        benchmark._run_llama_bench_raw(cfg)  # must not raise
 
 
 # ── history command ───────────────────────────────────────────────────────────

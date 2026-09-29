@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 import httpx
 import typer
@@ -166,16 +166,29 @@ def _available_memory_mb() -> float | None:
 _MIN_GPU_FREE_MB = 512
 
 
+class BenchRun(NamedTuple):
+    """Outcome of one llama-bench invocation."""
+
+    rows: list[dict[str, str]]
+    killed: bool
+    returncode: int
+
+    @property
+    def failed(self) -> bool:
+        """True when llama-bench exited with an error we did not cause."""
+        return not self.killed and self.returncode != 0
+
+
 def _run_one_bench(
     cmd: list[str],
     min_available_mb: float,
     min_gpu_free_mb: float = _MIN_GPU_FREE_MB,
     mem_probe: Callable[[], float | None] | None = None,
     gpu_probe: Callable[[], tuple[float, float] | None] | None = None,
-) -> tuple[list[dict[str, str]], bool]:
+) -> BenchRun:
     """Run a single llama-bench invocation with a memory watchdog.
 
-    Returns (rows, killed). A background thread polls both available system RAM
+    A background thread polls both available system RAM
     and available GPU memory (VRAM/GTT), killing the process before either one
     runs low enough to freeze the system or crash the GPU driver (see notes
     above on low-ngl CPU RAM and high-ngl GPU memory exhaustion).
@@ -237,8 +250,10 @@ def _run_one_bench(
         watchdog.join(timeout=_MEM_POLL_INTERVAL_S + 1)
 
     if killed.is_set():
-        return [], True
-    return _parse_bench_csv(stdout), False
+        return BenchRun([], True, proc.returncode)
+    # A crashed llama-bench prints no CSV, which would otherwise be recorded as
+    # a successful benchmark with zero rows.
+    return BenchRun(_parse_bench_csv(stdout), False, proc.returncode)
 
 
 def _run_llama_bench(
@@ -288,14 +303,23 @@ def _run_llama_bench(
             "-ctk",
             ",".join(ctk_values),
         ]
-        rows, killed = _run_one_bench(cmd, min_available_mb, min_gpu_free_mb, mem_probe, gpu_probe)
-        if killed:
+        result = _run_one_bench(cmd, min_available_mb, min_gpu_free_mb, mem_probe, gpu_probe)
+        if result.killed:
             console.print(
                 f"[yellow]Skipping ngl={ngl_val} - too little memory available. "
                 "Continuing sweep with remaining ngl values.[/yellow]"
             )
             continue
-        all_rows.extend(rows)
+        if result.failed:
+            console.print(
+                f"[yellow]Skipping ngl={ngl_val} - llama-bench exited with code "
+                f"{result.returncode}. Continuing sweep with remaining ngl values.[/yellow]"
+            )
+            continue
+        if not result.rows:
+            console.print(f"[yellow]Skipping ngl={ngl_val} - llama-bench produced no results.[/yellow]")
+            continue
+        all_rows.extend(result.rows)
     return all_rows
 
 
@@ -400,7 +424,9 @@ def run(
         for p in profiles_to_bench:
             console.print(f"\n[bold cyan]── Profile: {p.name} ──[/bold cyan]")
             flags_hash = _flags_hash(p.get_full_flags())
-            result = _run_single_benchmark(cfg, prompt, n_tokens, profile_name=p.name, flags_hash=flags_hash)
+            result = _run_single_benchmark(
+                cfg, prompt, n_tokens, profile_name=p.name, flags_hash=flags_hash, raw=raw
+            )
             results.append((p.name, result))
 
         # Comparison table
@@ -444,7 +470,7 @@ def _run_single_benchmark(
             r = httpx.get(health_url, timeout=2)
             if r.status_code == 200:
                 break
-        except (httpx.ConnectError, httpx.TimeoutException):
+        except httpx.HTTPError:
             pass
         time.sleep(1)
     else:
@@ -474,12 +500,26 @@ def _run_single_benchmark(
         console.print("[red]Connection refused[/red] - is the server running?")
         console.print("  Start it: [bold]uv run llm server start[/bold]")
         raise typer.Exit(1) from None
+    except httpx.TimeoutException:
+        console.print("[red]Timed out[/red] after 300s waiting for a completion.")
+        console.print("  The model may be too large for the current settings, or still loading.")
+        raise typer.Exit(1) from None
     except httpx.HTTPStatusError as e:
         console.print(f"[red]HTTP {e.response.status_code}[/red]: {e.response.text[:200]}")
         raise typer.Exit(1) from None
+    except httpx.HTTPError as e:
+        console.print(f"[red]Request failed[/red]: {e}")
+        raise typer.Exit(1) from None
 
     elapsed = time.perf_counter() - t_start
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        console.print(f"[red]Server returned invalid JSON[/red]: {resp.text[:200]}")
+        raise typer.Exit(1) from None
+    if not isinstance(data, dict):
+        console.print(f"[red]Unexpected response shape[/red]: {resp.text[:200]}")
+        raise typer.Exit(1)
     gtt_mb = gpu_used_mb()
 
     usage = data.get("usage", {})
@@ -511,7 +551,8 @@ def _run_single_benchmark(
 
     console.print(t)
 
-    reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    choices = data.get("choices") or [{}]
+    reply = choices[0].get("message", {}).get("content", "")
     if reply:
         console.print("\n[dim]── Generated output ──[/dim]")
         console.print(reply[:500] + ("..." if len(reply) > 500 else ""))
@@ -586,7 +627,9 @@ def _run_llama_bench_raw(cfg: object) -> None:
         "-t",
         str(cfg.server.n_threads),
     ]
-    subprocess.run(cmd, check=False)
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        console.print(f"[yellow]llama-bench exited with code {result.returncode}.[/yellow]")
 
 
 @app.command("tune")
