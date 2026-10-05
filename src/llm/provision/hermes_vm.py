@@ -511,7 +511,12 @@ class HermesVmManager(_BaseVmManager):
 
     def _configure_credentials(self, cfg: HermesSettings, all_cfg: Settings | None = None) -> None:
         """Write API keys and tokens into ~/.hermes/.env inside the VM."""
-        register_secrets(cfg.openrouter_key, cfg.telegram_token, cfg.github_token)
+        register_secrets(
+            cfg.openrouter_key,
+            cfg.telegram_token,
+            cfg.github_token,
+            cfg.mattermost_token,
+        )
 
         env_vars: dict[str, str] = {}
 
@@ -531,6 +536,11 @@ class HermesVmManager(_BaseVmManager):
         if cfg.has_github():
             env_vars["GITHUB_TOKEN"] = cfg.github_token
 
+        if cfg.mattermost_url:
+            env_vars["MATTERMOST_URL"] = cfg.mattermost_url
+        if cfg.mattermost_token:
+            env_vars["MATTERMOST_TOKEN"] = cfg.mattermost_token
+
         if not env_vars and (not cfg.has_local_llm() or all_cfg is None):
             console.print("  [yellow]⚠[/yellow] No credentials configured — skipping.")
             console.print("  Set openrouter_key, telegram_token, etc. in [hermes] config.toml")
@@ -545,6 +555,8 @@ class HermesVmManager(_BaseVmManager):
             console.print("  [green]✓[/green] Local LLM set as default provider")
         if cfg.has_telegram():
             console.print("  [green]✓[/green] Telegram gateway credentials configured")
+        if cfg.has_mattermost():
+            console.print("  [green]✓[/green] Mattermost credentials configured")
 
     def _setup_gateway_service(self) -> None:
         """Install the Hermes gateway as a system-level systemd service.

@@ -16,6 +16,8 @@ class TestHermesSettings:
         assert h.telegram_token == ""
         assert h.telegram_allowed_users == ""
         assert h.github_token == ""
+        assert h.mattermost_url == ""
+        assert h.mattermost_token == ""
 
     def test_custom_values(self):
         h = HermesSettings(
@@ -24,12 +26,16 @@ class TestHermesSettings:
             telegram_token="123:ABC",
             telegram_allowed_users="987654321",
             github_token="ghp_test",
+            mattermost_url="https://mm.example.com",
+            mattermost_token="mm-token-123",
         )
         assert h.provider == "openrouter"
         assert h.openrouter_key == "sk-or-v1-test"
         assert h.telegram_token == "123:ABC"
         assert h.telegram_allowed_users == "987654321"
         assert h.github_token == "ghp_test"
+        assert h.mattermost_url == "https://mm.example.com"
+        assert h.mattermost_token == "mm-token-123"
 
     def test_has_openrouter_false_by_default(self):
         assert HermesSettings().has_openrouter() is False
@@ -67,6 +73,29 @@ class TestHermesSettings:
 
     def test_has_github_false_whitespace_only(self):
         assert HermesSettings(github_token="   ").has_github() is False
+
+    def test_has_mattermost_false_by_default(self):
+        assert HermesSettings().has_mattermost() is False
+
+    def test_has_mattermost_true_with_url_and_token(self):
+        assert (
+            HermesSettings(
+                mattermost_url="https://mm.example.com", mattermost_token="mm-tok"
+            ).has_mattermost()
+            is True
+        )
+
+    def test_has_mattermost_false_missing_url(self):
+        assert HermesSettings(mattermost_url="", mattermost_token="mm-tok").has_mattermost() is False
+
+    def test_has_mattermost_false_missing_token(self):
+        assert (
+            HermesSettings(mattermost_url="https://mm.example.com", mattermost_token="").has_mattermost()
+            is False
+        )
+
+    def test_has_mattermost_false_whitespace_only(self):
+        assert HermesSettings(mattermost_url="   ", mattermost_token="   ").has_mattermost() is False
 
     def test_has_local_llm_true_by_default(self):
         assert HermesSettings().has_local_llm() is True
@@ -106,6 +135,8 @@ class TestHermesConfigTemplate:
         assert "telegram_token" in hermes
         assert "telegram_allowed_users" in hermes
         assert "github_token" in hermes
+        assert "mattermost_url" in hermes
+        assert "mattermost_token" in hermes
 
     def test_template_hermes_defaults_are_empty(self):
         template_path = Path(__file__).parent.parent / "src" / "llm" / "config_template.toml"
@@ -116,3 +147,5 @@ class TestHermesConfigTemplate:
         assert hermes["telegram_token"] == ""
         assert hermes["telegram_allowed_users"] == ""
         assert hermes["github_token"] == ""
+        assert hermes["mattermost_url"] == ""
+        assert hermes["mattermost_token"] == ""

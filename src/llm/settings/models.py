@@ -343,6 +343,12 @@ class HermesSettings(BaseModel):
     # GitHub PAT for Hermes GitHub MCP tool (needs repo + read:org scope).
     github_token: str = Field(default="", json_schema_extra=SECRET)
 
+    # Mattermost server URL (e.g. https://mattermost.example.com).
+    mattermost_url: str = ""
+
+    # Mattermost bot token or personal access token.
+    mattermost_token: str = Field(default="", json_schema_extra=SECRET)
+
     def has_openrouter(self) -> bool:
         """True when OpenRouter backend is selected with a key."""
         return self.provider == "openrouter" and bool(self.openrouter_key.strip())
@@ -358,6 +364,10 @@ class HermesSettings(BaseModel):
     def has_github(self) -> bool:
         """True when a GitHub PAT is configured."""
         return bool(self.github_token.strip())
+
+    def has_mattermost(self) -> bool:
+        """True when both a Mattermost server URL and token are configured."""
+        return bool(self.mattermost_url.strip()) and bool(self.mattermost_token.strip())
 
 
 class Settings(BaseModel):

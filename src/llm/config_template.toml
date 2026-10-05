@@ -285,3 +285,9 @@ telegram_allowed_users = ""
 # GitHub PAT for Hermes GitHub MCP tool (needs repo + read:org scope).
 # Can be the same as [github].token or a separate narrowly-scoped token.
 github_token = ""
+
+# Mattermost server URL (e.g. https://mattermost.example.com).
+mattermost_url = ""
+
+# Mattermost bot token or personal access token.
+mattermost_token = ""

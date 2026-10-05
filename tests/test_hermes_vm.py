@@ -20,6 +20,8 @@ def _make_cfg(
     telegram_token: str = "",
     telegram_allowed_users: str = "",
     github_token: str = "",
+    mattermost_url: str = "",
+    mattermost_token: str = "",
 ) -> HermesSettings:
     return HermesSettings(
         provider=provider,
@@ -27,6 +29,8 @@ def _make_cfg(
         telegram_token=telegram_token,
         telegram_allowed_users=telegram_allowed_users,
         github_token=github_token,
+        mattermost_url=mattermost_url,
+        mattermost_token=mattermost_token,
     )
 
 
@@ -100,6 +104,21 @@ class TestConfigureCredentials:
         """Verify GITHUB_TOKEN appears in env write when token is set."""
         HermesVmManager._configure_credentials(self._mgr(), _make_cfg(github_token="ghp_real"))
         assert self._written(mock_run) == "GITHUB_TOKEN=ghp_real\n"
+
+    @patch("llm.provision.hermes_vm.run")
+    def test_mattermost_credentials_written(self, mock_run):
+        """Verify MATTERMOST_URL and MATTERMOST_TOKEN appear in env write."""
+        HermesVmManager._configure_credentials(
+            self._mgr(),
+            _make_cfg(
+                mattermost_url="https://mm.example.com",
+                mattermost_token="mm-secret-token",
+            ),
+        )
+        assert self._written(mock_run).splitlines() == [
+            "MATTERMOST_URL=https://mm.example.com",
+            "MATTERMOST_TOKEN=mm-secret-token",
+        ]
 
     @patch("llm.provision.hermes_vm.run")
     def test_secrets_never_appear_in_the_command(self, mock_run):

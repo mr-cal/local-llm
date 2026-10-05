@@ -67,6 +67,7 @@ SECRET_PATHS = [
     ("hermes.openrouter_key", "SENTINEL-OPENROUTER"),
     ("hermes.telegram_token", "SENTINEL-TELEGRAM"),
     ("hermes.github_token", "SENTINEL-HERMES-GH"),
+    ("hermes.mattermost_token", "SENTINEL-MATTERMOST-TOKEN"),
 ]
 
 
