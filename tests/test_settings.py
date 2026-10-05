@@ -13,6 +13,7 @@ from llm.settings import (
     BuildConfig,
     BuildProfile,
     ClientSettings,
+    GitHubSandboxSettings,
     GitHubSettings,
     LxdSettings,
     ModelCost,
@@ -285,6 +286,27 @@ class TestGitHubSettings:
         g = GitHubSettings(git_pat="github_pat_abc123")
         assert g.git_pat == "github_pat_abc123"
 
+    def test_sandbox_defaults(self):
+        g = GitHubSettings()
+        assert g.sandbox.token == ""
+        assert g.sandbox.git_pat == ""
+        assert g.sandbox.git_username == "mr-cal-bot"
+        assert g.sandbox.git_email == "callahanlovesshopping@gmail.com"
+        assert g.sandbox.is_authenticated() is False
+
+    def test_custom_sandbox_credentials(self):
+        g = GitHubSettings(
+            sandbox=GitHubSandboxSettings(
+                token="ghp_bot_token",
+                git_pat="ghp_bot_pat",
+                git_username="mr-cal-bot",
+                git_email="bot@example.com",
+            )
+        )
+        assert g.sandbox.token == "ghp_bot_token"
+        assert g.sandbox.git_pat == "ghp_bot_pat"
+        assert g.sandbox.is_authenticated() is True
+
 
 class TestMountEntry:
     def test_derives_name_from_host_path(self):
@@ -311,15 +333,25 @@ class TestLxdSettings:
         lxd = LxdSettings()
         assert lxd.craft_dirs == []
         assert lxd.mounts == []
+        assert lxd.sandbox_mounts == []
 
     def test_with_mounts(self):
         mounts = [
             MountEntry(host="/home/user/.agents"),
             MountEntry(host="/home/user/dev"),
         ]
-        lxd = LxdSettings(craft_dirs=["~/dev/craft/snapcraft"], mounts=mounts)
+        sandbox_mounts = [
+            MountEntry(host="/home/user/dev/cal/chiptune"),
+        ]
+        lxd = LxdSettings(
+            craft_dirs=["~/dev/craft/snapcraft"],
+            mounts=mounts,
+            sandbox_mounts=sandbox_mounts,
+        )
         assert len(lxd.craft_dirs) == 1
         assert len(lxd.mounts) == 2
+        assert len(lxd.sandbox_mounts) == 1
+        assert lxd.sandbox_mounts[0].name == "chiptune"
 
 
 class TestSettings:

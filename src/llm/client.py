@@ -59,6 +59,7 @@ def _setup_container_client(
     container_name: str,
     *,
     recreate: bool = False,
+    sandbox: bool = False,
 ) -> None:
     """Create an LXD VM and fully configure it as a client."""
     from llm.provision.client_vm import (  # noqa: PLC0415
@@ -73,6 +74,7 @@ def _setup_container_client(
         LOCAL_LLM_VERSION,
         _cexec,
     )
+    from llm.render.client_configs import _build_opencode_config_for_sandbox  # noqa: PLC0415
 
     config_path = find_config()
     if not config_path.exists():
@@ -83,21 +85,24 @@ def _setup_container_client(
         raise typer.Exit(1)
 
     cfg = load_config()
-    mounts, _ = load_lxd_settings()
+    mounts, _ = load_lxd_settings(sandbox=sandbox)
 
-    console.print(f"\n[bold cyan]═══ Setting up container: {container_name} ═══[/bold cyan]\n")
+    title_suffix = " (sandbox)" if sandbox else ""
+    console.print(f"\n[bold cyan]═══ Setting up container: {container_name}{title_suffix} ═══[/bold cyan]\n")
 
     # Read TLS cert from host — prefer client.cert_path (set on client-only machines)
+    # In sandbox mode, local proxy cert is omitted to isolate internal network.
     cert_pem: str | None = None
-    cert_file = Path(cfg.client.cert_path or cfg.proxy.cert_path).expanduser()
-    if cert_file.exists():
-        cert_pem = cert_file.read_text()
-    else:
-        console.print(
-            f"[yellow]Warning:[/yellow] Cert not found at {cert_file}.\n"
-            "  Container setup will skip cert installation.\n"
-            "  Generate it first: [bold]uv run llm server setup[/bold]"
-        )
+    if not sandbox:
+        cert_file = Path(cfg.client.cert_path or cfg.proxy.cert_path).expanduser()
+        if cert_file.exists():
+            cert_pem = cert_file.read_text()
+        else:
+            console.print(
+                f"[yellow]Warning:[/yellow] Cert not found at {cert_file}.\n"
+                "  Container setup will skip cert installation.\n"
+                "  Generate it first: [bold]uv run llm server setup[/bold]"
+            )
 
     # Create and configure the VM (LXD, packages, mounts, pi)
     create_and_setup(
@@ -105,6 +110,7 @@ def _setup_container_client(
         mounts=mounts,
         recreate=recreate,
         cert_pem=cert_pem,
+        sandbox=sandbox,
     )
 
     # Set up opencode config inside the VM (separate from host bind mount)
@@ -112,7 +118,11 @@ def _setup_container_client(
     effective_gid = HOST_GID
 
     console.print("\n[bold]Setting up opencode config in container...[/bold]")
-    opencode_cfg = _build_opencode_config_for_container(cfg, "local-llm")
+    if sandbox:
+        opencode_cfg = _build_opencode_config_for_sandbox(cfg)
+    else:
+        opencode_cfg = _build_opencode_config_for_container(cfg, "local-llm")
+
     opencode_json = json.dumps(opencode_cfg, indent=2) + "\n"
     opencode_path = f"{CONTAINER_HOME}/.config/opencode/config.json"
     subprocess.run(
@@ -123,7 +133,17 @@ def _setup_container_client(
     console.print(f"  [green]✓[/green] Wrote opencode config to {opencode_path}")
 
     # Authenticate gh CLI inside the container
-    gh_token = cfg.github.token if cfg.github.is_authenticated() else ""
+    if sandbox:
+        gh_token = cfg.github.sandbox.token if cfg.github.sandbox.is_authenticated() else ""
+        git_user = cfg.github.sandbox.git_username
+        git_email = cfg.github.sandbox.git_email
+        git_pat = cfg.github.sandbox.git_pat
+    else:
+        gh_token = cfg.github.token if cfg.github.is_authenticated() else ""
+        git_user = cfg.github.git_username
+        git_email = cfg.github.git_email
+        git_pat = cfg.github.git_pat
+
     from llm.provision.client_vm import setup_gh_auth_in_container  # noqa: PLC0415
 
     setup_gh_auth_in_container(
@@ -136,9 +156,9 @@ def _setup_container_client(
     # Configure git identity for authoring and pushing commits
     setup_git_config_in_container(
         container_name,
-        cfg.github.git_username,
-        cfg.github.git_email,
-        cfg.github.git_pat,
+        git_user,
+        git_email,
+        git_pat,
         uid=effective_uid,
         gid=effective_gid,
     )
@@ -170,6 +190,13 @@ def setup(
         bool,
         typer.Option("--recreate", help="Delete and recreate the VM if it already exists."),
     ] = False,
+    sandbox: Annotated[
+        bool,
+        typer.Option(
+            "--sandbox",
+            help="Configure container as an isolated sandbox for untrusted/openrouter models.",
+        ),
+    ] = False,
 ) -> None:
     """Set up a client (either the current host or an LXD VM).
 
@@ -177,7 +204,7 @@ def setup(
     With --container: creates an LXD VM and configures it as a client.
     """
     if container:
-        _setup_container_client(container, recreate=recreate)
+        _setup_container_client(container, recreate=recreate, sandbox=sandbox)
     else:
         _setup_host_client()
 
@@ -289,7 +316,11 @@ def show() -> None:
 @app.command("list")
 def list_containers() -> None:
     """List all managed LXD containers with their kind, status and version."""
-    from llm.provision.exec import _list_managed_containers, get_container_kind  # noqa: PLC0415
+    from llm.provision.exec import (  # noqa: PLC0415
+        _list_managed_containers,
+        get_container_kind,
+        is_container_sandbox,
+    )
 
     managed = _list_managed_containers(kind=None)
     if not managed:
@@ -325,6 +356,8 @@ def list_containers() -> None:
 
         status_color = "green" if status == "Running" else "yellow"
         kind = get_container_kind(name)
+        if is_container_sandbox(name):
+            kind = f"{kind} [sandbox]"
         console.print(f"  [{status_color}]●[/{status_color}] {name}  {kind}  v{version}  ({status})")
 
 

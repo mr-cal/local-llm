@@ -75,9 +75,19 @@ def run_tests(
     craft_dirs: list[str],
     uid: int,
     gid: int,
+    sandbox: bool = False,
 ) -> None:
     """Run verification tests against the configured container."""
     console.print("\n-- Verification tests ----------------------------------------------------------")
+
+    target_host_dir = f"{HOST_HOME}/dev"
+    target_container_dir = f"{CONTAINER_HOME}/dev"
+    if sandbox and mounts:
+        for _, h_path, c_path in mounts:
+            if not c_path.endswith(".config/opencode") and not c_path.endswith(".config/helix"):
+                target_host_dir = h_path
+                target_container_dir = c_path
+                break
 
     def t_running() -> None:
         data = json.loads(run_capture(["lxc", "list", container, "--format=json"]).stdout)
@@ -115,13 +125,13 @@ def run_tests(
 
     def t_dev_mount_read() -> None:
         r = subprocess.run(
-            ["lxc", "exec", container, "--", "stat", "-c", "%a", f"{CONTAINER_HOME}/dev"],
+            ["lxc", "exec", container, "--", "stat", "-c", "%a", target_container_dir],
             capture_output=True,
             text=True,
             check=True,
         )
         mode = r.stdout.strip()
-        assert mode != "", "~/dev is not accessible in the container"
+        assert mode != "", f"{target_container_dir} is not accessible in the container"
 
     def t_dev_ownership() -> None:
         r = subprocess.run(
@@ -133,7 +143,7 @@ def run_tests(
                 "stat",
                 "-c",
                 "%U",
-                f"{CONTAINER_HOME}/dev",
+                target_container_dir,
             ],
             capture_output=True,
             text=True,
@@ -169,8 +179,8 @@ def run_tests(
         assert "provider" in config, f"'provider' key missing from opencode config: {config}"
 
     def t_write_transparency() -> None:
-        test_file = f"{HOST_HOME}/dev/.{container}_test_file"
-        test_path = f"{CONTAINER_HOME}/dev/.{container}_test_file"
+        test_file = os.path.join(target_host_dir, f".{container}_test_file")
+        test_path = f"{target_container_dir}/.{container}_test_file"
         subprocess.run(
             _cexec(container, uid, gid, "touch", test_path),
             check=True,
@@ -273,6 +283,8 @@ def run_tests(
         assert r.returncode == 0, f"pi not found in container: {r.stderr.strip()}"
 
     def t_omp_config() -> None:
+        if sandbox:
+            return
         r = subprocess.run(
             ["lxc", "exec", container, "--", "cat", _OMP_CONTAINER_CONFIG],
             capture_output=True,
@@ -283,6 +295,8 @@ def run_tests(
         assert "baseUrl" in r.stdout, f"baseUrl missing in models.yml: {r.stdout}"
 
     def t_pi_mount() -> None:
+        if sandbox:
+            return
         r = subprocess.run(
             ["lxc", "exec", container, "--", "stat", "-c", "%a", f"{CONTAINER_HOME}/.pi"],
             capture_output=True,

@@ -440,6 +440,34 @@ def _build_opencode_config_for_container(cfg: Settings, server_host: str) -> dic
     ).model_dump(mode="json", by_alias=True)
 
 
+def _build_opencode_config_for_sandbox(cfg: Settings) -> dict:  # type: ignore[type-arg]
+    """Build opencode config dict for a sandbox container pointing to OpenRouter."""
+    api_key = cfg.hermes.openrouter_key or ""
+    model_key = "auto"
+
+    return _OpencodeConfig(
+        model=f"openrouter/{model_key}",
+        provider={
+            "openrouter": _OpencodeProviderLocalLlm(
+                name="OpenRouter",
+                npm="@ai-sdk/openai-compatible",
+                api="https://openrouter.ai/api/v1",
+                options={"apiKey": api_key},
+                models={
+                    model_key: _OpencodeModel(
+                        name="OpenRouter Auto",
+                        limit=_OpencodeModelLimit(
+                            context=131072,
+                            input=131072,
+                            output=8192,
+                        ),
+                    )
+                },
+            )
+        },
+    ).model_dump(mode="json", by_alias=True)
+
+
 def _validate_opencode_config(cfg_dict: dict) -> list[str]:  # type: ignore[type-arg]
     """Validate opencode config dict against the live schema. Returns list of error strings."""
     import copy  # noqa: PLC0415

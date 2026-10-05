@@ -46,6 +46,11 @@ _DEFAULT_MOUNTS: list[tuple[str, str, str]] = [
     ("opencode-config", f"{HOST_HOME}/.config/opencode", f"{CONTAINER_HOME}/.config/opencode"),
 ]
 
+_DEFAULT_SANDBOX_MOUNTS: list[tuple[str, str, str]] = [
+    ("chiptune", f"{HOST_HOME}/dev/cal/chiptune", f"{CONTAINER_HOME}/dev/cal/chiptune"),
+    ("bmtracker", f"{HOST_HOME}/dev/cal/bmtracker", f"{CONTAINER_HOME}/dev/cal/bmtracker"),
+]
+
 LSP_CONFIG_PATH = f"{CONTAINER_HOME}/.copilot/lsp-config.json"
 
 PYLSP_LSP_CONFIG = {
@@ -61,6 +66,7 @@ PYLSP_LSP_CONFIG = {
 
 _MANAGED_TAG = "user.local-llm-managed"
 _KIND_TAG = "user.local-llm-kind"
+_SANDBOX_TAG = "user.local-llm-sandbox"
 
 # Managed VMs come in two flavours with incompatible provisioning. Dev client
 # VMs are refreshed by ``llm client refresh``; the Hermes agent VM must not be,
@@ -248,6 +254,12 @@ def get_container_kind(container: str) -> str:
         if inst.get("name") == container:
             return _container_kind(inst)
     return KIND_CLIENT
+
+
+def is_container_sandbox(container: str) -> bool:
+    """Return True if *container* is tagged as a sandbox client."""
+    r = run_capture(["lxc", "config", "get", container, _SANDBOX_TAG])
+    return r.returncode == 0 and r.stdout.strip().lower() == "true"
 
 
 def _list_managed_containers(kind: str | None = KIND_CLIENT) -> list[str]:

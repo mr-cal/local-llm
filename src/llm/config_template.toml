@@ -233,6 +233,14 @@ git_pat = ""
 git_username = "mr-cal-bot"
 git_email = "callahanlovesshopping@gmail.com"
 
+# Credentials dedicated to sandbox containers created with `llm client setup --sandbox`.
+# Keeps personal credentials safe when using untrusted models.
+[github.sandbox]
+token = ""
+git_pat = ""
+git_username = "mr-cal-bot"
+git_email = "callahanlovesshopping@gmail.com"
+
 
 
 # ── LXD ───────────────────────────────────────────────────────────────────────
@@ -255,6 +263,14 @@ host = "~/dev"
 [[lxd.mounts]]
 name = "opencode-config"
 host = "~/.config/opencode"
+
+# Bind mounts dedicated to sandbox containers (`llm client setup --sandbox`).
+# Broad ~/dev, ~/.agents, ~/.github, and ~/.config/opencode are omitted.
+[[lxd.sandbox_mounts]]
+host = "~/dev/cal/chiptune"
+
+[[lxd.sandbox_mounts]]
+host = "~/dev/cal/bmtracker"
 
 
 

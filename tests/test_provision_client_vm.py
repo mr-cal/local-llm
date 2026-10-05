@@ -723,3 +723,121 @@ class TestRefreshExcludesHermes:
         client_vm.refresh_containers()
 
         assert listed.call_args.kwargs["kind"] == client_vm.KIND_CLIENT
+
+
+# ── Sandbox tests ────────────────────────────────────────────────────────────
+
+
+class TestSandboxProvisioning:
+    """Tests for sandbox container creation and settings."""
+
+    def test_load_lxd_settings_default_sandbox(self, monkeypatch):
+        monkeypatch.setattr("llm.provision.client_vm.try_load_lxd", lambda: None)
+        from llm.provision.client_vm import load_lxd_settings
+        from llm.provision.exec import _DEFAULT_MOUNTS, _DEFAULT_SANDBOX_MOUNTS
+
+        mounts, _ = load_lxd_settings(sandbox=True)
+        assert mounts == _DEFAULT_SANDBOX_MOUNTS
+        assert mounts != _DEFAULT_MOUNTS
+
+    def test_load_lxd_settings_configured_sandbox(self, monkeypatch):
+        from llm.provision.client_vm import load_lxd_settings
+        from llm.settings.models import LxdSettings, MountEntry
+
+        fake_lxd = LxdSettings(
+            mounts=[MountEntry(host="/home/user/dev")],
+            sandbox_mounts=[MountEntry(host="/home/user/dev/cal/chiptune")],
+        )
+        monkeypatch.setattr("llm.provision.client_vm.try_load_lxd", lambda: fake_lxd)
+
+        mounts, _ = load_lxd_settings(sandbox=True)
+        assert len(mounts) == 1
+        assert mounts[0][0] == "chiptune"
+
+    def test_lxd_vm_manager_sandbox_init(self):
+        from llm.provision.client_vm import LxdVmManager
+        from llm.provision.exec import _DEFAULT_SANDBOX_MOUNTS
+
+        mgr = LxdVmManager("sandbox-vm", sandbox=True)
+        assert mgr.sandbox is True
+        assert mgr.mounts == list(_DEFAULT_SANDBOX_MOUNTS)
+
+    def test_create_and_setup_sandbox_tags_and_skips_pi(self, monkeypatch):
+        from llm.provision.client_vm import LxdVmManager
+        from llm.provision.exec import _SANDBOX_TAG
+
+        calls: list[list] = []
+
+        def _fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            p = MagicMock()
+            p.returncode = 0
+            p.stdout = ""
+            return p
+
+        monkeypatch.setattr("llm.provision.client_vm.run", _fake_run)
+        monkeypatch.setattr("llm.provision.client_vm.run_with_retry", _fake_run)
+        monkeypatch.setattr("llm.provision.client_vm.container_exists", lambda c: False)
+        monkeypatch.setattr(LxdVmManager, "create_container", lambda self: None)
+        monkeypatch.setattr(LxdVmManager, "_add_mounts", lambda self, m, **k: None)
+        monkeypatch.setattr(LxdVmManager, "_install_packages", lambda self, **k: None)
+        monkeypatch.setattr(LxdVmManager, "_install_pylsp", lambda self, **k: None)
+        monkeypatch.setattr(LxdVmManager, "_setup_nested_lxd", lambda self, **k: None)
+        monkeypatch.setattr(LxdVmManager, "_tag_as_managed", lambda self: None)
+        monkeypatch.setattr(LxdVmManager, "run_tests", lambda self: None)
+
+        pi_called = False
+
+        def _fake_setup_pi(self, cert_pem=None):
+            nonlocal pi_called
+            pi_called = True
+
+        monkeypatch.setattr(LxdVmManager, "setup_pi", _fake_setup_pi)
+
+        mgr = LxdVmManager("craft-sandbox", sandbox=True)
+        mgr.create_and_setup()
+
+        assert pi_called is False, "setup_pi should not be called for sandbox container"
+        sandbox_tag_calls = [
+            c
+            for c in calls
+            if len(c) >= 5
+            and c[0] == "lxc"
+            and c[1] == "config"
+            and c[2] == "set"
+            and f"{_SANDBOX_TAG}=true" in c[4]
+        ]
+        assert sandbox_tag_calls, f"Expected container to be tagged with {_SANDBOX_TAG}=true"
+
+    def test_refresh_sandbox_container_uses_sandbox_credentials(self, monkeypatch):
+        from llm.provision import client_vm
+        from llm.settings.models import GitHubSandboxSettings, GitHubSettings, Settings
+
+        cfg = Settings(
+            github=GitHubSettings(
+                token="personal-token",
+                git_pat="personal-pat",
+                sandbox=GitHubSandboxSettings(
+                    token="bot-token",
+                    git_pat="bot-pat",
+                    git_username="mr-cal-bot",
+                    git_email="bot@example.com",
+                ),
+            )
+        )
+        monkeypatch.setattr(client_vm, "container_exists", MagicMock(return_value=True))
+        monkeypatch.setattr(client_vm, "get_container_kind", MagicMock(return_value=client_vm.KIND_CLIENT))
+        monkeypatch.setattr(client_vm, "is_container_sandbox", MagicMock(return_value=True))
+        monkeypatch.setattr(client_vm, "load_config", MagicMock(return_value=cfg))
+        mock_refresh = MagicMock()
+        monkeypatch.setattr(client_vm.LxdVmManager, "_refresh", mock_refresh)
+
+        client_vm.refresh_containers("craft-sandbox", cert_pem="cert-data")
+
+        mock_refresh.assert_called_once_with(
+            cert_pem=None,
+            gh_token="bot-token",
+            git_username="mr-cal-bot",
+            git_email="bot@example.com",
+            git_pat="bot-pat",
+        )

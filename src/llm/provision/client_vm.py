@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -12,7 +13,9 @@ from llm.core.console import console
 from llm.provision import checks
 from llm.provision.exec import (
     _DEFAULT_MOUNTS,
+    _DEFAULT_SANDBOX_MOUNTS,
     _MANAGED_TAG,
+    _SANDBOX_TAG,
     CONTAINER_GID,
     CONTAINER_HOME,
     CONTAINER_UID,
@@ -29,6 +32,7 @@ from llm.provision.exec import (
     add_hosts_entry,
     container_exists,
     get_container_kind,
+    is_container_sandbox,
     mkdir_p,
     run,
     run_with_retry,
@@ -75,9 +79,14 @@ class LxdVmManager(_BaseVmManager):
         craft_dirs: list[str] | None = None,
         uid: int = HOST_UID,
         gid: int = HOST_GID,
+        sandbox: bool = False,
     ) -> None:
         super().__init__(container, uid=uid, gid=gid)
-        self.mounts = mounts or list(_DEFAULT_MOUNTS)
+        self.sandbox = sandbox
+        if mounts is not None:
+            self.mounts = mounts
+        else:
+            self.mounts = list(_DEFAULT_SANDBOX_MOUNTS if sandbox else _DEFAULT_MOUNTS)
         self.craft_dirs = craft_dirs or []
 
     # ── Container lifecycle ───────────────────────────────────────────────
@@ -468,13 +477,13 @@ class LxdVmManager(_BaseVmManager):
 
         console.print(f"Creating VM: {self.container}")
 
-        # Prepend a helix config bind-mount if the directory exists on the host.
+        # Prepend a helix config bind-mount if the directory exists on the host (non-sandbox only).
         helix_host = os.path.join(HOST_HOME, ".config", "helix")
         helix_container = f"{CONTAINER_HOME}/.config/helix"
         all_mounts = list(self.mounts)
-        if os.path.isdir(helix_host):
+        if not self.sandbox and os.path.isdir(helix_host):
             all_mounts = [("helix-config", helix_host, helix_container), *all_mounts]
-        else:
+        elif not self.sandbox:
             console.print("  [dim]~/.config/helix not found on host - skipping helix config mount[/dim]")
 
         self.create_container()
@@ -483,8 +492,13 @@ class LxdVmManager(_BaseVmManager):
         self._install_pylsp(step=SetupStep.PYLSP, total_steps=4, uid=HOST_UID, gid=HOST_GID)
         self._setup_nested_lxd(step=SetupStep.NESTED_LXD, total_steps=4, uid=HOST_UID)
 
-        self.setup_pi(cert_pem=cert_pem)
+        if not self.sandbox:
+            self.setup_pi(cert_pem=cert_pem)
+        else:
+            console.print("  [dim]Sandbox container: omitting local LLM proxy setup & certs[/dim]")
         self._tag_as_managed()
+        if self.sandbox:
+            run(["lxc", "config", "set", self.container, f"{_SANDBOX_TAG}=true"])
 
         self.run_tests()
 
@@ -538,7 +552,9 @@ class LxdVmManager(_BaseVmManager):
 
     def run_tests(self) -> None:
         """Run verification tests against the configured container."""
-        checks.run_tests(self.container, self.mounts, self.craft_dirs, self.uid, self.gid)
+        checks.run_tests(
+            self.container, self.mounts, self.craft_dirs, self.uid, self.gid, sandbox=self.sandbox
+        )
 
     def run_craft_setup_tests(self) -> None:
         """Run craft setup verification tests."""
@@ -707,8 +723,9 @@ class LxdVmManager(_BaseVmManager):
         )
 
         # 4. pi + oh-my-pi config
-        self.setup_pi(cert_pem=cert_pem)
-        _refresh_omp_config(self.container, self.uid, self.gid)
+        if not self.sandbox:
+            self.setup_pi(cert_pem=cert_pem)
+            _refresh_omp_config(self.container, self.uid, self.gid)
 
         # 5. gh auth + git identity
         self.setup_gh_auth(gh_token, effective_uid=self.uid, effective_gid=self.gid)
@@ -820,16 +837,29 @@ def _refresh_omp_config(container: str, uid: int, gid: int) -> None:
 # ── Load settings ────────────────────────────────────────────────────────────
 
 
-def load_lxd_settings() -> tuple[list[tuple[str, str, str]], list[str]]:
+def load_lxd_settings(sandbox: bool = False) -> tuple[list[tuple[str, str, str]], list[str]]:
     """Load mounts and craft_dirs from config.toml [lxd], falling back to defaults."""
     lxd = try_load_lxd()
     if lxd is None:
-        return _DEFAULT_MOUNTS, []
-    mounts = (
-        [(m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser())) for m in lxd.mounts]
-        if lxd.mounts
-        else _DEFAULT_MOUNTS
-    )
+        return (_DEFAULT_SANDBOX_MOUNTS if sandbox else _DEFAULT_MOUNTS), []
+    if sandbox:
+        mounts = (
+            [
+                (m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser()))
+                for m in lxd.sandbox_mounts
+            ]
+            if lxd.sandbox_mounts
+            else _DEFAULT_SANDBOX_MOUNTS
+        )
+    else:
+        mounts = (
+            [
+                (m.name, str(Path(m.host).expanduser()), str(Path(m.container).expanduser()))
+                for m in lxd.mounts
+            ]
+            if lxd.mounts
+            else _DEFAULT_MOUNTS
+        )
     return mounts, [str(Path(d).expanduser()) for d in lxd.craft_dirs]
 
 
@@ -885,6 +915,7 @@ def create_and_setup(
     mounts: list[tuple[str, str, str]],
     recreate: bool = False,
     cert_pem: str | None = None,
+    sandbox: bool = False,
 ) -> None:
     """Create and configure an LXD VM for local LLM development.
 
@@ -897,8 +928,9 @@ def create_and_setup(
         mounts: List of (name, host_path, container_path) tuples.
         recreate: If True, delete an existing VM before creating a new one.
         cert_pem: Optional PEM certificate string for the nginx TLS proxy.
+        sandbox: If True, configure as an isolated sandbox container.
     """
-    mgr = LxdVmManager(container_name, mounts=mounts)
+    mgr = LxdVmManager(container_name, mounts=mounts, sandbox=sandbox)
     mgr.create_and_setup(recreate=recreate, cert_pem=cert_pem)
 
 
@@ -937,6 +969,10 @@ def refresh_containers(
         RuntimeError: If a named VM doesn't exist, is not a dev client, or if
             no managed client VMs are found.
     """
+    cfg = None
+    with contextlib.suppress(Exception):
+        cfg = load_config()
+
     if container_name is not None:
         if not container_exists(container_name):
             raise RuntimeError(f"'{container_name}' does not exist.")
@@ -945,7 +981,14 @@ def refresh_containers(
                 f"'{container_name}' is the Hermes agent VM, not a dev client. "
                 "Run 'llm hermes setup' to update it."
             )
-        mgr = LxdVmManager(container_name, uid=HOST_UID, gid=HOST_GID)
+        is_sandbox = is_container_sandbox(container_name)
+        if is_sandbox and cfg is not None:
+            gh_token = cfg.github.sandbox.token
+            git_username = cfg.github.sandbox.git_username
+            git_email = cfg.github.sandbox.git_email
+            git_pat = cfg.github.sandbox.git_pat
+            cert_pem = None
+        mgr = LxdVmManager(container_name, uid=HOST_UID, gid=HOST_GID, sandbox=is_sandbox)
         mgr._refresh(
             cert_pem=cert_pem,
             gh_token=gh_token,
@@ -960,13 +1003,25 @@ def refresh_containers(
 
         console.print(f"Found [bold]{len(managed)}[/bold] managed VM(s): " + ", ".join(managed))
         for container in managed:
-            mgr = LxdVmManager(container, uid=HOST_UID, gid=HOST_GID)
+            is_sandbox = is_container_sandbox(container)
+            c_gh_token = gh_token
+            c_git_username = git_username
+            c_git_email = git_email
+            c_git_pat = git_pat
+            c_cert_pem = cert_pem
+            if is_sandbox and cfg is not None:
+                c_gh_token = cfg.github.sandbox.token
+                c_git_username = cfg.github.sandbox.git_username
+                c_git_email = cfg.github.sandbox.git_email
+                c_git_pat = cfg.github.sandbox.git_pat
+                c_cert_pem = None
+            mgr = LxdVmManager(container, uid=HOST_UID, gid=HOST_GID, sandbox=is_sandbox)
             mgr._refresh(
-                cert_pem=cert_pem,
-                gh_token=gh_token,
-                git_username=git_username,
-                git_email=git_email,
-                git_pat=git_pat,
+                cert_pem=c_cert_pem,
+                gh_token=c_gh_token,
+                git_username=c_git_username,
+                git_email=c_git_email,
+                git_pat=c_git_pat,
             )
 
         console.print(f"\n[green]✓[/green] All {len(managed)} VM(s) refreshed.")

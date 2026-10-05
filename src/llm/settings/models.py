@@ -273,6 +273,21 @@ class ProxySettings(BaseModel):
         return self
 
 
+class GitHubSandboxSettings(BaseModel):
+    """GitHub credentials for sandbox containers."""
+
+    # Bot PAT for gh CLI auth
+    token: str = Field(default="", json_schema_extra=SECRET)
+    # Separate PAT used for git push (HTTPS credential)
+    git_pat: str = Field(default="", json_schema_extra=SECRET)
+    git_username: str = "mr-cal-bot"
+    git_email: str = "callahanlovesshopping@gmail.com"
+
+    def is_authenticated(self) -> bool:
+        """True when a non-empty token is configured."""
+        return bool(self.token.strip())
+
+
 class GitHubSettings(BaseModel):
     """GitHub CLI (gh) authentication and git identity settings."""
 
@@ -282,6 +297,9 @@ class GitHubSettings(BaseModel):
     git_pat: str = Field(default="", json_schema_extra=SECRET)
     git_username: str = "mr-cal-bot"
     git_email: str = "callahanlovesshopping@gmail.com"
+
+    # Credentials dedicated to sandbox containers (e.g. bot account)
+    sandbox: GitHubSandboxSettings = Field(default_factory=GitHubSandboxSettings)
 
     def is_authenticated(self) -> bool:
         """True when a non-empty token is configured."""
@@ -321,6 +339,7 @@ class MountEntry(BaseModel):
 class LxdSettings(BaseModel):
     craft_dirs: list[str] = Field(default_factory=list)
     mounts: list[MountEntry] = Field(default_factory=list)
+    sandbox_mounts: list[MountEntry] = Field(default_factory=list)
 
 
 class HermesSettings(BaseModel):
