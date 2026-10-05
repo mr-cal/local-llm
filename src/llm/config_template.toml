@@ -291,3 +291,6 @@ mattermost_url = ""
 
 # Mattermost bot token or personal access token.
 mattermost_token = ""
+
+# Mattermost default team name (e.g. canonical).
+mattermost_team = "canonical"

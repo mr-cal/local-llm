@@ -18,6 +18,7 @@ class TestHermesSettings:
         assert h.github_token == ""
         assert h.mattermost_url == ""
         assert h.mattermost_token == ""
+        assert h.mattermost_team == "canonical"
 
     def test_custom_values(self):
         h = HermesSettings(
@@ -28,6 +29,7 @@ class TestHermesSettings:
             github_token="ghp_test",
             mattermost_url="https://mm.example.com",
             mattermost_token="mm-token-123",
+            mattermost_team="my-team",
         )
         assert h.provider == "openrouter"
         assert h.openrouter_key == "sk-or-v1-test"
@@ -36,6 +38,7 @@ class TestHermesSettings:
         assert h.github_token == "ghp_test"
         assert h.mattermost_url == "https://mm.example.com"
         assert h.mattermost_token == "mm-token-123"
+        assert h.mattermost_team == "my-team"
 
     def test_has_openrouter_false_by_default(self):
         assert HermesSettings().has_openrouter() is False
@@ -137,6 +140,7 @@ class TestHermesConfigTemplate:
         assert "github_token" in hermes
         assert "mattermost_url" in hermes
         assert "mattermost_token" in hermes
+        assert "mattermost_team" in hermes
 
     def test_template_hermes_defaults_are_empty(self):
         template_path = Path(__file__).parent.parent / "src" / "llm" / "config_template.toml"

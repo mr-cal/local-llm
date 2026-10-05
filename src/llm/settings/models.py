@@ -349,6 +349,9 @@ class HermesSettings(BaseModel):
     # Mattermost bot token or personal access token.
     mattermost_token: str = Field(default="", json_schema_extra=SECRET)
 
+    # Mattermost default team name (e.g. canonical).
+    mattermost_team: str = "canonical"
+
     def has_openrouter(self) -> bool:
         """True when OpenRouter backend is selected with a key."""
         return self.provider == "openrouter" and bool(self.openrouter_key.strip())

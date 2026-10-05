@@ -22,6 +22,7 @@ def _make_cfg(
     github_token: str = "",
     mattermost_url: str = "",
     mattermost_token: str = "",
+    mattermost_team: str = "canonical",
 ) -> HermesSettings:
     return HermesSettings(
         provider=provider,
@@ -31,6 +32,7 @@ def _make_cfg(
         github_token=github_token,
         mattermost_url=mattermost_url,
         mattermost_token=mattermost_token,
+        mattermost_team=mattermost_team,
     )
 
 
@@ -107,18 +109,36 @@ class TestConfigureCredentials:
 
     @patch("llm.provision.hermes_vm.run")
     def test_mattermost_credentials_written(self, mock_run):
-        """Verify MATTERMOST_URL and MATTERMOST_TOKEN appear in env write."""
+        """Verify MATTERMOST_URL, TOKEN, TEAM in env and MCP server in config.yaml."""
         HermesVmManager._configure_credentials(
             self._mgr(),
             _make_cfg(
                 mattermost_url="https://mm.example.com",
                 mattermost_token="mm-secret-token",
+                mattermost_team="custom-team",
             ),
         )
-        assert self._written(mock_run).splitlines() == [
+        assert mock_run.call_count == 2
+        # First call: write env vars
+        env_content = mock_run.call_args_list[0].kwargs["input"]
+        assert env_content.splitlines() == [
             "MATTERMOST_URL=https://mm.example.com",
             "MATTERMOST_TOKEN=mm-secret-token",
+            "MATTERMOST_TEAM=custom-team",
         ]
+        # Second call: configure MCP in config.yaml
+        mcp_cmd = mock_run.call_args_list[1].args[0]
+        mcp_json = json.loads(mcp_cmd[-1])
+        assert mcp_json["command"] == "uvx"
+        assert mcp_json["args"] == [
+            "--from",
+            "mcp-server-mattermost==0.6.1",
+            "mcp-server-mattermost",
+        ]
+        assert mcp_json["env"]["MATTERMOST_URL"] == "https://mm.example.com"
+        assert mcp_json["env"]["MATTERMOST_TOKEN"] == "mm-secret-token"
+        assert mcp_json["env"]["MATTERMOST_TEAM"] == "custom-team"
+        assert "list_public_channels" in mcp_json["tools"]["include"]
 
     @patch("llm.provision.hermes_vm.run")
     def test_secrets_never_appear_in_the_command(self, mock_run):
@@ -326,6 +346,12 @@ class TestInstallCaBundle:
 
 class TestGetStatus:
     """Tests for HermesVmManager.get_status()."""
+
+    @pytest.fixture(autouse=True)
+    def _default_config(self, monkeypatch):
+        from llm.settings import Settings
+
+        monkeypatch.setattr("llm.provision.hermes_vm.load_config", lambda: Settings())
 
     def _build_mgr(self):
         """Create a HermesVmManager with __init__ bypassed."""
@@ -560,9 +586,97 @@ class TestGetStatus:
         mock_cexec.side_effect = cexec_side_effect
 
         result = mgr.get_status()
-        expected_keys = {"vm", "gateway", "version", "uptime", "provider", "credentials_ok"}
+        expected_keys = {
+            "vm",
+            "gateway",
+            "version",
+            "uptime",
+            "provider",
+            "credentials_ok",
+            "mattermost",
+        }
         assert set(result.keys()) == expected_keys
         assert all(isinstance(v, str) for v in result.values())
+
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm._cexec")
+    def test_mattermost_status_connected(self, mock_cexec, mock_run, monkeypatch):
+        """When Mattermost is configured and curl succeeds, status is connected."""
+        from llm.settings import Settings
+
+        mm_cfg = Settings(
+            hermes=HermesSettings(
+                mattermost_url="https://mm.example.com",
+                mattermost_token="mm-tok",
+            )
+        )
+        monkeypatch.setattr("llm.provision.hermes_vm.load_config", lambda: mm_cfg)
+
+        mgr = self._build_mgr()
+
+        def make_mock(stdout="", returncode=0):
+            m = MagicMock()
+            m.stdout = stdout
+            m.returncode = returncode
+            return m
+
+        mock_run.side_effect = [
+            make_mock(json.dumps([{"status": "Running"}])),
+            make_mock("active\n", 0),
+            make_mock("ActiveEnterTimestampEpoch=1700000000\n"),
+            make_mock("hermes 3.0.0\n"),
+            make_mock("openrouter\n"),
+            make_mock("", 0),  # openrouter probe
+            make_mock("", 0),  # mattermost probe succeeds
+        ]
+
+        def cexec_side_effect(*args):
+            return list(args)
+
+        mock_cexec.side_effect = cexec_side_effect
+
+        result = mgr.get_status()
+        assert result["mattermost"] == "connected"
+
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    @patch("llm.provision.hermes_vm._cexec")
+    def test_mattermost_status_unreachable(self, mock_cexec, mock_run, monkeypatch):
+        """When Mattermost curl returns non-zero, status is unreachable."""
+        from llm.settings import Settings
+
+        mm_cfg = Settings(
+            hermes=HermesSettings(
+                mattermost_url="https://mm.example.com",
+                mattermost_token="mm-tok",
+            )
+        )
+        monkeypatch.setattr("llm.provision.hermes_vm.load_config", lambda: mm_cfg)
+
+        mgr = self._build_mgr()
+
+        def make_mock(stdout="", returncode=0):
+            m = MagicMock()
+            m.stdout = stdout
+            m.returncode = returncode
+            return m
+
+        mock_run.side_effect = [
+            make_mock(json.dumps([{"status": "Running"}])),
+            make_mock("active\n", 0),
+            make_mock("ActiveEnterTimestampEpoch=1700000000\n"),
+            make_mock("hermes 3.0.0\n"),
+            make_mock("openrouter\n"),
+            make_mock("", 0),  # openrouter probe
+            make_mock("", 1),  # mattermost probe fails
+        ]
+
+        def cexec_side_effect(*args):
+            return list(args)
+
+        mock_cexec.side_effect = cexec_side_effect
+
+        result = mgr.get_status()
+        assert result["mattermost"] == "unreachable"
 
 
 # ── Formatting helpers ─────────────────────────────────────────────────────────

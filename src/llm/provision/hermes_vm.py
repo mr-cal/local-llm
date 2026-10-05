@@ -54,6 +54,26 @@ _PREREQ_PACKAGES = [
     "libatomic1",
 ]
 
+# Pinned version for mcp-server-mattermost. Updates are performed intentionally
+# by maintainers after auditing releases and security advisories.
+MATTERMOST_MCP_VERSION = "0.6.1"
+
+# Read-only tool whitelist for Mattermost MCP integration.
+# Restricting to read/search operations prevents unauthorized edits or mutations.
+READ_ONLY_MATTERMOST_TOOLS = [
+    "list_public_channels",
+    "list_my_channels",
+    "get_channel",
+    "get_channel_by_name",
+    "get_channel_messages",
+    "get_thread",
+    "search_messages",
+    "get_team",
+    "list_teams",
+    "get_me",
+    "get_user",
+]
+
 
 def _merge_env_file(existing: str, updates: dict[str, str]) -> str:
     """Merge *updates* into the contents of a KEY=VALUE env file.
@@ -210,12 +230,19 @@ class HermesVmManager(_BaseVmManager):
 
         console.print(f"\n  [green]✓[/green] {self.container} refresh complete")
 
-    def get_status(self) -> dict[str, str]:
+    def get_status(self, all_cfg: Settings | None = None) -> dict[str, str]:
         """Return VM and gateway service status.
 
         Returns a dict with keys ``vm``, ``gateway``, ``version``,
-        ``uptime`` (seconds since gateway started), and ``credentials_ok``.
+        ``uptime`` (seconds since gateway started), ``credentials_ok``,
+        and ``mattermost``.
         """
+        if all_cfg is None:
+            try:
+                all_cfg = load_config()
+            except Exception:
+                all_cfg = None
+
         # VM status
         r = subprocess.run(
             ["lxc", "list", self.container, "--format=json"],
@@ -344,6 +371,24 @@ class HermesVmManager(_BaseVmManager):
                     )
                     credentials_ok = r6.returncode == 0
 
+        mattermost_status = "none"
+        if vm_status == "Running" and all_cfg is not None and all_cfg.hermes.has_mattermost():
+            r_mm = subprocess.run(
+                _cexec(
+                    self.container,
+                    self.uid,
+                    self.gid,
+                    "curl",
+                    "-fsSL",
+                    "-H",
+                    f"Authorization: Bearer {all_cfg.hermes.mattermost_token}",
+                    f"{all_cfg.hermes.mattermost_url.rstrip('/')}/api/v4/users/me",
+                ),
+                capture_output=True,
+                text=True,
+            )
+            mattermost_status = "connected" if r_mm.returncode == 0 else "unreachable"
+
         return {
             "vm": vm_status,
             "gateway": gateway_status,
@@ -351,6 +396,7 @@ class HermesVmManager(_BaseVmManager):
             "uptime": str(uptime_seconds),
             "provider": provider,
             "credentials_ok": str(credentials_ok),
+            "mattermost": mattermost_status,
         }
 
     # ── Internal steps ────────────────────────────────────────────────────
@@ -540,6 +586,8 @@ class HermesVmManager(_BaseVmManager):
             env_vars["MATTERMOST_URL"] = cfg.mattermost_url
         if cfg.mattermost_token:
             env_vars["MATTERMOST_TOKEN"] = cfg.mattermost_token
+        if cfg.has_mattermost() and cfg.mattermost_team:
+            env_vars["MATTERMOST_TEAM"] = cfg.mattermost_team
 
         if not env_vars and (not cfg.has_local_llm() or all_cfg is None):
             console.print("  [yellow]⚠[/yellow] No credentials configured — skipping.")
@@ -557,6 +605,66 @@ class HermesVmManager(_BaseVmManager):
             console.print("  [green]✓[/green] Telegram gateway credentials configured")
         if cfg.has_mattermost():
             console.print("  [green]✓[/green] Mattermost credentials configured")
+            self._configure_mattermost_mcp(cfg)
+
+    def _configure_mattermost_mcp(self, cfg: HermesSettings) -> None:
+        """Register the Mattermost MCP server in ~/.hermes/config.yaml."""
+        if not cfg.has_mattermost():
+            return
+
+        mcp_config = {
+            "command": "uvx",
+            "args": [
+                "--from",
+                f"mcp-server-mattermost=={MATTERMOST_MCP_VERSION}",
+                "mcp-server-mattermost",
+            ],
+            "env": {
+                "MATTERMOST_URL": cfg.mattermost_url,
+                "MATTERMOST_TOKEN": cfg.mattermost_token,
+                "MATTERMOST_TEAM": cfg.mattermost_team,
+            },
+            "tools": {
+                "include": READ_ONLY_MATTERMOST_TOOLS,
+            },
+        }
+
+        venv_python = f"{CONTAINER_HOME}/.hermes/hermes-agent/venv/bin/python"
+        config_path = f"{CONTAINER_HOME}/.hermes/config.yaml"
+        update_script = (
+            "import sys, json\n"
+            "from pathlib import Path\n"
+            "try:\n"
+            "    from ruamel.yaml import YAML\n"
+            "    yaml = YAML()\n"
+            "    yaml.preserve_quotes = True\n"
+            "except ImportError:\n"
+            "    import yaml\n"
+            "config_file = Path(sys.argv[1])\n"
+            "data = {}\n"
+            "if config_file.exists() and config_file.stat().st_size > 0:\n"
+            "    with open(config_file) as f:\n"
+            "        data = yaml.load(f) or {}\n"
+            "servers = data.setdefault('mcp_servers', {})\n"
+            "servers['mattermost'] = json.loads(sys.argv[2])\n"
+            "with open(config_file, 'w') as f:\n"
+            "    yaml.dump(data, f)\n"
+        )
+
+        run(
+            _cexec(
+                self.container,
+                self.uid,
+                self.gid,
+                venv_python,
+                "-c",
+                update_script,
+                config_path,
+                json.dumps(mcp_config),
+            ),
+            desc="configure mattermost mcp in config.yaml",
+        )
+        console.print("  [green]✓[/green] Mattermost MCP server registered in config.yaml")
 
     def _setup_gateway_service(self) -> None:
         """Install the Hermes gateway as a system-level systemd service.

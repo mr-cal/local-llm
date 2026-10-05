@@ -129,3 +129,8 @@ def status() -> None:
     else:
         label, color = _format_credentials(ok)
         console.print(f"  [{color}]●[/{color}] Credentials: {label}")
+
+    mm_status = s.get("mattermost", "none")
+    if mm_status != "none":
+        mm_color = "green" if mm_status == "connected" else "yellow"
+        console.print(f"  [{mm_color}]●[/{mm_color}] Mattermost:  {mm_status}")
