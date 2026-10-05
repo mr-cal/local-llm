@@ -371,6 +371,12 @@ class HermesSettings(BaseModel):
     # Mattermost default team name (e.g. canonical).
     mattermost_team: str = "canonical"
 
+    # Maximum concurrent sessions for the gateway (set to 1 for single-connection servers).
+    max_concurrent_sessions: int = Field(default=1, ge=1)
+
+    # Maximum concurrent child subagents for delegation (set to 1 for single-connection servers).
+    max_concurrent_children: int = Field(default=1, ge=1)
+
     def has_openrouter(self) -> bool:
         """True when OpenRouter backend is selected with a key."""
         return self.provider == "openrouter" and bool(self.openrouter_key.strip())

@@ -310,3 +310,10 @@ mattermost_token = ""
 
 # Mattermost default team name (e.g. canonical).
 mattermost_team = "canonical"
+
+# Maximum concurrent sessions for the gateway (1 for single-connection local LLM).
+max_concurrent_sessions = 1
+
+# Maximum concurrent child subagents for task delegation (1 for single-connection local LLM).
+max_concurrent_children = 1
+

@@ -55,8 +55,10 @@ class TestConfigureCredentials:
     @staticmethod
     def _written(mock_run) -> str:
         """Return the env-file contents sent to the VM over stdin."""
-        assert mock_run.call_count == 1
-        return mock_run.call_args.kwargs["input"]
+        for call in mock_run.call_args_list:
+            if "input" in call.kwargs and call.kwargs["input"]:
+                return call.kwargs["input"]
+        raise AssertionError("No env-file write found in mock_run calls")
 
     @patch("llm.provision.hermes_vm.run")
     def test_no_credentials_skips(self, mock_run):
@@ -118,7 +120,7 @@ class TestConfigureCredentials:
                 mattermost_team="custom-team",
             ),
         )
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
         # First call: write env vars
         env_content = mock_run.call_args_list[0].kwargs["input"]
         assert env_content.splitlines() == [
@@ -141,6 +143,28 @@ class TestConfigureCredentials:
         assert "list_public_channels" in mcp_json["tools"]["include"]
 
     @patch("llm.provision.hermes_vm.run")
+    def test_concurrency_limits_written(self, mock_run):
+        """Verify max_concurrent_sessions and max_concurrent_children are written to config.yaml."""
+        cfg = _make_cfg(
+            provider="openrouter",
+            openrouter_key="sk-or-v1-test",
+        )
+        cfg.max_concurrent_sessions = 1
+        cfg.max_concurrent_children = 1
+        HermesVmManager._configure_credentials(self._mgr(), cfg)
+
+        concurrency_calls = [
+            c
+            for c in mock_run.call_args_list
+            if c.kwargs.get("desc") == "configure concurrency limits in config.yaml"
+        ]
+        assert len(concurrency_calls) == 1
+        cmd = concurrency_calls[0].args[0]
+        payload = json.loads(cmd[-1])
+        assert payload["max_concurrent_sessions"] == 1
+        assert payload["max_concurrent_children"] == 1
+
+    @patch("llm.provision.hermes_vm.run")
     def test_secrets_never_appear_in_the_command(self, mock_run):
         """Credentials travel over stdin, never in argv where `ps` can see them."""
         cfg = _make_cfg(
@@ -151,10 +175,11 @@ class TestConfigureCredentials:
         )
         HermesVmManager._configure_credentials(self._mgr(), cfg)
 
-        argv = " ".join(str(a) for a in mock_run.call_args.args[0])
-        assert "sk-or-v1-secret" not in argv
-        assert "123:SECRETTOKEN" not in argv
-        assert "ghp_secretvalue" not in argv
+        for call in mock_run.call_args_list:
+            argv = " ".join(str(a) for a in call.args[0])
+            assert "sk-or-v1-secret" not in argv
+            assert "123:SECRETTOKEN" not in argv
+            assert "ghp_secretvalue" not in argv
 
     @patch("llm.provision.hermes_vm.run")
     def test_shell_metacharacters_survive_verbatim(self, mock_run):
@@ -173,8 +198,9 @@ class TestConfigureCredentials:
             "GITHUB_TOKEN=ghp_new",
         ]
 
+    @patch("llm.provision.hermes_vm.run")
     @patch.object(HermesVmManager, "_configure_local_llm")
-    def test_local_llm_calls_configure_local_llm(self, mock_local):
+    def test_local_llm_calls_configure_local_llm(self, mock_local, mock_run):
         """When provider is local-llm, _configure_local_llm is called with all_cfg."""
         from llm.settings import AuthSettings, ProxySettings, ServerSettings, Settings
 

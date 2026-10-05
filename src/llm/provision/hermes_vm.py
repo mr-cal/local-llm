@@ -607,6 +607,59 @@ class HermesVmManager(_BaseVmManager):
             console.print("  [green]✓[/green] Mattermost credentials configured")
             self._configure_mattermost_mcp(cfg)
 
+        self._configure_concurrency(cfg)
+
+    def _configure_concurrency(self, cfg: HermesSettings) -> None:
+        """Configure concurrency limits in ~/.hermes/config.yaml."""
+        venv_python = f"{CONTAINER_HOME}/.hermes/hermes-agent/venv/bin/python"
+        config_path = f"{CONTAINER_HOME}/.hermes/config.yaml"
+        concurrency_payload = {
+            "max_concurrent_sessions": cfg.max_concurrent_sessions,
+            "max_concurrent_children": cfg.max_concurrent_children,
+        }
+        update_script = (
+            "import sys, json\n"
+            "from pathlib import Path\n"
+            "try:\n"
+            "    from ruamel.yaml import YAML\n"
+            "    yaml = YAML()\n"
+            "    yaml.preserve_quotes = True\n"
+            "except ImportError:\n"
+            "    import yaml\n"
+            "config_file = Path(sys.argv[1])\n"
+            "opts = json.loads(sys.argv[2])\n"
+            "data = {}\n"
+            "if config_file.exists() and config_file.stat().st_size > 0:\n"
+            "    with open(config_file) as f:\n"
+            "        data = yaml.load(f) or {}\n"
+            "data['max_concurrent_sessions'] = opts['max_concurrent_sessions']\n"
+            "gateway = data.setdefault('gateway', {})\n"
+            "gateway['max_concurrent_sessions'] = opts['max_concurrent_sessions']\n"
+            "delegation = data.setdefault('delegation', {})\n"
+            "delegation['max_concurrent_children'] = opts['max_concurrent_children']\n"
+            "with open(config_file, 'w') as f:\n"
+            "    yaml.dump(data, f)\n"
+        )
+
+        run(
+            _cexec(
+                self.container,
+                self.uid,
+                self.gid,
+                venv_python,
+                "-c",
+                update_script,
+                config_path,
+                json.dumps(concurrency_payload),
+            ),
+            desc="configure concurrency limits in config.yaml",
+        )
+        console.print(
+            f"  [green]✓[/green] Concurrency limits set: "
+            f"max_concurrent_sessions={cfg.max_concurrent_sessions}, "
+            f"max_concurrent_children={cfg.max_concurrent_children}"
+        )
+
     def _configure_mattermost_mcp(self, cfg: HermesSettings) -> None:
         """Register the Mattermost MCP server in ~/.hermes/config.yaml."""
         if not cfg.has_mattermost():
