@@ -377,6 +377,9 @@ class HermesSettings(BaseModel):
     # Maximum concurrent child subagents for delegation (set to 1 for single-connection servers).
     max_concurrent_children: int = Field(default=1, ge=1)
 
+    # Time to wait for user approval/permission before timing out, in seconds (default: 3600 = 1 hour).
+    approval_timeout: int = Field(default=3600, ge=1)
+
     def has_openrouter(self) -> bool:
         """True when OpenRouter backend is selected with a key."""
         return self.provider == "openrouter" and bool(self.openrouter_key.strip())

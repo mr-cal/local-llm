@@ -21,6 +21,7 @@ class TestHermesSettings:
         assert h.mattermost_team == "canonical"
         assert h.max_concurrent_sessions == 1
         assert h.max_concurrent_children == 1
+        assert h.approval_timeout == 3600
 
     def test_custom_values(self):
         h = HermesSettings(
@@ -34,6 +35,7 @@ class TestHermesSettings:
             mattermost_team="my-team",
             max_concurrent_sessions=2,
             max_concurrent_children=4,
+            approval_timeout=1800,
         )
         assert h.provider == "openrouter"
         assert h.openrouter_key == "sk-or-v1-test"
@@ -45,6 +47,7 @@ class TestHermesSettings:
         assert h.mattermost_team == "my-team"
         assert h.max_concurrent_sessions == 2
         assert h.max_concurrent_children == 4
+        assert h.approval_timeout == 1800
 
     def test_has_openrouter_false_by_default(self):
         assert HermesSettings().has_openrouter() is False
@@ -149,6 +152,7 @@ class TestHermesConfigTemplate:
         assert "mattermost_team" in hermes
         assert "max_concurrent_sessions" in hermes
         assert "max_concurrent_children" in hermes
+        assert "approval_timeout" in hermes
 
     def test_template_hermes_defaults_are_empty(self):
         template_path = Path(__file__).parent.parent / "src" / "llm" / "config_template.toml"

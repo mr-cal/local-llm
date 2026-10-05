@@ -616,6 +616,7 @@ class HermesVmManager(_BaseVmManager):
         concurrency_payload = {
             "max_concurrent_sessions": cfg.max_concurrent_sessions,
             "max_concurrent_children": cfg.max_concurrent_children,
+            "approval_timeout": cfg.approval_timeout,
         }
         update_script = (
             "import sys, json\n"
@@ -637,6 +638,8 @@ class HermesVmManager(_BaseVmManager):
             "gateway['max_concurrent_sessions'] = opts['max_concurrent_sessions']\n"
             "delegation = data.setdefault('delegation', {})\n"
             "delegation['max_concurrent_children'] = opts['max_concurrent_children']\n"
+            "approvals = data.setdefault('approvals', {})\n"
+            "approvals['timeout'] = opts['approval_timeout']\n"
             "with open(config_file, 'w') as f:\n"
             "    yaml.dump(data, f)\n"
         )
@@ -655,9 +658,10 @@ class HermesVmManager(_BaseVmManager):
             desc="configure concurrency limits in config.yaml",
         )
         console.print(
-            f"  [green]✓[/green] Concurrency limits set: "
+            f"  [green]✓[/green] Hermes configuration updated: "
             f"max_concurrent_sessions={cfg.max_concurrent_sessions}, "
-            f"max_concurrent_children={cfg.max_concurrent_children}"
+            f"max_concurrent_children={cfg.max_concurrent_children}, "
+            f"approval_timeout={cfg.approval_timeout}s"
         )
 
     def _configure_mattermost_mcp(self, cfg: HermesSettings) -> None:

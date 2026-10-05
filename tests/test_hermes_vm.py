@@ -163,6 +163,7 @@ class TestConfigureCredentials:
         payload = json.loads(cmd[-1])
         assert payload["max_concurrent_sessions"] == 1
         assert payload["max_concurrent_children"] == 1
+        assert payload["approval_timeout"] == 3600
 
     @patch("llm.provision.hermes_vm.run")
     def test_secrets_never_appear_in_the_command(self, mock_run):
