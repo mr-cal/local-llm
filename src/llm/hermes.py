@@ -123,7 +123,7 @@ def status() -> None:
     # the local llama-server through the hermes VM's network setup.
     provider = s.get("provider", "unknown")
     ok = s.get("credentials_ok", "unknown")
-    if provider in ("openai", "local"):
+    if provider in ("custom", "openai", "local"):
         label, color = _format_local_llm(ok)
         console.print(f"  [{color}]●[/{color}] Local LLM:   {label}")
     else:

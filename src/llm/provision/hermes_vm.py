@@ -304,7 +304,7 @@ class HermesVmManager(_BaseVmManager):
                 )
                 credentials_ok = r6.returncode == 0
 
-            elif provider in ("openai", "local"):
+            elif provider in ("custom", "openai", "local"):
                 # Probe the local llama-server endpoint
 
                 all_cfg = load_config()
@@ -384,8 +384,8 @@ class HermesVmManager(_BaseVmManager):
     def _configure_local_llm(self, cfg: Settings) -> None:
         """Configure the Hermes agent to use the local llama-server.
 
-        Sets up model.provider, endpoint, api_key, and optionally copies
-        the CA cert into the VM when the TLS proxy is enabled.
+        Sets up model.provider, base_url, api_key, model.default, and
+        optionally copies the CA cert into the VM when the TLS proxy is enabled.
         """
         # Add /etc/hosts entry so the "local-llm" hostname (used in the
         # endpoint URL and the cert's SubjectAltName) resolves inside the VM.
@@ -404,12 +404,14 @@ class HermesVmManager(_BaseVmManager):
         else:
             local_url = f"http://local-llm:{cfg.server.port}/v1"
 
-        local_api_key = cfg.auth.api_key
+        local_api_key = cfg.auth.api_key or "no-key-required"
         register_secrets(local_api_key)
 
-        self._hermes_run("config", "set", "model.provider", "openai", desc="set openai provider (local)")
-        self._hermes_run("config", "set", "model.endpoint", local_url, desc="set local endpoint")
+        self._hermes_run("config", "set", "model.provider", "custom", desc="set custom provider (local)")
+        self._hermes_run("config", "set", "model.base_url", local_url, desc="set local base url")
         self._hermes_run("config", "set", "model.api_key", local_api_key, desc="set local api key")
+        model_name = cfg.models.active or "local"
+        self._hermes_run("config", "set", "model.default", model_name, desc="set local default model")
 
     def _install_ca_bundle(self, cert_src: str) -> None:
         """Copy the proxy's CA cert into the VM and trust it for HTTPS calls.
@@ -529,16 +531,17 @@ class HermesVmManager(_BaseVmManager):
         if cfg.has_github():
             env_vars["GITHUB_TOKEN"] = cfg.github_token
 
-        if not env_vars:
+        if not env_vars and (not cfg.has_local_llm() or all_cfg is None):
             console.print("  [yellow]⚠[/yellow] No credentials configured — skipping.")
             console.print("  Set openrouter_key, telegram_token, etc. in [hermes] config.toml")
             return
 
-        env_path = self._write_env_vars(env_vars, desc="write hermes credentials")
-        console.print(f"  [green]✓[/green] credentials written to {env_path}")
+        if env_vars:
+            env_path = self._write_env_vars(env_vars, desc="write hermes credentials")
+            console.print(f"  [green]✓[/green] credentials written to {env_path}")
         if cfg.has_openrouter():
             console.print("  [green]✓[/green] OpenRouter set as default provider")
-        if cfg.has_local_llm():
+        if cfg.has_local_llm() and all_cfg is not None:
             console.print("  [green]✓[/green] Local LLM set as default provider")
         if cfg.has_telegram():
             console.print("  [green]✓[/green] Telegram gateway credentials configured")

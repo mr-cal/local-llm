@@ -221,6 +221,41 @@ class TestConfigureLocalLlm:
         )
         mgr._install_ca_bundle.assert_called_once_with("/etc/ssl/x/cert.pem")
 
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    def test_configures_hermes_custom_provider(self, mock_subprocess):
+        """Hermes must be configured with custom provider, base_url, api_key, and default model."""
+        mgr = self._mgr()
+        cfg = self._cfg(enabled=False, lan_ip="192.168.1.50")
+        cfg.models.active = "qwen3.6-35b-moe-q4"
+        HermesVmManager._configure_local_llm(mgr, cfg)
+
+        mgr._hermes_run.assert_any_call(
+            "config", "set", "model.provider", "custom", desc="set custom provider (local)"
+        )
+        mgr._hermes_run.assert_any_call(
+            "config", "set", "model.base_url", "http://local-llm:8080/v1", desc="set local base url"
+        )
+        mgr._hermes_run.assert_any_call(
+            "config", "set", "model.api_key", "test-api-key", desc="set local api key"
+        )
+        mgr._hermes_run.assert_any_call(
+            "config", "set", "model.default", "qwen3.6-35b-moe-q4", desc="set local default model"
+        )
+
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    def test_configures_hermes_keyless_fallback(self, mock_subprocess):
+        """When auth.api_key is empty, 'no-key-required' placeholder is passed."""
+        from llm.settings import AuthSettings
+
+        mgr = self._mgr()
+        cfg = self._cfg(enabled=False, lan_ip="192.168.1.50")
+        cfg.auth = AuthSettings(api_key="")
+        HermesVmManager._configure_local_llm(mgr, cfg)
+
+        mgr._hermes_run.assert_any_call(
+            "config", "set", "model.api_key", "no-key-required", desc="set local api key"
+        )
+
 
 class TestInstallCaBundle:
     """Setup must fail loudly when the VM cannot be made to trust the proxy."""
@@ -393,7 +428,7 @@ class TestGetStatus:
     @patch("llm.provision.hermes_vm.subprocess.run")
     @patch("llm.provision.hermes_vm._cexec")
     def test_local_llm_probe_http(self, mock_cexec, mock_run):
-        """When provider is openai and proxy is disabled, probe http endpoint."""
+        """When provider is custom and proxy is disabled, probe http endpoint."""
         from unittest.mock import patch as real_patch
 
         from llm.settings import AuthSettings, ProxySettings, ServerSettings, Settings
@@ -411,7 +446,7 @@ class TestGetStatus:
             make_mock("active\n", 0),
             make_mock("ActiveEnterTimestampEpoch=1700000000\n"),
             make_mock("hermes 3.0.0\n"),
-            make_mock("openai\n"),
+            make_mock("custom\n"),
             make_mock("", 0),  # curl probe for local-llm
         ]
 
