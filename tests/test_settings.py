@@ -28,6 +28,7 @@ from llm.settings import (
     try_load_lxd,
 )
 from llm.settings.loader import CONFIG_TEMPLATE
+from llm.settings.models import canonicalize_timezone
 
 
 class TestServerSettings:
@@ -328,12 +329,53 @@ class TestMountEntry:
         assert "home" in m.name or m.name == "projects"
 
 
+class TestCanonicalizeTimezone:
+    def test_empty_or_whitespace(self):
+        assert canonicalize_timezone("") == ""
+        assert canonicalize_timezone("   ") == ""
+
+    def test_us_aliases(self):
+        assert canonicalize_timezone("US/chicago") == "America/Chicago"
+        assert canonicalize_timezone("us/chicago") == "America/Chicago"
+        assert canonicalize_timezone("US/Central") == "America/Chicago"
+        assert canonicalize_timezone("us/central") == "America/Chicago"
+        assert canonicalize_timezone("US/Eastern") == "America/New_York"
+        assert canonicalize_timezone("us/new_york") == "America/New_York"
+        assert canonicalize_timezone("US/Pacific") == "America/Los_Angeles"
+        assert canonicalize_timezone("us/los_angeles") == "America/Los_Angeles"
+        assert canonicalize_timezone("US/Mountain") == "America/Denver"
+        assert canonicalize_timezone("us/denver") == "America/Denver"
+        assert canonicalize_timezone("US/Arizona") == "America/Phoenix"
+        assert canonicalize_timezone("US/Alaska") == "America/Anchorage"
+        assert canonicalize_timezone("US/Hawaii") == "Pacific/Honolulu"
+
+    def test_canonical_and_case_insensitive(self):
+        assert canonicalize_timezone("America/Chicago") == "America/Chicago"
+        assert canonicalize_timezone("america/chicago") == "America/Chicago"
+        assert canonicalize_timezone("UTC") == "UTC"
+        assert canonicalize_timezone("utc") == "UTC"
+        assert canonicalize_timezone("Europe/London") == "Europe/London"
+
+
 class TestLxdSettings:
     def test_defaults(self):
         lxd = LxdSettings()
+        assert lxd.timezone == "America/Chicago"
         assert lxd.craft_dirs == []
         assert lxd.mounts == []
         assert lxd.sandbox_mounts == []
+
+    def test_custom_timezone(self):
+        lxd = LxdSettings(timezone="America/New_York")
+        assert lxd.timezone == "America/New_York"
+
+    def test_timezone_normalization(self):
+        lxd1 = LxdSettings(timezone="US/chicago")
+        assert lxd1.timezone == "America/Chicago"
+        lxd2 = LxdSettings(timezone="US/Central")
+        assert lxd2.timezone == "America/Chicago"
+        lxd3 = LxdSettings(timezone="us/pacific")
+        assert lxd3.timezone == "America/Los_Angeles"
 
     def test_with_mounts(self):
         mounts = [

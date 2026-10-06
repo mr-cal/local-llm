@@ -830,3 +830,51 @@ class TestMergeEnvFile:
     def test_ends_with_a_single_trailing_newline(self):
         """Repeated writes must not accumulate blank lines at the end of the file."""
         assert _merge_env_file("A=1\n\n\n", {"A": "1"}) == "A=1\n"
+
+
+# ── Timezone ──────────────────────────────────────────────────────────────────
+
+
+class TestTimezone:
+    """Tests for timezone configuration in Hermes VM."""
+
+    def _mgr(self, timezone: str = "America/Chicago"):
+        mgr = HermesVmManager.__new__(HermesVmManager)
+        mgr.container = "hermes"
+        mgr.uid = 1000
+        mgr.gid = 1000
+        mgr.timezone = timezone
+        return mgr
+
+    @patch("llm.provision.vm.run")
+    def test_set_timezone_default(self, mock_run):
+        mgr = self._mgr("America/Chicago")
+        mgr._set_timezone()
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "timedatectl set-timezone America/Chicago" in cmd[-1]
+        assert "ln -sf /usr/share/zoneinfo/America/Chicago /etc/localtime" in cmd[-1]
+        assert "echo 'America/Chicago' > /etc/timezone" in cmd[-1]
+
+    @patch("llm.provision.vm.run")
+    def test_set_timezone_canonicalizes_us_alias(self, mock_run):
+        mgr = self._mgr("US/chicago")
+        mgr._set_timezone()
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "timedatectl set-timezone America/Chicago" in cmd[-1]
+
+    @patch.object(HermesVmManager, "_set_timezone")
+    @patch("llm.provision.hermes_vm.run_with_retry")
+    @patch("llm.provision.hermes_vm.run")
+    @patch.object(HermesVmManager, "_hermes_run")
+    @patch.object(HermesVmManager, "_configure_credentials")
+    @patch("llm.provision.hermes_vm.subprocess.run")
+    def test_refresh_configures_timezone(
+        self, mock_sub, mock_creds, mock_hermes_run, mock_run, mock_retry, mock_set_tz
+    ):
+        mock_sub.return_value = MagicMock(returncode=1)
+        mgr = self._mgr()
+        cfg = HermesSettings(timezone="America/New_York")
+        mgr.refresh(cfg)
+        mock_set_tz.assert_called_once_with("America/New_York")

@@ -80,8 +80,12 @@ class LxdVmManager(_BaseVmManager):
         uid: int = HOST_UID,
         gid: int = HOST_GID,
         sandbox: bool = False,
+        timezone: str | None = None,
     ) -> None:
-        super().__init__(container, uid=uid, gid=gid)
+        if timezone is None:
+            lxd = try_load_lxd()
+            timezone = lxd.timezone if lxd else "America/Chicago"
+        super().__init__(container, uid=uid, gid=gid, timezone=timezone)
         self.sandbox = sandbox
         if mounts is not None:
             self.mounts = mounts
@@ -661,7 +665,11 @@ class LxdVmManager(_BaseVmManager):
         """Run all refresh steps for this container."""
         console.print(f"\n[bold cyan]── Refreshing {self.container} ──[/bold cyan]")
 
-        # 1. apt
+        # 1. timezone
+        console.print("\n  [bold]timezone:[/bold] configuring...")
+        self._set_timezone()
+
+        # 2. apt
         console.print("\n  [bold]apt:[/bold] update + upgrade + autoremove...")
         run_with_retry(
             ["lxc", "exec", self.container, "--", "apt-get", "update", "-q"],
@@ -674,7 +682,7 @@ class LxdVmManager(_BaseVmManager):
         run(["lxc", "exec", self.container, "--", "apt-get", "autoremove", "-y"])
         run(["lxc", "exec", self.container, "--", "apt-get", "clean"])
 
-        # 2. pi (oh-my-pi)
+        # 3. pi (oh-my-pi)
         console.print("\n  [bold]pi:[/bold] updating oh-my-pi...")
         run_with_retry(
             _cexec(
@@ -716,18 +724,18 @@ class LxdVmManager(_BaseVmManager):
             desc="oh-my-pi install",
         )
 
-        # 3. copilot
+        # 4. copilot
         console.print("\n  [bold]copilot:[/bold] updating gh copilot...")
         run(
             _cexec(self.container, self.uid, self.gid, "gh", "copilot", "update"),
         )
 
-        # 4. pi + oh-my-pi config
+        # 5. pi + oh-my-pi config
         if not self.sandbox:
             self.setup_pi(cert_pem=cert_pem)
             _refresh_omp_config(self.container, self.uid, self.gid)
 
-        # 5. gh auth + git identity
+        # 6. gh auth + git identity
         self.setup_gh_auth(gh_token, effective_uid=self.uid, effective_gid=self.gid)
         self.setup_git_config(git_username, git_email, git_pat)
 
@@ -916,6 +924,7 @@ def create_and_setup(
     recreate: bool = False,
     cert_pem: str | None = None,
     sandbox: bool = False,
+    timezone: str | None = None,
 ) -> None:
     """Create and configure an LXD VM for local LLM development.
 
@@ -929,8 +938,9 @@ def create_and_setup(
         recreate: If True, delete an existing VM before creating a new one.
         cert_pem: Optional PEM certificate string for the nginx TLS proxy.
         sandbox: If True, configure as an isolated sandbox container.
+        timezone: System timezone inside the VM (defaults to [lxd].timezone).
     """
-    mgr = LxdVmManager(container_name, mounts=mounts, sandbox=sandbox)
+    mgr = LxdVmManager(container_name, mounts=mounts, sandbox=sandbox, timezone=timezone)
     mgr.create_and_setup(recreate=recreate, cert_pem=cert_pem)
 
 
@@ -973,6 +983,8 @@ def refresh_containers(
     with contextlib.suppress(Exception):
         cfg = load_config()
 
+    tz = cfg.lxd.timezone if cfg else "America/Chicago"
+
     if container_name is not None:
         if not container_exists(container_name):
             raise RuntimeError(f"'{container_name}' does not exist.")
@@ -988,7 +1000,7 @@ def refresh_containers(
             git_email = cfg.github.sandbox.git_email
             git_pat = cfg.github.sandbox.git_pat
             cert_pem = None
-        mgr = LxdVmManager(container_name, uid=HOST_UID, gid=HOST_GID, sandbox=is_sandbox)
+        mgr = LxdVmManager(container_name, uid=HOST_UID, gid=HOST_GID, sandbox=is_sandbox, timezone=tz)
         mgr._refresh(
             cert_pem=cert_pem,
             gh_token=gh_token,
@@ -1015,7 +1027,7 @@ def refresh_containers(
                 c_git_email = cfg.github.sandbox.git_email
                 c_git_pat = cfg.github.sandbox.git_pat
                 c_cert_pem = None
-            mgr = LxdVmManager(container, uid=HOST_UID, gid=HOST_GID, sandbox=is_sandbox)
+            mgr = LxdVmManager(container, uid=HOST_UID, gid=HOST_GID, sandbox=is_sandbox, timezone=tz)
             mgr._refresh(
                 cert_pem=c_cert_pem,
                 gh_token=c_gh_token,

@@ -246,6 +246,9 @@ git_email = "callahanlovesshopping@gmail.com"
 # ── LXD ───────────────────────────────────────────────────────────────────────
 
 [lxd]
+# System timezone inside LXD containers and VMs (e.g. "America/Chicago", "US/Central").
+timezone = "America/Chicago"
+
 craft_dirs = [
     # "~/dev/craft/snapcraft/snapcraft-a",
 ]
@@ -281,6 +284,9 @@ host = "~/dev/cal/bmtracker"
 # Set tokens here; run `uv run llm hermes setup` to create and configure the VM.
 
 [hermes]
+# Timezone override for the Hermes VM (defaults to [lxd].timezone if empty).
+timezone = ""
+
 # LLM backend for the Hermes agent: "local-llm" or "openrouter".
 # The local-llm backend uses the local llama-server; openrouter uses
 # https://openrouter.ai/.

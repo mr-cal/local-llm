@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CONFIG_FILENAME = "config.toml"
 
@@ -336,14 +336,75 @@ class MountEntry(BaseModel):
         return self
 
 
+def canonicalize_timezone(tz: str) -> str:
+    """Normalize common timezone aliases and case variations to standard IANA timezone names.
+
+    E.g. "US/chicago" -> "America/Chicago", "US/Central" -> "America/Chicago",
+    "us/eastern" -> "America/New_York", etc.
+    """
+    if not tz:
+        return ""
+    cleaned = tz.strip()
+    if not cleaned:
+        return ""
+
+    aliases: dict[str, str] = {
+        "us/chicago": "America/Chicago",
+        "us/central": "America/Chicago",
+        "us/eastern": "America/New_York",
+        "us/new_york": "America/New_York",
+        "us/pacific": "America/Los_Angeles",
+        "us/los_angeles": "America/Los_Angeles",
+        "us/mountain": "America/Denver",
+        "us/denver": "America/Denver",
+        "us/arizona": "America/Phoenix",
+        "us/phoenix": "America/Phoenix",
+        "us/alaska": "America/Anchorage",
+        "us/anchorage": "America/Anchorage",
+        "us/hawaii": "Pacific/Honolulu",
+        "us/honolulu": "Pacific/Honolulu",
+    }
+    lower = cleaned.lower()
+    if lower in aliases:
+        return aliases[lower]
+
+    try:
+        import zoneinfo  # noqa: PLC0415
+
+        all_tzs = zoneinfo.available_timezones()
+        if cleaned in all_tzs:
+            return cleaned
+        lower_map = {z.lower(): z for z in all_tzs}
+        if lower in lower_map:
+            return lower_map[lower]
+        if lower.startswith("us/"):
+            city = lower.split("/", 1)[1]
+            candidate = f"america/{city}"
+            if candidate in lower_map:
+                return lower_map[candidate]
+    except Exception:
+        pass
+
+    return cleaned
+
+
 class LxdSettings(BaseModel):
+    timezone: str = "America/Chicago"
     craft_dirs: list[str] = Field(default_factory=list)
     mounts: list[MountEntry] = Field(default_factory=list)
     sandbox_mounts: list[MountEntry] = Field(default_factory=list)
 
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        return canonicalize_timezone(v) if isinstance(v, str) else v
+
 
 class HermesSettings(BaseModel):
     """Configuration for the Hermes agent LXD VM."""
+
+    # Timezone override for the Hermes VM (falls back to [lxd].timezone if empty).
+    timezone: str = ""
 
     # LLM backend for the Hermes agent: "local-llm" or "openrouter".
     provider: str = "local-llm"
@@ -379,6 +440,19 @@ class HermesSettings(BaseModel):
 
     # Time to wait for user approval/permission before timing out, in seconds (default: 3600 = 1 hour).
     approval_timeout: int = Field(default=3600, ge=1)
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        return canonicalize_timezone(v) if isinstance(v, str) else v
+
+    def effective_timezone(self, all_cfg: Settings | None = None) -> str:
+        """Return the effective timezone for the Hermes VM, falling back to [lxd].timezone."""
+        if self.timezone:
+            return self.timezone
+        if all_cfg and all_cfg.lxd.timezone:
+            return all_cfg.lxd.timezone
+        return "America/Chicago"
 
     def has_openrouter(self) -> bool:
         """True when OpenRouter backend is selected with a key."""

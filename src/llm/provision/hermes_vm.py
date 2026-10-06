@@ -11,6 +11,7 @@ the Hermes agent installs itself.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 from typing import Any
@@ -110,8 +111,14 @@ class HermesVmManager(_BaseVmManager):
         mgr.create_and_setup(cfg)
     """
 
-    def __init__(self) -> None:
-        super().__init__(HERMES_CONTAINER_NAME, uid=HOST_UID, gid=HOST_GID)
+    def __init__(self, timezone: str | None = None) -> None:
+        if timezone is None:
+            try:
+                cfg = load_config()
+                timezone = cfg.hermes.effective_timezone(cfg)
+            except Exception:
+                timezone = "America/Chicago"
+        super().__init__(HERMES_CONTAINER_NAME, uid=HOST_UID, gid=HOST_GID, timezone=timezone)
 
     def _hermes_run(self, *args: str, desc: str | None = None, **kwargs: Any) -> None:
         """Run a ``hermes`` CLI command inside the container with profile sourced.
@@ -170,6 +177,11 @@ class HermesVmManager(_BaseVmManager):
         self.create_container()
         self._configure_sudo()
 
+        all_cfg = None
+        with contextlib.suppress(Exception):
+            all_cfg = load_config()
+        self._set_timezone(cfg.effective_timezone(all_cfg))
+
         console.print("\n[bold][2/6][/bold] Installing prerequisites...")
         self._install_prerequisites()
 
@@ -194,6 +206,12 @@ class HermesVmManager(_BaseVmManager):
     def refresh(self, cfg: HermesSettings) -> None:
         """Update packages, Hermes agent, and re-inject credentials."""
         console.print(f"\n[bold cyan]── Refreshing {self.container} ──[/bold cyan]")
+
+        console.print("\n  [bold]timezone:[/bold] configuring...")
+        all_cfg = None
+        with contextlib.suppress(Exception):
+            all_cfg = load_config()
+        self._set_timezone(cfg.effective_timezone(all_cfg))
 
         console.print("\n  [bold]apt:[/bold] update + upgrade...")
         run_with_retry(

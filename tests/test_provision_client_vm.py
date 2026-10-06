@@ -841,3 +841,36 @@ class TestSandboxProvisioning:
             git_email="bot@example.com",
             git_pat="bot-pat",
         )
+
+    def test_lxd_vm_manager_timezone_from_config(self, monkeypatch):
+        from llm.provision.client_vm import LxdVmManager
+        from llm.settings.models import LxdSettings
+
+        monkeypatch.setattr(
+            "llm.provision.client_vm.try_load_lxd",
+            lambda: LxdSettings(timezone="America/Denver"),
+        )
+        mgr = LxdVmManager("test-vm", mounts=[])
+        assert mgr.timezone == "America/Denver"
+
+    def test_lxd_vm_manager_timezone_explicit(self):
+        from llm.provision.client_vm import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[], timezone="America/New_York")
+        assert mgr.timezone == "America/New_York"
+
+    def test_refresh_sets_timezone(self, monkeypatch):
+        from llm.provision.client_vm import LxdVmManager
+
+        mgr = LxdVmManager("test-vm", mounts=[], timezone="America/Chicago")
+        mock_set_tz = MagicMock()
+        monkeypatch.setattr(mgr, "_set_timezone", mock_set_tz)
+        monkeypatch.setattr("llm.provision.client_vm.run_with_retry", lambda *a, **k: None)
+        monkeypatch.setattr("llm.provision.client_vm.run", lambda *a, **k: None)
+        monkeypatch.setattr(mgr, "setup_pi", lambda **k: None)
+        monkeypatch.setattr("llm.provision.client_vm._refresh_omp_config", lambda *a, **k: None)
+        monkeypatch.setattr(mgr, "setup_gh_auth", lambda *a, **k: None)
+        monkeypatch.setattr(mgr, "setup_git_config", lambda *a, **k: None)
+
+        mgr._refresh()
+        mock_set_tz.assert_called_once()

@@ -111,6 +111,7 @@ def _setup_container_client(
         recreate=recreate,
         cert_pem=cert_pem,
         sandbox=sandbox,
+        timezone=cfg.lxd.timezone,
     )
 
     # Set up opencode config inside the VM (separate from host bind mount)

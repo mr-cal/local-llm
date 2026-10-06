@@ -38,7 +38,7 @@ def setup(
     cfg = load_config()
 
     try:
-        mgr = HermesVmManager()
+        mgr = HermesVmManager(timezone=cfg.hermes.effective_timezone(cfg))
         mgr.create_and_setup(cfg.hermes, recreate=recreate)
     except RuntimeError as e:
         console.print(f"[red]ERROR:[/red] {escape(str(e))}")
@@ -57,7 +57,7 @@ def refresh() -> None:
         raise typer.Exit(1)
 
     cfg = load_config()
-    mgr = HermesVmManager()
+    mgr = HermesVmManager(timezone=cfg.hermes.effective_timezone(cfg))
 
     if not container_exists(mgr.container):
         console.print(

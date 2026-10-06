@@ -12,6 +12,7 @@ class TestHermesSettings:
     def test_defaults(self):
         h = HermesSettings()
         assert h.provider == "local-llm"
+        assert h.timezone == ""
         assert h.openrouter_key == ""
         assert h.telegram_token == ""
         assert h.telegram_allowed_users == ""
@@ -25,6 +26,7 @@ class TestHermesSettings:
 
     def test_custom_values(self):
         h = HermesSettings(
+            timezone="America/New_York",
             provider="openrouter",
             openrouter_key="sk-or-v1-test",
             telegram_token="123:ABC",
@@ -37,6 +39,7 @@ class TestHermesSettings:
             max_concurrent_children=4,
             approval_timeout=1800,
         )
+        assert h.timezone == "America/New_York"
         assert h.provider == "openrouter"
         assert h.openrouter_key == "sk-or-v1-test"
         assert h.telegram_token == "123:ABC"
@@ -48,6 +51,30 @@ class TestHermesSettings:
         assert h.max_concurrent_sessions == 2
         assert h.max_concurrent_children == 4
         assert h.approval_timeout == 1800
+
+    def test_timezone_normalization(self):
+        h1 = HermesSettings(timezone="US/chicago")
+        assert h1.timezone == "America/Chicago"
+        h2 = HermesSettings(timezone="US/Central")
+        assert h2.timezone == "America/Chicago"
+
+    def test_effective_timezone_defaults_to_chicago(self):
+        h = HermesSettings()
+        assert h.effective_timezone() == "America/Chicago"
+
+    def test_effective_timezone_uses_all_cfg_lxd(self):
+        from llm.settings import LxdSettings
+
+        h = HermesSettings()
+        all_cfg = Settings(lxd=LxdSettings(timezone="America/Denver"))
+        assert h.effective_timezone(all_cfg) == "America/Denver"
+
+    def test_effective_timezone_hermes_override_wins(self):
+        from llm.settings import LxdSettings
+
+        h = HermesSettings(timezone="America/New_York")
+        all_cfg = Settings(lxd=LxdSettings(timezone="America/Denver"))
+        assert h.effective_timezone(all_cfg) == "America/New_York"
 
     def test_has_openrouter_false_by_default(self):
         assert HermesSettings().has_openrouter() is False
@@ -142,6 +169,7 @@ class TestHermesConfigTemplate:
         template_path = Path(__file__).parent.parent / "src" / "llm" / "config_template.toml"
         data = tomllib.loads(template_path.read_text())
         hermes = data["hermes"]
+        assert "timezone" in hermes
         assert "provider" in hermes
         assert "openrouter_key" in hermes
         assert "telegram_token" in hermes
@@ -153,6 +181,12 @@ class TestHermesConfigTemplate:
         assert "max_concurrent_sessions" in hermes
         assert "max_concurrent_children" in hermes
         assert "approval_timeout" in hermes
+
+    def test_template_lxd_has_timezone(self):
+        template_path = Path(__file__).parent.parent / "src" / "llm" / "config_template.toml"
+        data = tomllib.loads(template_path.read_text())
+        assert "timezone" in data["lxd"]
+        assert data["lxd"]["timezone"] == "America/Chicago"
 
     def test_template_hermes_defaults_are_empty(self):
         template_path = Path(__file__).parent.parent / "src" / "llm" / "config_template.toml"

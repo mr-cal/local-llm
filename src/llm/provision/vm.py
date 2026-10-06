@@ -56,10 +56,12 @@ class _BaseVmManager:
         container: str,
         uid: int = HOST_UID,
         gid: int = HOST_GID,
+        timezone: str = "America/Chicago",
     ) -> None:
         self.container = container
         self.uid = uid
         self.gid = gid
+        self.timezone = timezone
 
     # ── VM lifecycle ─────────────────────────────────────────────────────
 
@@ -122,6 +124,25 @@ class _BaseVmManager:
             ]
         )
         self._fix_vm_user_uid()
+        self._set_timezone()
+
+    def _set_timezone(self, timezone: str | None = None) -> None:
+        """Set the timezone inside the container/VM."""
+        from llm.settings.models import canonicalize_timezone  # noqa: PLC0415
+
+        tz_val = timezone or getattr(self, "timezone", "America/Chicago")
+        target_tz = canonicalize_timezone(tz_val) or "America/Chicago"
+        console.print(f"  Setting timezone to {target_tz}...")
+        cmd = (
+            f"timedatectl set-timezone {target_tz} 2>/dev/null || "
+            f"ln -sf /usr/share/zoneinfo/{target_tz} /etc/localtime; "
+            f"echo '{target_tz}' > /etc/timezone"
+        )
+        run(["lxc", "exec", self.container, "--", "bash", "-c", cmd])
+
+    def set_timezone(self, timezone: str | None = None) -> None:
+        """Public alias to set timezone inside the container/VM."""
+        self._set_timezone(timezone)
 
     def _configure_sudo(self) -> None:
         """Configure passwordless sudo for the container user."""
