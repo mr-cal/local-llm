@@ -246,7 +246,7 @@ git_email = "callahanlovesshopping@gmail.com"
 # ── LXD ───────────────────────────────────────────────────────────────────────
 
 [lxd]
-# System timezone inside LXD containers and VMs (e.g. "America/Chicago", "US/Central").
+# System timezone inside LXD containers and VMs (standard IANA timezone, e.g. "America/Chicago", "UTC").
 timezone = "America/Chicago"
 
 craft_dirs = [

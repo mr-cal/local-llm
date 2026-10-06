@@ -5,6 +5,8 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+import pytest
+
 from llm.settings import HermesSettings, Settings
 
 
@@ -52,11 +54,19 @@ class TestHermesSettings:
         assert h.max_concurrent_children == 4
         assert h.approval_timeout == 1800
 
-    def test_timezone_normalization(self):
-        h1 = HermesSettings(timezone="US/chicago")
-        assert h1.timezone == "America/Chicago"
-        h2 = HermesSettings(timezone="US/Central")
-        assert h2.timezone == "America/Chicago"
+    def test_timezone_validation(self):
+        h = HermesSettings(timezone="America/New_York")
+        assert h.timezone == "America/New_York"
+        h_empty = HermesSettings(timezone="")
+        assert h_empty.timezone == ""
+
+    def test_unrecognized_timezone_raises(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            HermesSettings(timezone="US/chicago")
+        with pytest.raises(ValidationError):
+            HermesSettings(timezone="Invalid/Timezone")
 
     def test_effective_timezone_defaults_to_chicago(self):
         h = HermesSettings()

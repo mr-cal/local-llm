@@ -336,55 +336,21 @@ class MountEntry(BaseModel):
         return self
 
 
-def canonicalize_timezone(tz: str) -> str:
-    """Normalize common timezone aliases and case variations to standard IANA timezone names.
+def validate_iana_timezone(tz: str) -> str:
+    """Validate that *tz* is a known IANA timezone name (e.g. 'America/Chicago', 'UTC').
 
-    E.g. "US/chicago" -> "America/Chicago", "US/Central" -> "America/Chicago",
-    "us/eastern" -> "America/New_York", etc.
+    Raises ValueError if the timezone is not recognized.
     """
-    if not tz:
-        return ""
     cleaned = tz.strip()
     if not cleaned:
-        return ""
+        raise ValueError("Timezone cannot be empty")
+    import zoneinfo  # noqa: PLC0415
 
-    aliases: dict[str, str] = {
-        "us/chicago": "America/Chicago",
-        "us/central": "America/Chicago",
-        "us/eastern": "America/New_York",
-        "us/new_york": "America/New_York",
-        "us/pacific": "America/Los_Angeles",
-        "us/los_angeles": "America/Los_Angeles",
-        "us/mountain": "America/Denver",
-        "us/denver": "America/Denver",
-        "us/arizona": "America/Phoenix",
-        "us/phoenix": "America/Phoenix",
-        "us/alaska": "America/Anchorage",
-        "us/anchorage": "America/Anchorage",
-        "us/hawaii": "Pacific/Honolulu",
-        "us/honolulu": "Pacific/Honolulu",
-    }
-    lower = cleaned.lower()
-    if lower in aliases:
-        return aliases[lower]
-
-    try:
-        import zoneinfo  # noqa: PLC0415
-
-        all_tzs = zoneinfo.available_timezones()
-        if cleaned in all_tzs:
-            return cleaned
-        lower_map = {z.lower(): z for z in all_tzs}
-        if lower in lower_map:
-            return lower_map[lower]
-        if lower.startswith("us/"):
-            city = lower.split("/", 1)[1]
-            candidate = f"america/{city}"
-            if candidate in lower_map:
-                return lower_map[candidate]
-    except Exception:
-        pass
-
+    if cleaned not in zoneinfo.available_timezones():
+        raise ValueError(
+            f"Unknown IANA timezone: {cleaned!r}. "
+            "Must be a valid IANA timezone name (e.g. 'America/Chicago', 'UTC')."
+        )
     return cleaned
 
 
@@ -394,10 +360,10 @@ class LxdSettings(BaseModel):
     mounts: list[MountEntry] = Field(default_factory=list)
     sandbox_mounts: list[MountEntry] = Field(default_factory=list)
 
-    @field_validator("timezone", mode="before")
+    @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, v: str) -> str:
-        return canonicalize_timezone(v) if isinstance(v, str) else v
+        return validate_iana_timezone(v)
 
 
 class HermesSettings(BaseModel):
@@ -441,10 +407,12 @@ class HermesSettings(BaseModel):
     # Time to wait for user approval/permission before timing out, in seconds (default: 3600 = 1 hour).
     approval_timeout: int = Field(default=3600, ge=1)
 
-    @field_validator("timezone", mode="before")
+    @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, v: str) -> str:
-        return canonicalize_timezone(v) if isinstance(v, str) else v
+        if not v or not v.strip():
+            return ""
+        return validate_iana_timezone(v)
 
     def effective_timezone(self, all_cfg: Settings | None = None) -> str:
         """Return the effective timezone for the Hermes VM, falling back to [lxd].timezone."""

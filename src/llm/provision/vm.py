@@ -128,10 +128,10 @@ class _BaseVmManager:
 
     def _set_timezone(self, timezone: str | None = None) -> None:
         """Set the timezone inside the container/VM."""
-        from llm.settings.models import canonicalize_timezone  # noqa: PLC0415
+        from llm.settings.models import validate_iana_timezone  # noqa: PLC0415
 
         tz_val = timezone or getattr(self, "timezone", "America/Chicago")
-        target_tz = canonicalize_timezone(tz_val) or "America/Chicago"
+        target_tz = validate_iana_timezone(tz_val)
         console.print(f"  Setting timezone to {target_tz}...")
         cmd = (
             f"timedatectl set-timezone {target_tz} 2>/dev/null || "

@@ -856,13 +856,10 @@ class TestTimezone:
         assert "ln -sf /usr/share/zoneinfo/America/Chicago /etc/localtime" in cmd[-1]
         assert "echo 'America/Chicago' > /etc/timezone" in cmd[-1]
 
-    @patch("llm.provision.vm.run")
-    def test_set_timezone_canonicalizes_us_alias(self, mock_run):
+    def test_set_timezone_raises_for_unrecognized(self):
         mgr = self._mgr("US/chicago")
-        mgr._set_timezone()
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
-        assert "timedatectl set-timezone America/Chicago" in cmd[-1]
+        with pytest.raises(ValueError, match="Unknown IANA timezone"):
+            mgr._set_timezone()
 
     @patch.object(HermesVmManager, "_set_timezone")
     @patch("llm.provision.hermes_vm.run_with_retry")
