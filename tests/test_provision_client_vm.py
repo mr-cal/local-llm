@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from unittest.mock import MagicMock
 
@@ -874,3 +875,122 @@ class TestSandboxProvisioning:
 
         mgr._refresh()
         mock_set_tz.assert_called_once()
+
+
+class TestProvisionChecks:
+    """Tests for post-provisioning verification checks."""
+
+    def test_run_tests_sandbox_skips_opencode_config_mount(self, monkeypatch):
+        from llm.provision import checks
+
+        cmds_run = []
+
+        def _fake_run(cmd, *args, **kwargs):
+            cmds_run.append(list(cmd))
+            p = MagicMock()
+            p.returncode = 0
+            p.stdout = "dummy"
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "lxc list" in cmd_str:
+                p.stdout = json.dumps([{"name": "test-box", "status": "Running"}])
+            elif "stat -c %U" in cmd_str:
+                p.stdout = checks.CONTAINER_USER
+            elif "stat -c %a" in cmd_str:
+                p.stdout = "755"
+            elif "grep -c" in cmd_str:
+                p.stdout = "1"
+            elif "getent passwd" in cmd_str:
+                p.stdout = f"{checks.CONTAINER_USER}:x:1000:1000::/home/{checks.CONTAINER_USER}:/usr/bin/fish"
+            elif "cat" in cmd_str and "path.fish" in cmd_str:
+                p.stdout = ".local/bin .bun/bin .cargo/bin"
+            elif "cat" in cmd_str and "lsp-config.json" in cmd_str:
+                p.stdout = json.dumps({"lspServers": {"python": {"command": "pylsp"}}})
+            elif "id -un" in cmd_str:
+                p.stdout = checks.CONTAINER_USER
+            elif "sg lxd" in cmd_str:
+                p.stdout = "[]"
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+        monkeypatch.setattr(
+            checks,
+            "run_capture",
+            lambda cmd: MagicMock(
+                returncode=0, stdout=json.dumps([{"name": "test-box", "status": "Running"}])
+            ),
+        )
+        monkeypatch.setattr(os.path, "exists", lambda p: True)
+        monkeypatch.setattr(os, "stat", lambda p: MagicMock(st_uid=checks.HOST_UID, st_gid=checks.HOST_GID))
+        monkeypatch.setattr(os, "unlink", lambda p: None)
+
+        checks.run_tests(
+            "test-box",
+            mounts=[("chiptune", "/host/path", "/container/path")],
+            craft_dirs=[],
+            uid=checks.HOST_UID,
+            gid=checks.HOST_GID,
+            sandbox=True,
+        )
+
+        opencode_calls = [c for c in cmds_run if any(".config/opencode/config.json" in str(arg) for arg in c)]
+        assert not opencode_calls, "opencode config should not be checked in sandbox mode"
+
+    def test_run_tests_non_sandbox_checks_opencode_config_mount(self, monkeypatch):
+        from llm.provision import checks
+        from llm.provision.exec import _DEFAULT_MOUNTS
+
+        cmds_run = []
+
+        def _fake_run(cmd, *args, **kwargs):
+            cmds_run.append(list(cmd))
+            p = MagicMock()
+            p.returncode = 0
+            p.stdout = "dummy"
+            cmd_str = " ".join(str(c) for c in cmd)
+            if "lxc list" in cmd_str:
+                p.stdout = json.dumps([{"name": "test-box", "status": "Running"}])
+            elif "stat -c %U" in cmd_str:
+                p.stdout = checks.CONTAINER_USER
+            elif "stat -c %a" in cmd_str:
+                p.stdout = "755"
+            elif "grep -c" in cmd_str:
+                p.stdout = "1"
+            elif "getent passwd" in cmd_str:
+                p.stdout = f"{checks.CONTAINER_USER}:x:1000:1000::/home/{checks.CONTAINER_USER}:/usr/bin/fish"
+            elif "cat" in cmd_str and "path.fish" in cmd_str:
+                p.stdout = ".local/bin .bun/bin .cargo/bin"
+            elif "cat" in cmd_str and "lsp-config.json" in cmd_str:
+                p.stdout = json.dumps({"lspServers": {"python": {"command": "pylsp"}}})
+            elif "cat" in cmd_str and "config.json" in cmd_str:
+                p.stdout = json.dumps({"provider": {"local-llm": {}}})
+            elif "models.yml" in cmd_str:
+                p.stdout = "local-llm baseUrl"
+            elif "id -un" in cmd_str:
+                p.stdout = checks.CONTAINER_USER
+            elif "sg lxd" in cmd_str:
+                p.stdout = "[]"
+            return p
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+        monkeypatch.setattr(
+            checks,
+            "run_capture",
+            lambda cmd: MagicMock(
+                returncode=0, stdout=json.dumps([{"name": "test-box", "status": "Running"}])
+            ),
+        )
+        monkeypatch.setattr(os.path, "exists", lambda p: True)
+        monkeypatch.setattr(os, "stat", lambda p: MagicMock(st_uid=checks.HOST_UID, st_gid=checks.HOST_GID))
+        monkeypatch.setattr(os, "unlink", lambda p: None)
+
+        checks.run_tests(
+            "test-box",
+            mounts=_DEFAULT_MOUNTS,
+            craft_dirs=[],
+            uid=checks.HOST_UID,
+            gid=checks.HOST_GID,
+            sandbox=False,
+        )
+
+        opencode_calls = [c for c in cmds_run if any(".config/opencode/config.json" in str(arg) for arg in c)]
+        assert opencode_calls, "opencode config should be checked when opencode-config is mounted"

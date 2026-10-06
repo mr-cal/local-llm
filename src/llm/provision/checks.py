@@ -162,6 +162,8 @@ def run_tests(
         )
 
     def t_opencode_config_mount() -> None:
+        if sandbox or not any(name == "opencode-config" for name, _, _ in mounts):
+            return
         r = subprocess.run(
             [
                 "lxc",

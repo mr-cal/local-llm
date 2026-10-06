@@ -127,7 +127,14 @@ def _setup_container_client(
     opencode_json = json.dumps(opencode_cfg, indent=2) + "\n"
     opencode_path = f"{CONTAINER_HOME}/.config/opencode/config.json"
     subprocess.run(
-        _cexec(container_name, effective_uid, effective_gid, "bash", "-c", f"cat > {opencode_path}"),
+        _cexec(
+            container_name,
+            effective_uid,
+            effective_gid,
+            "bash",
+            "-c",
+            f"mkdir -p $(dirname {opencode_path}) && cat > {opencode_path}",
+        ),
         input=opencode_json.encode(),
         check=True,
     )
