@@ -134,3 +134,8 @@ def status() -> None:
     if mm_status != "none":
         mm_color = "green" if mm_status == "connected" else "yellow"
         console.print(f"  [{mm_color}]●[/{mm_color}] Mattermost:  {mm_status}")
+
+    dc_status = s.get("discourse", "none")
+    if dc_status != "none":
+        dc_color = "green" if dc_status == "connected" else "yellow"
+        console.print(f"  [{dc_color}]●[/{dc_color}] Discourse:   {dc_status}")

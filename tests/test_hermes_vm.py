@@ -621,6 +621,7 @@ class TestGetStatus:
             "provider",
             "credentials_ok",
             "mattermost",
+            "discourse",
         }
         assert set(result.keys()) == expected_keys
         assert all(isinstance(v, str) for v in result.values())

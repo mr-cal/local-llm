@@ -7,6 +7,7 @@ import typer
 from llm import benchmark, build, client, config, hermes, models, server
 from llm.core.console import console
 from llm.core.errors import LlmError
+from llm.discourse.cli import app as discourse_app
 
 app = typer.Typer(
     name="llm",
@@ -21,6 +22,7 @@ app.add_typer(build.app, name="build")
 app.add_typer(client.app, name="client")
 app.add_typer(config.app, name="config")
 app.add_typer(hermes.app, name="hermes")
+app.add_typer(discourse_app, name="discourse")
 
 
 def main() -> None:

@@ -407,6 +407,24 @@ class HermesVmManager(_BaseVmManager):
             )
             mattermost_status = "connected" if r_mm.returncode == 0 else "unreachable"
 
+        discourse_status = "none"
+        if vm_status == "Running" and all_cfg is not None and all_cfg.hermes.has_discourse():
+            r_dc = subprocess.run(
+                _cexec(
+                    self.container,
+                    self.uid,
+                    self.gid,
+                    "curl",
+                    "-fsSL",
+                    "-H",
+                    "Cookie: _t=******",
+                    f"{all_cfg.hermes.discourse_url.rstrip('/')}/session/current.json",
+                ),
+                capture_output=True,
+                text=True,
+            )
+            discourse_status = "connected" if r_dc.returncode == 0 else "unreachable"
+
         return {
             "vm": vm_status,
             "gateway": gateway_status,
@@ -415,6 +433,7 @@ class HermesVmManager(_BaseVmManager):
             "provider": provider,
             "credentials_ok": str(credentials_ok),
             "mattermost": mattermost_status,
+            "discourse": discourse_status,
         }
 
     # ── Internal steps ────────────────────────────────────────────────────
@@ -580,6 +599,7 @@ class HermesVmManager(_BaseVmManager):
             cfg.telegram_token,
             cfg.github_token,
             cfg.mattermost_token,
+            cfg.discourse_session_cookie,
         )
 
         env_vars: dict[str, str] = {}
@@ -607,6 +627,10 @@ class HermesVmManager(_BaseVmManager):
         if cfg.has_mattermost() and cfg.mattermost_team:
             env_vars["MATTERMOST_TEAM"] = cfg.mattermost_team
 
+        if cfg.has_discourse():
+            env_vars["DISCOURSE_URL"] = cfg.discourse_url
+            env_vars["DISCOURSE_SESSION_COOKIE"] = cfg.discourse_session_cookie
+
         if not env_vars and (not cfg.has_local_llm() or all_cfg is None):
             console.print("  [yellow]⚠[/yellow] No credentials configured — skipping.")
             console.print("  Set openrouter_key, telegram_token, etc. in [hermes] config.toml")
@@ -624,6 +648,9 @@ class HermesVmManager(_BaseVmManager):
         if cfg.has_mattermost():
             console.print("  [green]✓[/green] Mattermost credentials configured")
             self._configure_mattermost_mcp(cfg)
+        if cfg.has_discourse():
+            console.print("  [green]✓[/green] Discourse credentials configured")
+            self._configure_discourse_mcp(cfg)
 
         self._configure_concurrency(cfg)
 
@@ -740,6 +767,61 @@ class HermesVmManager(_BaseVmManager):
             desc="configure mattermost mcp in config.yaml",
         )
         console.print("  [green]✓[/green] Mattermost MCP server registered in config.yaml")
+
+    def _configure_discourse_mcp(self, cfg: HermesSettings) -> None:
+        """Register the Discourse MCP server in ~/.hermes/config.yaml."""
+        if not cfg.has_discourse():
+            return
+
+        mcp_config = {
+            "command": f"{CONTAINER_HOME}/.hermes/hermes-agent/venv/bin/python",
+            "args": [
+                "-m",
+                "llm.discourse.cli",
+                "serve-mcp",
+            ],
+            "env": {
+                "DISCOURSE_URL": cfg.discourse_url,
+                "DISCOURSE_SESSION_COOKIE": cfg.discourse_session_cookie,
+            },
+        }
+
+        venv_python = f"{CONTAINER_HOME}/.hermes/hermes-agent/venv/bin/python"
+        config_path = f"{CONTAINER_HOME}/.hermes/config.yaml"
+        update_script = (
+            "import sys, json\n"
+            "from pathlib import Path\n"
+            "try:\n"
+            "    from ruamel.yaml import YAML\n"
+            "    yaml = YAML()\n"
+            "    yaml.preserve_quotes = True\n"
+            "except ImportError:\n"
+            "    import yaml\n"
+            "config_file = Path(sys.argv[1])\n"
+            "data = {}\n"
+            "if config_file.exists() and config_file.stat().st_size > 0:\n"
+            "    with open(config_file) as f:\n"
+            "        data = yaml.load(f) or {}\n"
+            "servers = data.setdefault('mcp_servers', {})\n"
+            "servers['discourse'] = json.loads(sys.argv[2])\n"
+            "with open(config_file, 'w') as f:\n"
+            "    yaml.dump(data, f)\n"
+        )
+
+        run(
+            _cexec(
+                self.container,
+                self.uid,
+                self.gid,
+                venv_python,
+                "-c",
+                update_script,
+                config_path,
+                json.dumps(mcp_config),
+            ),
+            desc="configure discourse mcp in config.yaml",
+        )
+        console.print("  [green]✓[/green] Discourse MCP server registered in config.yaml")
 
     def _setup_gateway_service(self) -> None:
         """Install the Hermes gateway as a system-level systemd service.

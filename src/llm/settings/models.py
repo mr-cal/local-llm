@@ -398,6 +398,9 @@ class HermesSettings(BaseModel):
     # Mattermost default team name (e.g. canonical).
     mattermost_team: str = "canonical"
 
+    discourse_url: str = ""
+    discourse_session_cookie: str = Field(default="", json_schema_extra=SECRET)
+
     # Maximum concurrent sessions for the gateway (set to 1 for single-connection servers).
     max_concurrent_sessions: int = Field(default=1, ge=1)
 
@@ -441,6 +444,10 @@ class HermesSettings(BaseModel):
     def has_mattermost(self) -> bool:
         """True when both a Mattermost server URL and token are configured."""
         return bool(self.mattermost_url.strip()) and bool(self.mattermost_token.strip())
+
+    def has_discourse(self) -> bool:
+        """True when both a Discourse URL and session cookie (_t token) are configured."""
+        return bool(self.discourse_url.strip()) and bool(self.discourse_session_cookie.strip())
 
 
 class Settings(BaseModel):

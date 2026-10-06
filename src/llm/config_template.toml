@@ -317,6 +317,13 @@ mattermost_token = ""
 # Mattermost default team name (e.g. canonical).
 mattermost_team = "canonical"
 
+# Discourse forum integration (private/SSO forums using session cookie _t)
+# Discourse URL (e.g. https://canonical.discourse.com)
+discourse_url = "https://canonical.discourse.com"
+
+# Discourse session cookie (_t token from browser storage/cookies)
+discourse_session_cookie = ""
+
 # Maximum concurrent sessions for the gateway (1 for single-connection local LLM).
 max_concurrent_sessions = 1
 

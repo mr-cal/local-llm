@@ -7,7 +7,7 @@ import pytest
 from llm import cli
 from llm.core.errors import LlmError
 
-EXPECTED_GROUPS = {"server", "model", "benchmark", "build", "client", "config", "hermes"}
+EXPECTED_GROUPS = {"server", "model", "benchmark", "build", "client", "config", "hermes", "discourse"}
 
 
 class TestAppAssembly:
