@@ -19,12 +19,12 @@ def _get_discourse_creds() -> tuple[str, str]:
     cfg_path = find_config()
     if cfg_path.exists():
         cfg = load_config()
-        if cfg.hermes.discourse_url and cfg.hermes.discourse_session_cookie:
-            return cfg.hermes.discourse_url, cfg.hermes.discourse_session_cookie
+        if cfg.discourse.url and cfg.discourse.session_cookie:
+            return cfg.discourse.url, cfg.discourse.session_cookie
 
     import os
 
-    url = os.getenv("DISCOURSE_URL", "https://canonical.discourse.com")
+    url = os.getenv("DISCOURSE_URL", "https://discourse.example.com")
     cookie = os.getenv("DISCOURSE_SESSION_COOKIE", "")
     return url, cookie
 
@@ -35,7 +35,7 @@ def check_auth() -> None:
     url, cookie = _get_discourse_creds()
     if not cookie:
         console.print(
-            "[yellow]⚠[/yellow] No Discourse session cookie found in config.toml [hermes] "
+            "[yellow]⚠[/yellow] No Discourse session cookie found in config.toml [discourse] "
             "or DISCOURSE_SESSION_COOKIE."
         )
         raise typer.Exit(1)

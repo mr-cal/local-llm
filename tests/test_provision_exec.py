@@ -117,7 +117,7 @@ class TestRedaction:
         proc.register_secrets("sk-or-v1-secretkey")
         monkeypatch.setattr(lxd_exec.subprocess, "run", MagicMock())
 
-        lxd_exec.run(["hermes", "config", "set", "model.api_key", "sk-or-v1-secretkey"])
+        lxd_exec.run(["jotter", "config", "set", "model.api_key", "sk-or-v1-secretkey"])
 
         captured = capsys.readouterr()
         assert "sk-or-v1-secretkey" not in captured.out
@@ -187,29 +187,29 @@ def _instance(name: str, *, kind: str | None = None, managed: bool = True, statu
 
 
 class TestContainerKind:
-    """`llm client refresh` must never reconfigure the Hermes VM as a dev client."""
+    """`llm client refresh` must never reconfigure the Jotter VM as a dev client."""
 
     def test_reads_the_kind_tag(self):
         assert lxd_exec._container_kind(_instance("dev", kind="client")) == lxd_exec.KIND_CLIENT
-        assert lxd_exec._container_kind(_instance("hermes", kind="hermes")) == lxd_exec.KIND_HERMES
+        assert lxd_exec._container_kind(_instance("jotter", kind="jotter")) == lxd_exec.KIND_JOTTER
 
     def test_untagged_vm_defaults_to_client(self):
         """VMs created before the kind tag existed are dev clients."""
         assert lxd_exec._container_kind(_instance("dev")) == lxd_exec.KIND_CLIENT
 
-    def test_untagged_hermes_is_recognised_by_its_reserved_name(self):
-        """An existing Hermes VM predating the tag must still be excluded."""
-        assert lxd_exec._container_kind(_instance("hermes")) == lxd_exec.KIND_HERMES
+    def test_untagged_jotter_is_recognised_by_its_reserved_name(self):
+        """An existing Jotter VM predating the tag must still be excluded."""
+        assert lxd_exec._container_kind(_instance("jotter")) == lxd_exec.KIND_JOTTER
 
     def test_tag_as_managed_records_the_kind(self, monkeypatch):
         calls = MagicMock()
         monkeypatch.setattr(lxd_exec, "run", calls)
 
-        lxd_exec._tag_as_managed("hermes", lxd_exec.KIND_HERMES)
+        lxd_exec._tag_as_managed("jotter", lxd_exec.KIND_JOTTER)
 
         set_args = [" ".join(c.args[0]) for c in calls.call_args_list]
         assert any("user.local-llm-managed=true" in a for a in set_args)
-        assert any("user.local-llm-kind=hermes" in a for a in set_args)
+        assert any("user.local-llm-kind=jotter" in a for a in set_args)
 
     def test_tag_as_managed_defaults_to_client(self, monkeypatch):
         calls = MagicMock()
@@ -221,7 +221,7 @@ class TestContainerKind:
 
 
 class TestListManagedContainers:
-    """Discovery must separate dev clients from the Hermes agent VM."""
+    """Discovery must separate dev clients from the Jotter VM."""
 
     def _stub_list(self, monkeypatch, instances):
         monkeypatch.setattr(
@@ -230,19 +230,19 @@ class TestListManagedContainers:
             MagicMock(return_value=MagicMock(returncode=0, stdout=json.dumps(instances))),
         )
 
-    def test_excludes_hermes_from_client_discovery(self, monkeypatch):
+    def test_excludes_jotter_from_client_discovery(self, monkeypatch):
         self._stub_list(
             monkeypatch,
-            [_instance("dev", kind="client"), _instance("hermes", kind="hermes")],
+            [_instance("dev", kind="client"), _instance("jotter", kind="jotter")],
         )
         assert lxd_exec._list_managed_containers() == ["dev"]
 
     def test_kind_none_returns_every_managed_vm(self, monkeypatch):
         self._stub_list(
             monkeypatch,
-            [_instance("dev", kind="client"), _instance("hermes", kind="hermes")],
+            [_instance("dev", kind="client"), _instance("jotter", kind="jotter")],
         )
-        assert lxd_exec._list_managed_containers(kind=None) == ["dev", "hermes"]
+        assert lxd_exec._list_managed_containers(kind=None) == ["dev", "jotter"]
 
     def test_ignores_untagged_and_stopped_instances(self, monkeypatch):
         self._stub_list(

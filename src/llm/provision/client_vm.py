@@ -24,7 +24,7 @@ from llm.provision.exec import (
     HOST_HOME,
     HOST_UID,
     KIND_CLIENT,
-    KIND_HERMES,
+    KIND_JOTTER,
     PYLSP_LSP_CONFIG,
     _cexec,
     _list_managed_containers,
@@ -971,8 +971,8 @@ def refresh_containers(
 
     When *container_name* is ``None``, discovers every running VM tagged
     ``user.local-llm-managed=true`` whose kind is ``client`` and refreshes all
-    of them. The Hermes agent VM is excluded: refreshing it would reconfigure
-    it as a dev client and overwrite its agent setup. Use ``llm hermes setup``
+    of them. The Jotter digest VM is excluded: refreshing it would reconfigure
+    it as a dev client and overwrite its setup. Use ``llm jotter setup``
     to update it instead.
 
     Raises:
@@ -988,10 +988,10 @@ def refresh_containers(
     if container_name is not None:
         if not container_exists(container_name):
             raise RuntimeError(f"'{container_name}' does not exist.")
-        if get_container_kind(container_name) == KIND_HERMES:
+        if get_container_kind(container_name) == KIND_JOTTER:
             raise RuntimeError(
-                f"'{container_name}' is the Hermes agent VM, not a dev client. "
-                "Run 'llm hermes setup' to update it."
+                f"'{container_name}' is the Jotter digest VM, not a dev client. "
+                "Run 'llm jotter setup' to update it."
             )
         is_sandbox = is_container_sandbox(container_name)
         if is_sandbox and cfg is not None:

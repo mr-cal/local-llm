@@ -1,0 +1,13 @@
+title = "local-llm gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for sample placeholders and documentation"
+regexes = [
+  '''https://discourse\.example\.com''',
+  '''https://mattermost\.example\.com''',
+  '''https://matrix\.example\.com''',
+  '''https://jira\.example\.com''',
+]

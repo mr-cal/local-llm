@@ -43,7 +43,7 @@ class _BaseVmManager:
     """Shared LXD VM lifecycle: create, configure user, swap, sudo, and tag.
 
     Subclasses add workload-specific package installs and configuration.
-    Do not instantiate directly — use ``LxdVmManager`` or ``HermesVmManager``.
+    Do not instantiate directly — use ``LxdVmManager``.
 
     Attributes:
         container: Name of the LXD container/VM.

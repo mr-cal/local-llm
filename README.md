@@ -112,10 +112,10 @@ lxc exec craft-llm-1 -- su -l $USER
 uv run llm client crafts craft-llm-1
 
 # Refresh packages and configs in all managed dev client VMs
-# (the Hermes agent VM is excluded; use `llm hermes setup` for that)
+# (the Jotter container is excluded; use `llm jotter setup` for that)
 uv run llm client refresh
 
-# List managed VMs, with their kind (client or hermes)
+# List managed VMs/containers, with their kind (client or jotter)
 uv run llm client list
 ```
 
@@ -162,9 +162,10 @@ model download <id>     Download a GGUF model from HuggingFace
 model switch <name>     Set the active model (accepts alias or filename)
 model show <name>       Show detailed info for a model
 
-hermes setup            Create and configure the hermes agent VM
-hermes refresh          Update packages and the agent, re-apply credentials
-hermes status           Show VM and gateway service status
+tui                     Launch the Jotter interactive Textual TUI
+digest run [--slot]     Generate morning or afternoon digest headlessly
+jotter setup            Create and configure the Jotter LXD container
+jotter status           Show Jotter container status
 
 build init              Initialize the llama.cpp git submodule
 build run               Build llama.cpp with a profile and install binaries
@@ -182,28 +183,37 @@ config show             Print current config (credentials masked) + client confi
 
 ---
 
-## Hermes agent VM
+## Jotter Assistant & Daily Digest TUI
 
-`hermes` manages a separate LXD VM that runs the Hermes agent gateway against
-this server. It is tagged with a different `user.local-llm-kind` value than dev
-client VMs, so `llm client refresh` never touches it.
+`jotter` provides a transparent, deterministic digest engine and interactive
+Textual TUI (`llm tui`) running either directly or in an isolated LXD container.
+
+- **Daily Digests**: Weekday scheduling for morning (5:30 AM, captures weekend on Monday)
+  and afternoon (2:00 PM) slots.
+- **Multi-Source Ingestion**: Pulls from Discourse, GitHub, Mattermost, Matrix, Google
+  Workspace (Calendar, Gmail, Drive), Jira, and read-only local code in `~/dev/craft/`.
+- **Thread Updates & Deltas**: Automatically calculates thread reply counts and deltas
+  between morning and afternoon slots.
+- **Fast Local Cache & Embeddings**: SQLite database with full-text search (FTS5) and
+  vector semantic similarity using the restored local embedding server on port 8081.
+- **Calibrated Inspection & Streaming**: Measures prompt evaluation speed and self-calibrates
+  actual tokens/sec to give a live estimated progress bar before streaming `<think>`
+  reasoning and answers character-by-character.
 
 ```bash
-uv run llm hermes setup     # create the VM and install the agent
-uv run llm hermes status    # VM state + gateway service status
-uv run llm hermes refresh   # update packages/agent and re-apply credentials
+uv run llm tui                # Launch the interactive Textual interface
+uv run llm digest run         # Generate morning digest headlessly
+uv run llm digest run --slot afternoon  # Generate afternoon digest headlessly
+uv run llm jotter setup       # Provision the isolated LXD container
+uv run llm jotter status      # Check container status
 ```
-
-Credentials live in `config.toml` under `[hermes]` (OpenRouter key, Telegram
-token, GitHub token). They are passed into the VM over stdin rather than
-interpolated into shell commands, and are masked by `llm config show`.
 
 ---
 
 ## Security Notes
 
-- `config.toml` is **gitignored**; it holds your API key, HF token and any
-  Hermes credentials.
+- `config.toml` is **gitignored**; it holds your API key, HF token, and external
+  service credentials.
 - `llm config show` masks every secret-bearing field.
 - Generated files that embed a credential (the rendered nginx conf, the client
   configs, the shell env files) are written `0600`.

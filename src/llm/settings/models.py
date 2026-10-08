@@ -297,6 +297,7 @@ class GitHubSettings(BaseModel):
     git_pat: str = Field(default="", json_schema_extra=SECRET)
     git_username: str = "mr-cal-bot"
     git_email: str = "callahanlovesshopping@gmail.com"
+    repos: list[str] = Field(default_factory=list)
 
     # Credentials dedicated to sandbox containers (e.g. bot account)
     sandbox: GitHubSandboxSettings = Field(default_factory=GitHubSandboxSettings)
@@ -319,6 +320,7 @@ class ClientSettings(BaseModel):
     enabled: bool = True
     server_url: str = ""
     cert_path: str = ""  # local path to remote server's TLS cert (PEM)
+    openrouter_key: str = Field(default="", json_schema_extra=SECRET)
 
 
 class MountEntry(BaseModel):
@@ -366,49 +368,135 @@ class LxdSettings(BaseModel):
         return validate_iana_timezone(v)
 
 
-class HermesSettings(BaseModel):
-    """Configuration for the Hermes agent LXD VM."""
+class EmbedSettings(BaseModel):
+    """Configuration for the optional embedding llama-server instance."""
 
-    # Timezone override for the Hermes VM (falls back to [lxd].timezone if empty).
+    enabled: bool = False
+    port: int = 8081
+    # Active embedding model alias (from [[models.list]]).
+    active: str = "mxbai-embed-large"
+    extra_args: list[str] = Field(default_factory=list)
+
+    @field_validator("extra_args", mode="before")
+    @classmethod
+    def split_extra_args(cls, v: object) -> list[str]:
+        """Split space-containing entries so ``["--flag value"]`` and ``["--flag", "value"]`` both work."""
+        if not isinstance(v, list):
+            raise ValueError(f"extra_args must be a list, got {type(v).__name__}")
+        result: list[str] = []
+        for item in v:
+            result.extend(str(item).split())
+        return result
+
+
+class DiscourseSettings(BaseModel):
+    """Configuration for Discourse forum integration."""
+
+    url: str = "https://discourse.example.com"
+    session_cookie: str = Field(default="", json_schema_extra=SECRET)
+    tracked_categories: list[str] = Field(default_factory=list)
+    tracked_tags: list[str] = Field(default_factory=list)
+
+    def is_authenticated(self) -> bool:
+        return bool(self.url.strip()) and bool(self.session_cookie.strip())
+
+
+class MattermostSettings(BaseModel):
+    """Configuration for Mattermost chat integration."""
+
+    url: str = "https://mattermost.example.com"
+    token: str = Field(default="", json_schema_extra=SECRET)
+    team: str = ""
+    channels: list[str] = Field(default_factory=list)
+
+    def is_authenticated(self) -> bool:
+        return bool(self.url.strip()) and bool(self.token.strip())
+
+
+class MatrixSettings(BaseModel):
+    """Configuration for Matrix chat integration."""
+
+    homeserver: str = "https://matrix.example.com"
+    access_token: str = Field(default="", json_schema_extra=SECRET)
+    user_id: str = ""
+    rooms: list[str] = Field(default_factory=list)
+
+    def is_authenticated(self) -> bool:
+        return bool(self.homeserver.strip()) and bool(self.access_token.strip())
+
+
+class JiraSettings(BaseModel):
+    """Configuration for Atlassian Jira issue tracking."""
+
+    url: str = "https://jira.example.com"
+    email: str = ""
+    api_token: str = Field(default="", json_schema_extra=SECRET)
+    projects: list[str] = Field(default_factory=list)
+
+    def is_authenticated(self) -> bool:
+        return bool(self.url.strip()) and bool(self.email.strip()) and bool(self.api_token.strip())
+
+
+class GoogleSettings(BaseModel):
+    """Configuration for Google Workspace (Gmail, Calendar, Drive)."""
+
+    credentials_path: str = "~/.config/local-llm/google_credentials.json"
+    token_path: str = "~/.config/local-llm/google_token.json"
+    calendar_id: str = "primary"
+    gmail_query_filters: str = "is:unread category:primary"
+    drive_folder_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def resolved_credentials_path(self) -> Path:
+        return Path(self.credentials_path).expanduser().resolve()
+
+    @property
+    def resolved_token_path(self) -> Path:
+        return Path(self.token_path).expanduser().resolve()
+
+    def is_authenticated(self) -> bool:
+        return self.resolved_token_path.exists() or self.resolved_credentials_path.exists()
+
+
+class DigestFilterSettings(BaseModel):
+    """Noise and bot filtering rules for digests."""
+
+    ignore_bots: bool = True
+    ignored_authors: list[str] = Field(default_factory=list)
+    ignored_channels: list[str] = Field(default_factory=list)
+    ignored_topics: list[str] = Field(default_factory=list)
+
+
+class DigestSettings(BaseModel):
+    """Configuration for activity summarization and digest generation."""
+
+    enabled: bool = True
+    cache_db_path: str = "~/.local/share/local-llm/cache.db"
+    digest_output_dir: str = "~/.local/share/local-llm/digests"
+    craft_dir: str = "~/dev/craft"
+    filter: DigestFilterSettings = Field(default_factory=DigestFilterSettings)
+
+    @property
+    def resolved_cache_db_path(self) -> Path:
+        p = Path(self.cache_db_path).expanduser().resolve()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def resolved_digest_output_dir(self) -> Path:
+        p = Path(self.digest_output_dir).expanduser().resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def resolved_craft_dir(self) -> Path:
+        return Path(self.craft_dir).expanduser().resolve()
+
+
+class JotterSettings(BaseModel):
+    """Configuration for the Jotter digest LXD container."""
+
     timezone: str = ""
-
-    # LLM backend for the Hermes agent: "local-llm" or "openrouter".
-    provider: str = "local-llm"
-
-    # OpenRouter API key (used when provider = "openrouter").
-    # https://openrouter.ai/keys
-    openrouter_key: str = Field(default="", json_schema_extra=SECRET)
-
-    # Telegram bot token from @BotFather.
-    telegram_token: str = Field(default="", json_schema_extra=SECRET)
-
-    # Comma-separated numeric Telegram user IDs allowed to talk to the bot.
-    # Get your ID from @userinfobot on Telegram.
-    telegram_allowed_users: str = ""
-
-    # GitHub PAT for Hermes GitHub MCP tool (needs repo + read:org scope).
-    github_token: str = Field(default="", json_schema_extra=SECRET)
-
-    # Mattermost server URL (e.g. https://mattermost.example.com).
-    mattermost_url: str = ""
-
-    # Mattermost bot token or personal access token.
-    mattermost_token: str = Field(default="", json_schema_extra=SECRET)
-
-    # Mattermost default team name (e.g. canonical).
-    mattermost_team: str = "canonical"
-
-    discourse_url: str = ""
-    discourse_session_cookie: str = Field(default="", json_schema_extra=SECRET)
-
-    # Maximum concurrent sessions for the gateway (set to 1 for single-connection servers).
-    max_concurrent_sessions: int = Field(default=1, ge=1)
-
-    # Maximum concurrent child subagents for delegation (set to 1 for single-connection servers).
-    max_concurrent_children: int = Field(default=1, ge=1)
-
-    # Time to wait for user approval/permission before timing out, in seconds (default: 3600 = 1 hour).
-    approval_timeout: int = Field(default=3600, ge=1)
 
     @field_validator("timezone")
     @classmethod
@@ -418,40 +506,16 @@ class HermesSettings(BaseModel):
         return validate_iana_timezone(v)
 
     def effective_timezone(self, all_cfg: Settings | None = None) -> str:
-        """Return the effective timezone for the Hermes VM, falling back to [lxd].timezone."""
         if self.timezone:
             return self.timezone
         if all_cfg and all_cfg.lxd.timezone:
             return all_cfg.lxd.timezone
         return "America/Chicago"
 
-    def has_openrouter(self) -> bool:
-        """True when OpenRouter backend is selected with a key."""
-        return self.provider == "openrouter" and bool(self.openrouter_key.strip())
-
-    def has_local_llm(self) -> bool:
-        """True when local-llm backend is selected."""
-        return self.provider == "local-llm"
-
-    def has_telegram(self) -> bool:
-        """True when both a bot token and at least one allowed user are configured."""
-        return bool(self.telegram_token.strip()) and bool(self.telegram_allowed_users.strip())
-
-    def has_github(self) -> bool:
-        """True when a GitHub PAT is configured."""
-        return bool(self.github_token.strip())
-
-    def has_mattermost(self) -> bool:
-        """True when both a Mattermost server URL and token are configured."""
-        return bool(self.mattermost_url.strip()) and bool(self.mattermost_token.strip())
-
-    def has_discourse(self) -> bool:
-        """True when both a Discourse URL and session cookie (_t token) are configured."""
-        return bool(self.discourse_url.strip()) and bool(self.discourse_session_cookie.strip())
-
 
 class Settings(BaseModel):
     server: ServerSettings = Field(default_factory=ServerSettings)
+    embed: EmbedSettings = Field(default_factory=EmbedSettings)
     models: ModelsSettings = Field(default_factory=ModelsSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     proxy: ProxySettings = Field(default_factory=ProxySettings)
@@ -459,15 +523,32 @@ class Settings(BaseModel):
     lxd: LxdSettings = Field(default_factory=LxdSettings)
     build: BuildConfig = Field(default_factory=BuildConfig)
     github: GitHubSettings = Field(default_factory=GitHubSettings)
-    hermes: HermesSettings = Field(default_factory=HermesSettings)
+    discourse: DiscourseSettings = Field(default_factory=DiscourseSettings)
+    mattermost: MattermostSettings = Field(default_factory=MattermostSettings)
+    matrix: MatrixSettings = Field(default_factory=MatrixSettings)
+    jira: JiraSettings = Field(default_factory=JiraSettings)
+    google: GoogleSettings = Field(default_factory=GoogleSettings)
+    digest: DigestSettings = Field(default_factory=DigestSettings)
+    jotter: JotterSettings = Field(default_factory=JotterSettings)
 
     @model_validator(mode="after")
     def validate_ports_do_not_collide(self) -> Settings:
-        if self.proxy.enabled and self.server.port == self.proxy.port:
-            raise ValueError(
-                f"server.port and proxy.port are both {self.server.port}; "
-                "the proxy cannot listen on the port it forwards to"
-            )
+        used_ports: dict[str, int] = {"server": self.server.port}
+        if self.proxy.enabled:
+            if self.proxy.port in used_ports.values():
+                conflict = next(k for k, v in used_ports.items() if v == self.proxy.port)
+                raise ValueError(
+                    f"proxy.port and {conflict}.port are both {self.proxy.port}; "
+                    "the proxy cannot listen on the port it forwards to or shares"
+                )
+            used_ports["proxy"] = self.proxy.port
+        if self.embed.enabled:
+            if self.embed.port in used_ports.values():
+                conflict = next(k for k, v in used_ports.items() if v == self.embed.port)
+                raise ValueError(
+                    f"embed.port and {conflict}.port are both {self.embed.port}; ports must be distinct"
+                )
+            used_ports["embed"] = self.embed.port
         return self
 
     @model_validator(mode="after")
@@ -555,6 +636,11 @@ class Settings(BaseModel):
     @property
     def internal_url(self) -> str:
         return f"http://127.0.0.1:{self.server.port}"
+
+    @property
+    def embed_url(self) -> str:
+        """Base URL for the local embedding server."""
+        return f"http://127.0.0.1:{self.embed.port}"
 
     @property
     def proxy_url(self) -> str:

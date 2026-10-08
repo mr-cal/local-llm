@@ -731,9 +731,11 @@ SECRET_PATHS = [
     ("models.hf_token", "SENTINEL-HF-TOKEN"),
     ("github.token", "SENTINEL-GH-TOKEN"),
     ("github.git_pat", "SENTINEL-GIT-PAT"),
-    ("hermes.openrouter_key", "SENTINEL-OPENROUTER"),
-    ("hermes.telegram_token", "SENTINEL-TELEGRAM"),
-    ("hermes.github_token", "SENTINEL-HERMES-GH"),
+    ("client.openrouter_key", "SENTINEL-OPENROUTER"),
+    ("discourse.session_cookie", "SENTINEL-DISCOURSE-COOKIE"),
+    ("mattermost.token", "SENTINEL-MATTERMOST-TOKEN"),
+    ("matrix.access_token", "SENTINEL-MATRIX-TOKEN"),
+    ("jira.api_token", "SENTINEL-JIRA-TOKEN"),
 ]
 
 

@@ -69,13 +69,13 @@ _KIND_TAG = "user.local-llm-kind"
 _SANDBOX_TAG = "user.local-llm-sandbox"
 
 # Managed VMs come in two flavours with incompatible provisioning. Dev client
-# VMs are refreshed by ``llm client refresh``; the Hermes agent VM must not be,
-# because reconfiguring it as a dev client would overwrite its agent setup.
+# VMs are refreshed by ``llm client refresh``; the Jotter digest VM must not be,
+# because reconfiguring it as a dev client would overwrite its setup.
 KIND_CLIENT = "client"
-KIND_HERMES = "hermes"
+KIND_JOTTER = "jotter"
 
-# The Hermes VM always uses this reserved name.
-HERMES_CONTAINER_NAME = "hermes"
+# The Jotter VM always uses this reserved name.
+JOTTER_CONTAINER_NAME = "jotter"
 
 
 # ── Helper functions ─────────────────────────────────────────────────────────
@@ -236,17 +236,17 @@ def _tag_as_managed(container: str, kind: str = KIND_CLIENT) -> None:
 def _container_kind(instance: dict) -> str:
     """Return the managed kind of an LXD instance from ``lxc list --format=json``.
 
-    VMs provisioned before the kind tag existed carry no kind. The Hermes VM
+    VMs provisioned before the kind tag existed carry no kind. The Jotter container
     has a reserved name, so it can still be told apart from a dev client.
     """
     kind = instance.get("config", {}).get(_KIND_TAG)
     if kind:
         return kind
-    return KIND_HERMES if instance.get("name") == HERMES_CONTAINER_NAME else KIND_CLIENT
+    return KIND_JOTTER if instance.get("name") == JOTTER_CONTAINER_NAME else KIND_CLIENT
 
 
 def get_container_kind(container: str) -> str:
-    """Return the managed kind of *container* (``client`` or ``hermes``)."""
+    """Return the managed kind of *container* (``client`` or ``jotter``)."""
     r = run_capture(["lxc", "list", container, "--format=json"])
     if r.returncode != 0:
         return KIND_CLIENT

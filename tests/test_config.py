@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from llm.config import _is_secret_field, _mask_api_keys, config_show, mask_secrets
 from llm.render.client_configs import _build_opencode_config, _build_pi_config
-from llm.settings import AuthSettings, Settings
+from llm.settings import AuthSettings, EmbedSettings, Settings
 
 
 class TestConfigShow:
@@ -64,10 +64,11 @@ SECRET_PATHS = [
     ("models.hf_token", "SENTINEL-HF-TOKEN"),
     ("github.token", "SENTINEL-GH-TOKEN"),
     ("github.git_pat", "SENTINEL-GIT-PAT"),
-    ("hermes.openrouter_key", "SENTINEL-OPENROUTER"),
-    ("hermes.telegram_token", "SENTINEL-TELEGRAM"),
-    ("hermes.github_token", "SENTINEL-HERMES-GH"),
-    ("hermes.mattermost_token", "SENTINEL-MATTERMOST-TOKEN"),
+    ("client.openrouter_key", "SENTINEL-OPENROUTER"),
+    ("discourse.session_cookie", "SENTINEL-DISCOURSE-COOKIE"),
+    ("mattermost.token", "SENTINEL-MATTERMOST-TOKEN"),
+    ("matrix.access_token", "SENTINEL-MATRIX-TOKEN"),
+    ("jira.api_token", "SENTINEL-JIRA-TOKEN"),
 ]
 
 
@@ -95,7 +96,7 @@ class TestMaskSecrets:
         """An unset credential reads as empty, not as a masked value."""
         masked = mask_secrets(Settings())
         assert masked["auth"]["api_key"] == ""
-        assert masked["hermes"]["telegram_token"] == ""
+        assert masked["matrix"]["access_token"] == ""
 
     def test_non_secret_values_are_preserved(self):
         masked = mask_secrets(_settings_with_all_secrets())
@@ -143,6 +144,77 @@ class TestMaskApiKeys:
 
     def test_empty_api_key_not_masked(self):
         assert _mask_api_keys({"apiKey": ""}) == {"apiKey": ""}
+
+
+class TestEmbedSettingsDefaults:
+    def test_disabled_by_default(self):
+        s = EmbedSettings()
+        assert s.enabled is False
+
+    def test_default_port(self):
+        assert EmbedSettings().port == 8081
+
+    def test_default_active_model(self):
+        assert EmbedSettings().active == "mxbai-embed-large"
+
+    def test_default_extra_args(self):
+        assert EmbedSettings().extra_args == []
+
+    def test_extra_args_split(self):
+        s = EmbedSettings(extra_args=["--embedding --pooling cls"])
+        assert s.extra_args == ["--embedding", "--pooling", "cls"]
+
+    def test_extra_args_already_split(self):
+        s = EmbedSettings(extra_args=["--embedding", "--pooling", "cls"])
+        assert s.extra_args == ["--embedding", "--pooling", "cls"]
+
+    def test_extra_args_invalid_type(self):
+        with pytest.raises(ValueError):
+            EmbedSettings.model_validate({"extra_args": "--embedding"})
+
+
+class TestEmbedSettingsInSettings:
+    def test_settings_has_embed(self):
+        s = Settings()
+        assert hasattr(s, "embed")
+        assert isinstance(s.embed, EmbedSettings)
+
+    def test_embed_url(self):
+        s = Settings(embed=EmbedSettings(port=8081))
+        assert s.embed_url == "http://127.0.0.1:8081"
+
+    def test_embed_toml_roundtrip(self, tmp_path):
+        toml_text = """
+[server]
+port = 8080
+n_gpu_layers = 20
+n_ctx = 4096
+n_threads = 4
+
+[embed]
+enabled = true
+port = 8081
+active = "mxbai-embed-large"
+extra_args = ["--embedding", "--pooling", "cls"]
+
+[models]
+dir = "~/models"
+active = "qwen2.5"
+
+[proxy]
+lan_ip = "192.168.1.1"
+
+[auth]
+api_key = "abc"
+"""
+        import tomllib
+
+        raw = tomllib.loads(toml_text)
+        s = Settings.model_validate(raw)
+        assert s.embed.enabled is True
+        assert s.embed.port == 8081
+        assert s.embed.active == "mxbai-embed-large"
+        assert s.embed.extra_args == ["--embedding", "--pooling", "cls"]
 
 
 # ── systemd unit rendering ───────────────────────────────────────────────────

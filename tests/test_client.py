@@ -57,7 +57,7 @@ class TestContainerSetup:
         mock_setup_vm.assert_called_once_with("craft-llm-1", recreate=True, sandbox=True)
 
     def test_setup_container_client_sandbox_mode(self, mocker, tmp_path):
-        from llm.settings.models import GitHubSandboxSettings, GitHubSettings, HermesSettings, Settings
+        from llm.settings.models import ClientSettings, GitHubSandboxSettings, GitHubSettings, Settings
 
         cfg = Settings(
             github=GitHubSettings(
@@ -70,7 +70,7 @@ class TestContainerSetup:
                     git_email="bot@example.com",
                 ),
             ),
-            hermes=HermesSettings(openrouter_key="sk-or-v1-sandbox-key"),
+            client=ClientSettings(openrouter_key="sk-or-v1-sandbox-key"),
         )
         mocker.patch("llm.client.find_config", return_value=tmp_path / "config.toml")
         mocker.patch("pathlib.Path.exists", return_value=True)

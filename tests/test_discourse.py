@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from llm.discourse.client import DiscourseClient, get_default_summary_window
 from llm.discourse.server import create_discourse_mcp_server
-from llm.settings.models import HermesSettings
+from llm.settings.models import DiscourseSettings
 
 
 def test_get_default_summary_window_monday() -> None:
@@ -26,18 +26,18 @@ def test_get_default_summary_window_weekday() -> None:
     assert start_time == dt.datetime(2026, 10, 5, 12, 0, 0, tzinfo=dt.UTC)
 
 
-def test_hermes_settings_has_discourse() -> None:
-    cfg = HermesSettings()
-    assert not cfg.has_discourse()
+def test_discourse_settings_is_authenticated() -> None:
+    cfg = DiscourseSettings(session_cookie="")
+    assert not cfg.is_authenticated()
 
-    cfg.discourse_url = "https://canonical.discourse.com"
-    cfg.discourse_session_cookie = "mock_t_cookie"
-    assert cfg.has_discourse()
+    cfg.url = "https://discourse.example.com"
+    cfg.session_cookie = "mock_t_cookie"
+    assert cfg.is_authenticated()
 
 
 def test_discourse_client_headers() -> None:
     client = DiscourseClient(
-        base_url="https://canonical.discourse.com",
+        base_url="https://discourse.example.com",
         session_cookie="cookie_xyz",
     )
     headers = client._headers()
@@ -61,7 +61,7 @@ def test_discourse_client_check_auth(mock_client_cls: MagicMock) -> None:
     }
     mock_instance.get.return_value = mock_resp
 
-    client = DiscourseClient("https://canonical.discourse.com", "cookie_xyz")
+    client = DiscourseClient("https://discourse.example.com", "cookie_xyz")
     status = client.check_auth()
 
     assert status["authenticated"] is True

@@ -422,3 +422,65 @@ class TestLogsCommand:
         server.logs(follow=True)
 
         assert "-f" in run.call_args.args[0]
+
+
+class TestEmbedPidLogFiles:
+    def test_embed_pid_file_path(self):
+        assert server._embed_pid_file() == server._EMBED_PID_FILE
+
+    def test_embed_log_file_path(self):
+        assert server._embed_log_file() == server._EMBED_LOG_FILE
+
+
+class TestStartEmbedServer:
+    def test_skips_when_model_not_in_catalog(self, tmp_config_server, fake_console, mocker):
+        from llm.settings import EmbedSettings
+
+        config, tmp_path = tmp_config_server
+        cfg = server.load_config()
+        object.__setattr__(cfg, "embed", EmbedSettings(enabled=True, active="nonexistent-model"))
+        mocker.patch.object(server, "_read_embed_pid", return_value=None)
+        server._start_embed_server(cfg, "llama-server")
+
+    def test_skips_when_model_file_missing(self, tmp_config_server, fake_console, mocker):
+        from llm.settings import EmbedSettings, ModelEntry
+
+        config, tmp_path = tmp_config_server
+        cfg = server.load_config()
+        embed_entry = ModelEntry(alias="mxbai-embed-large", repo="x/y", filename="mxbai.gguf")
+        object.__setattr__(cfg.models, "entries", [embed_entry])
+        object.__setattr__(cfg, "embed", EmbedSettings(enabled=True, active="mxbai-embed-large"))
+        mocker.patch.object(server, "_read_embed_pid", return_value=None)
+        server._start_embed_server(cfg, "llama-server")
+
+    def test_skips_when_already_running(self, tmp_config_server, fake_console, mocker):
+        from llm.settings import EmbedSettings
+
+        config, tmp_path = tmp_config_server
+        cfg = server.load_config()
+        object.__setattr__(cfg, "embed", EmbedSettings(enabled=True, active="mxbai-embed-large"))
+        mocker.patch.object(server, "_read_embed_pid", return_value=99999)
+        server._start_embed_server(cfg, "llama-server")
+
+
+class TestLogsEmbedFlag:
+    def test_logs_embed_uses_embed_log_file(self, tmp_config_server, mocker):
+        config, tmp_path = tmp_config_server
+        log_file = tmp_path / ".embed.log"
+        log_file.write_text("embed log line\n")
+        mocker.patch.object(server, "_embed_log_file", return_value=log_file)
+        run = mocker.patch("subprocess.run")
+
+        server.logs(embed=True, lines=10)
+
+        cmd = run.call_args.args[0]
+        assert cmd[0] == "tail"
+        assert str(log_file) in cmd
+
+    def test_logs_embed_missing_file(self, tmp_config_server, fake_console, mocker):
+        config, tmp_path = tmp_config_server
+        log_file = tmp_path / ".embed.log"
+        mocker.patch.object(server, "_embed_log_file", return_value=log_file)
+
+        with pytest.raises(typer.Exit):
+            server.logs(embed=True)

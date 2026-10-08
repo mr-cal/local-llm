@@ -158,6 +158,30 @@ cost.output = 15.00
 cost.cache_write = 3.75
 cost.cache_read = 0.30
 
+[[models.list]]
+alias = "mxbai-embed-large"
+repo = "mixedbread-ai/mxbai-embed-large-v1"
+filename = "mxbai-embed-large-v1.Q8_0.gguf"
+size = "~360 MB"
+description = "Embedding model (1024 dims, 512 context) — runs on CPU, routes to /v1/embeddings"
+max_output = 512
+cost.input = 0.00
+cost.output = 0.00
+cost.cache_write = 0.00
+cost.cache_read = 0.00
+
+
+# ── EMBEDDING SERVER ──────────────────────────────────────────────────────────
+# Optional second llama-server instance dedicated to text embeddings.
+# Runs on a separate port with a dedicated embedding model (e.g. mxbai-embed-large).
+# Nginx routes /v1/embeddings to this server; all other requests go to the chat server.
+
+[embed]
+enabled = false
+port = 8081
+active = "mxbai-embed-large"
+extra_args = ["--embedding", "--pooling", "cls"]
+
 
 [proxy]
 enabled = true
@@ -198,6 +222,9 @@ server_url = ""
 # Then set NODE_EXTRA_CA_CERTS to this path in your shell profile.
 cert_path = ""
 
+# OpenRouter API key (used for sandbox containers pointing to openrouter).
+openrouter_key = ""
+
 
 
 # ── AUTH ──────────────────────────────────────────────────────────────────────
@@ -232,6 +259,8 @@ git_pat = ""
 # Git identity used inside LXD containers to author and push commits.
 git_username = "mr-cal-bot"
 git_email = "callahanlovesshopping@gmail.com"
+# Repositories to track for digests (e.g. ["owner/repo"])
+repos = []
 
 # Credentials dedicated to sandbox containers created with `llm client setup --sandbox`.
 # Keeps personal credentials safe when using untrusted models.
@@ -277,59 +306,121 @@ host = "~/dev/cal/bmtracker"
 
 
 
-# ── HERMES ────────────────────────────────────────────────────────────────────
-# Nous Research Hermes agent VM — a persistent AI agent with messaging gateway,
-# memory, and tool use. Managed with: uv run llm hermes setup|refresh|status
-#
-# Set tokens here; run `uv run llm hermes setup` to create and configure the VM.
-
-[hermes]
-# Timezone override for the Hermes VM (defaults to [lxd].timezone if empty).
-timezone = ""
-
-# LLM backend for the Hermes agent: "local-llm" or "openrouter".
-# The local-llm backend uses the local llama-server; openrouter uses
-# https://openrouter.ai/.
-provider = "local-llm"
-
-# OpenRouter API key (used when provider = "openrouter").
-# https://openrouter.ai/keys
-openrouter_key = ""
-
-# Telegram bot token (from @BotFather on Telegram).
-# https://core.telegram.org/bots#botfather
-telegram_token = ""
-
-# Comma-separated numeric Telegram user IDs allowed to talk to the bot.
-# Get your ID by messaging @userinfobot on Telegram.
-telegram_allowed_users = ""
-
-# GitHub PAT for Hermes GitHub MCP tool (needs repo + read:org scope).
-# Can be the same as [github].token or a separate narrowly-scoped token.
-github_token = ""
-
-# Mattermost server URL (e.g. https://mattermost.example.com).
-mattermost_url = ""
-
-# Mattermost bot token or personal access token.
-mattermost_token = ""
-
-# Mattermost default team name (e.g. canonical).
-mattermost_team = "canonical"
-
+# ── DISCOURSE ─────────────────────────────────────────────────────────────────
 # Discourse forum integration (private/SSO forums using session cookie _t)
-# Discourse URL (e.g. https://canonical.discourse.com)
-discourse_url = "https://canonical.discourse.com"
+
+[discourse]
+# Discourse base URL (e.g. https://discourse.example.com)
+url = "https://discourse.example.com"
 
 # Discourse session cookie (_t token from browser storage/cookies)
-discourse_session_cookie = ""
+session_cookie = ""
 
-# Maximum concurrent sessions for the gateway (1 for single-connection local LLM).
-max_concurrent_sessions = 1
+# Tracked categories and tags to include in daily digests
+tracked_categories = []
+tracked_tags = []
 
-# Maximum concurrent child subagents for task delegation (1 for single-connection local LLM).
-max_concurrent_children = 1
 
-# Time in seconds to wait for user approval/permission before timing out (default: 3600 = 1 hour).
-approval_timeout = 3600
+# ── MATTERMOST ────────────────────────────────────────────────────────────────
+# Mattermost chat integration
+
+[mattermost]
+# Mattermost server URL (e.g. https://mattermost.example.com)
+url = "https://mattermost.example.com"
+
+# Mattermost bot token or personal access token
+token = ""
+
+# Mattermost default team name
+team = ""
+
+# Channel names to track in digests (DMs and @mentions are always included)
+channels = []
+
+
+# ── MATRIX ────────────────────────────────────────────────────────────────────
+# Matrix client-server API integration
+
+[matrix]
+# Matrix homeserver URL (e.g. https://matrix.example.com)
+homeserver = "https://matrix.example.com"
+
+# Matrix user access token
+access_token = ""
+
+# Matrix user ID (e.g. @user:example.com)
+user_id = ""
+
+# Room IDs or aliases to track in digests (DMs and @mentions are always included)
+rooms = []
+
+
+# ── JIRA ──────────────────────────────────────────────────────────────────────
+# Atlassian Jira issue tracking
+
+[jira]
+# Jira instance URL (e.g. https://jira.example.com)
+url = "https://jira.example.com"
+
+# Jira account email
+email = ""
+
+# Jira API token
+api_token = ""
+
+# Tracked Jira project keys (e.g. ["PROJ", "DEV"])
+projects = []
+
+
+# ── GOOGLE WORKSPACE ──────────────────────────────────────────────────────────
+# Google Workspace integration (Calendar, Gmail, Drive) via read-only OAuth
+
+[google]
+# Path to Google OAuth client secret credentials JSON file
+credentials_path = "~/.config/local-llm/google_credentials.json"
+
+# Path to cached Google OAuth token JSON file
+token_path = "~/.config/local-llm/google_token.json"
+
+# Primary Google Calendar ID
+calendar_id = "primary"
+
+# Gmail search query filter for morning inbox digest
+gmail_query_filters = "is:unread category:primary"
+
+# Google Drive folder IDs to monitor for doc activity
+drive_folder_ids = []
+
+
+# ── DIGEST & JOTTER ───────────────────────────────────────────────────────────
+# Activity summarization and automated digest engine
+
+[digest]
+enabled = true
+
+# Local SQLite cache for messages, threads, and embeddings
+cache_db_path = "~/.local/share/local-llm/cache.db"
+
+# Output directory for daily markdown digest files
+digest_output_dir = "~/.local/share/local-llm/digests"
+
+# Path to local craft repositories for code search and reference grounding
+craft_dir = "~/dev/craft"
+
+[digest.filter]
+# Automatically ignore automated bot messages
+ignore_bots = true
+
+# List of author usernames or emails to exclude from digests
+ignored_authors = []
+
+# List of noisy channels or rooms to exclude from digests
+ignored_channels = []
+
+# List of automated topics or tags to exclude from digests
+ignored_topics = []
+
+[jotter]
+# Timezone override for the Jotter VM (defaults to [lxd].timezone if empty)
+timezone = ""
 

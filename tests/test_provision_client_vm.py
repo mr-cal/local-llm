@@ -692,17 +692,17 @@ class TestNestedVmSupport:
 # ── secret redaction ─────────────────────────────────────────────────────────
 
 
-class TestRefreshExcludesHermes:
-    """Refreshing the Hermes VM would overwrite its agent configuration."""
+class TestRefreshExcludesJotter:
+    """Refreshing the Jotter VM would overwrite its configuration."""
 
-    def test_named_hermes_vm_is_refused(self, monkeypatch):
+    def test_named_jotter_vm_is_refused(self, monkeypatch):
         monkeypatch.setattr(client_vm, "container_exists", MagicMock(return_value=True))
-        monkeypatch.setattr(client_vm, "get_container_kind", MagicMock(return_value=client_vm.KIND_HERMES))
+        monkeypatch.setattr(client_vm, "get_container_kind", MagicMock(return_value=client_vm.KIND_JOTTER))
         refresh = MagicMock()
         monkeypatch.setattr(client_vm.LxdVmManager, "_refresh", refresh)
 
-        with pytest.raises(RuntimeError, match="llm hermes setup"):
-            client_vm.refresh_containers("hermes")
+        with pytest.raises(RuntimeError, match="llm jotter setup"):
+            client_vm.refresh_containers("jotter")
 
         refresh.assert_not_called()
 

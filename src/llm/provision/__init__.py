@@ -1,1 +1,1 @@
-"""Provisioning of LXD client and Hermes virtual machines."""
+"""Provisioning of LXD client and Jotter virtual machines / containers."""

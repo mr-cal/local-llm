@@ -38,6 +38,7 @@ def _template_replacements(cfg: Settings) -> dict[str, str]:
         "%%LAN_SUBNET%%": cfg.proxy.lan_subnet,
         "%%PROXY_PORT%%": str(cfg.proxy.port),
         "%%SERVER_PORT%%": str(cfg.server.port),
+        "%%EMBED_PORT%%": str(cfg.embed.port),
         "%%API_KEY%%": cfg.auth.api_key,
         "%%LLAMA_SERVER_BIN%%": cfg.resolve_llama_server_bin(),
         "%%MODELS_DIR%%": str(cfg.models_path),

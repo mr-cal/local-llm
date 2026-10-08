@@ -442,7 +442,7 @@ def _build_opencode_config_for_container(cfg: Settings, server_host: str) -> dic
 
 def _build_opencode_config_for_sandbox(cfg: Settings) -> dict:  # type: ignore[type-arg]
     """Build opencode config dict for a sandbox container pointing to OpenRouter."""
-    api_key = cfg.hermes.openrouter_key or ""
+    api_key = cfg.client.openrouter_key or ""
     model_key = "auto"
 
     return _OpencodeConfig(
