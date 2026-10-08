@@ -313,12 +313,13 @@ host = "~/dev/cal/bmtracker"
 # Discourse base URL (e.g. https://discourse.example.com)
 url = "https://discourse.example.com"
 
-# Discourse session cookie (_t token from browser storage/cookies)
+# Discourse session cookie (_t token from browser cookies).
+# In Firefox: Open DevTools (F12) -> Storage -> Cookies -> select forum domain -> copy the Value of the '_t' cookie.
 session_cookie = ""
 
-# Tracked categories and tags to include in daily digests
-tracked_categories = []
-tracked_tags = []
+# Tracked categories and tags to include in daily digests: "all" or list of names/IDs
+tracked_categories = "all"
+tracked_tags = "all"
 
 
 # ── MATTERMOST ────────────────────────────────────────────────────────────────

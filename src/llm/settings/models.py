@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -394,8 +395,8 @@ class DiscourseSettings(BaseModel):
 
     url: str = "https://discourse.example.com"
     session_cookie: str = Field(default="", json_schema_extra=SECRET)
-    tracked_categories: list[str] = Field(default_factory=list)
-    tracked_tags: list[str] = Field(default_factory=list)
+    tracked_categories: list[str] | Literal["all"] = "all"
+    tracked_tags: list[str] | Literal["all"] = "all"
 
     def is_authenticated(self) -> bool:
         return bool(self.url.strip()) and bool(self.session_cookie.strip())

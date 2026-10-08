@@ -40,6 +40,19 @@ def ingest_discourse(
         if digest_filter and digest_filter.should_ignore_topic(title):
             continue
 
+        # Category filter
+        if settings.tracked_categories != "all" and settings.tracked_categories:
+            cat_id = str(topic.get("category_id", ""))
+            if cat_id not in settings.tracked_categories:
+                continue
+
+        # Tag filter
+        if settings.tracked_tags != "all" and settings.tracked_tags:
+            topic_tags = {str(tg).lower() for tg in topic.get("tags", [])}
+            tracked = {t.lower() for t in settings.tracked_tags}
+            if not topic_tags.intersection(tracked):
+                continue
+
         for post in topic.get("recent_posts", []):
             author = post.get("username", "")
             if digest_filter and digest_filter.should_ignore_author(author):

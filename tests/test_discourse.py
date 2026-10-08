@@ -132,3 +132,13 @@ def test_discourse_mcp_server_init() -> None:
         session_cookie="test_cookie",
     )
     assert server.name == "discourse"
+
+
+def test_discourse_settings_tracked_all_or_list() -> None:
+    cfg_all = DiscourseSettings(tracked_categories="all", tracked_tags="all")
+    assert cfg_all.tracked_categories == "all"
+    assert cfg_all.tracked_tags == "all"
+
+    cfg_list = DiscourseSettings(tracked_categories=["snappy", "craft"], tracked_tags=["bug"])
+    assert cfg_list.tracked_categories == ["snappy", "craft"]
+    assert cfg_list.tracked_tags == ["bug"]
