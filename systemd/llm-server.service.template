@@ -16,6 +16,8 @@ StartLimitBurst=5
 [Service]
 Type=simple
 User=%%USER%%
+# GPU device access; login-session ACLs don't exist when starting at boot
+SupplementaryGroups=render video
 ExecStart=%%LLAMA_SERVER_BIN%% \
     --model %%MODELS_DIR%%/%%ACTIVE_MODEL%% \
     --port %%SERVER_PORT%% \
